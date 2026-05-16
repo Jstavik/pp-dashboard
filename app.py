@@ -500,7 +500,6 @@ def fig_signal(df_imbal, now, height=110):
     if df_imbal.empty:
         return _base_layout(fig, height=height)
     start = now.normalize()
-    end   = start + pd.Timedelta(days=1)
     for sig, color, val in [
         ("DISCHARGE", C_DEFICIT,  -1),
         ("CHARGE",    C_SURPLUS,   1),
@@ -521,7 +520,7 @@ def fig_signal(df_imbal, now, height=110):
                     bgcolor="rgba(0,0,0,0)"),
         margin=dict(l=65, r=15, t=10, b=45),
         xaxis=dict(type="date", tickformat="%H:%M",
-                   range=[start.isoformat(), end.isoformat()], gridcolor=C_GRID),
+                   range=[start.isoformat(), now.isoformat()], gridcolor=C_GRID),
         yaxis=dict(tickvals=[-1, 0.1, 1], ticktext=["DISCHARGE", "STANDBY", "CHARGE"],
                    gridcolor=C_GRID),
     )
