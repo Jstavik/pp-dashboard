@@ -42,26 +42,23 @@ C_BG       = "#FFFFFF"
 # ── PSR TYPES — SPRÁVNÉ ENTSO-E KÓDY ────────────────────────────
 # (B10 = Hydro Pumped, B14 = Nuclear — ne jak bylo špatně v orig.)
 PSR_TYPES = {
-    "B01": ("Biomasa",             "#43A047"),   # zelená
-    "B02": ("Lignit",              "#5D4037"),   # tmavě hnědá
-    "B03": ("Plyn z uhlí",         "#8D6E63"),   # hnědá
-    "B04": ("Zemní plyn",          "#FF7043"),   # oranžová
-    "B05": ("Černé uhlí",          "#37474F"),   # tmavě šedá
-    "B06": ("Topný olej",          "#FFA000"),   # jantarová
-    "B07": ("Ropné břidlice",      "#BF360C"),   # tmavě oranžová
-    "B08": ("Rašelina",            "#795548"),   # hnědá
-    "B09": ("Geotermální",         "#00695C"),   # tmavozelená
-    "B10": ("Přečerpávací hydro",  "#29B6F6"),   # světle modrá
-    "B11": ("Průtočná voda",       "#1E88E5"),   # modrá
-    "B12": ("Vodní nádrž",         "#1565C0"),   # tmavě modrá
-    "B13": ("Mořská",              "#006064"),   # teal
-    "B14": ("Jaderná",             "#7B1FA2"),   # fialová
-    "B15": ("Ostatní OZE",         "#66BB6A"),   # světle zelená
-    "B16": ("Solární",             "#F9A825"),   # žlutá
-    "B17": ("Odpad",               "#78909C"),   # modro-šedá
-    "B18": ("Vítr offshore",       "#00838F"),   # tmavý cyan
-    "B19": ("Vítr onshore",        "#00ACC1"),   # cyan
-    "B20": ("Ostatní",             "#90A4AE"),   # světle šedá
+    "B01": ("Biomasa",             "#43A047"),
+    "B02": ("Lignit",              "#5D4037"),
+    "B03": ("Plyn z uhlí",         "#8D6E63"),
+    "B04": ("Zemní plyn",          "#FF7043"),
+    "B05": ("Černé uhlí",          "#37474F"),
+    "B06": ("Topný olej",          "#FFA000"),
+    "B09": ("Geotermální",         "#00695C"),
+    "B10": ("Přečerpávací hydro",  "#006064"),
+    "B11": ("Průtočná voda",       "#1565C0"),
+    "B12": ("Vodní nádrž",         "#0D47A1"),
+    "B14": ("Jaderná",             "#7B1FA2"),
+    "B15": ("Ostatní OZE",         "#66BB6A"),
+    "B16": ("Solární",             "#F9A825"),
+    "B17": ("Odpad",               "#78909C"),
+    "B18": ("Vítr offshore",       "#0097A7"),
+    "B19": ("Vítr onshore",        "#29B6F6"),
+    "B20": ("Ostatní",             "#90A4AE"),
 }
 
 # Zásobník barev pro neznámé kódy (vygenerované z HSL palety)
@@ -327,6 +324,30 @@ def fetch_activation_prices():
         else:
             df_act.index = df_act.index.tz_convert("Europe/Prague")
         return df_act
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60 * 30, show_spinner=False)
+def fetch_wind_solar_forecast():
+    now       = pd.Timestamp.now(tz="Europe/Prague")
+    start_day = now.normalize()
+    end_day   = start_day + pd.Timedelta(days=2)
+    try:
+        raw = client.query_wind_and_solar_forecast(
+            country_code="CZ", start=start_day, end=end_day, psr_type=None
+        )
+        if raw is None or (hasattr(raw, "empty") and raw.empty):
+            return pd.DataFrame()
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw = raw.xs("Actual Aggregated", level=1, axis=1, drop_level=True) \
+                if "Actual Aggregated" in raw.columns.get_level_values(1) \
+                else raw.xs(raw.columns.get_level_values(1)[0], level=1, axis=1, drop_level=True)
+        if raw.index.tz is None:
+            raw.index = raw.index.tz_localize("UTC").tz_convert("Europe/Prague")
+        else:
+            raw.index = raw.index.tz_convert("Europe/Prague")
+        return raw
     except Exception:
         return pd.DataFrame()
 
@@ -684,6 +705,34 @@ def fig_generation_donut(df_gen, height=280):
     return fig
 
 
+def fig_wind_solar_forecast(ws, now, height=240):
+    fig = go.Figure()
+    if ws.empty:
+        return _base_layout(fig, height=height)
+    day_start = now.normalize()
+    day_end   = day_start + pd.Timedelta(days=2)
+    ws_slice  = ws[(ws.index >= day_start) & (ws.index < day_end)]
+    colors = {"B16": ("#F9A825", "Solární prognóza"), "B19": ("#29B6F6", "Vítr onshore prognóza")}
+    for col in ws_slice.columns:
+        psr = str(col[0]) if isinstance(col, tuple) else str(col)
+        if psr in colors:
+            hex_c, label = colors[psr]
+            r = int(hex_c[1:3], 16); g = int(hex_c[3:5], 16); b = int(hex_c[5:7], 16)
+            fill_c = f"rgba({r},{g},{b},0.6)"
+            series = ws_slice[col].fillna(0)
+            fig.add_trace(go.Scatter(
+                x=series.index, y=series.values, stackgroup="ws", name=label,
+                line=dict(width=0, color=hex_c), fillcolor=fill_c,
+                hovertemplate=f"{label}: %{{y:.0f}} MW<extra></extra>",
+            ))
+    _now_marker(fig, now)
+    _base_layout(fig, height=height)
+    fig.update_xaxes(tickformat="%H:%M\n%d.%m", range=[day_start.isoformat(), day_end.isoformat()])
+    fig.update_yaxes(title_text="MW")
+    fig.update_layout(hovermode="x unified")
+    return fig
+
+
 def render_mix_legend(df_gen) -> str:
     if df_gen.empty:
         return "<div class='mix-legend'><em style='color:#888'>—</em></div>"
@@ -708,8 +757,25 @@ def render_mix_legend(df_gen) -> str:
     return f'<div class="mix-legend">{"".join(rows)}</div>'
 
 
-def fig_load(load_actual, load_fc, now, height=280):
+def fig_load(load_actual, load_fc, now, df_gen=None, height=280):
     fig = go.Figure()
+    # Generace — stacked area pod křivkami zatížení
+    if df_gen is not None and not df_gen.empty:
+        cols = list(df_gen.columns)
+        def _key(c):
+            psr = str(c[0]) if isinstance(c, tuple) else str(c)
+            return GEN_STACK_ORDER.index(psr) if psr in GEN_STACK_ORDER else 999
+        for col in sorted(cols, key=_key):
+            name, color = psr_lookup(col)
+            series = df_gen[col].fillna(0)
+            if series.sum() < 1:
+                continue
+            r = int(color[1:3], 16); g = int(color[3:5], 16); b = int(color[5:7], 16)
+            fig.add_trace(go.Scatter(
+                x=series.index, y=series.values, stackgroup="gen", name=name,
+                line=dict(width=0, color=color), fillcolor=f"rgba({r},{g},{b},0.65)",
+                hovertemplate=f"{name}: %{{y:.0f}} MW<extra></extra>",
+            ))
     if not load_fc.empty:
         fig.add_trace(go.Scatter(
             x=load_fc.index, y=load_fc.values, mode="lines",
@@ -719,13 +785,13 @@ def fig_load(load_actual, load_fc, now, height=280):
     if not load_actual.empty:
         fig.add_trace(go.Scatter(
             x=load_actual.index, y=load_actual.values, mode="lines",
-            name="Skutečnost", line=dict(color="#E91E63", width=2, shape="hv"),
+            name="Skutečnost", line=dict(color="#212121", width=2.5, shape="hv"),
             hovertemplate="<b>%{x|%a %d.%m %H:%M}</b><br>Skutečnost: %{y:,.0f} MW<extra></extra>",
         ))
     _now_marker(fig, now)
     _base_layout(fig, height=height)
     fig.update_xaxes(tickformat="%H:%M\n%d.%m")
-    fig.update_yaxes(title_text="Zatížení (MW)")
+    fig.update_yaxes(title_text="MW")
     fig.update_layout(hovermode="x unified")
     return fig
 
@@ -1175,7 +1241,8 @@ with st.spinner("Načítám data rezerv…"):
                         mfrr_d_amt=pd.DataFrame(), mfrr_d_pri=pd.DataFrame(),
                         start=now.normalize(), end=now.normalize()+pd.Timedelta(days=10), now=now)
 
-df_act = fetch_activation_prices()
+df_act  = fetch_activation_prices()
+ws_raw  = fetch_wind_solar_forecast()
 
 last_imbal = float(df_imbal["odchylka_MWh"].iloc[-1]) if not df_imbal.empty else 0.0
 
@@ -1295,12 +1362,22 @@ with tab_dash:
     st.plotly_chart(fig_activation_prices(df_act, now), use_container_width=True,
                     config={"displayModeBar": False})
 
-    st.markdown('<div class="section-title">Zatížení — skutečnost vs. prognóza D+1</div>',
+    st.markdown('<div class="section-title">Zatížení vs. Generace [MW] | D0 + D+1</div>',
                 unsafe_allow_html=True)
     if load_actual.empty and load_fc.empty:
         st.info("Data zatížení nejsou dostupná.")
     else:
-        st.plotly_chart(fig_load(load_actual, load_fc, now), use_container_width=True,
+        st.plotly_chart(
+            fig_load(load_actual, load_fc, now, df_gen=gen_raw),
+            use_container_width=True, config={"displayModeBar": False},
+        )
+
+    st.markdown('<div class="section-title">Prognóza výroby: Vítr & Solár | D0 + D+1</div>',
+                unsafe_allow_html=True)
+    if ws_raw.empty:
+        st.info("Data prognózy větru a solárů nejsou dostupná.")
+    else:
+        st.plotly_chart(fig_wind_solar_forecast(ws_raw, now), use_container_width=True,
                         config={"displayModeBar": False})
 
     st.markdown('<div class="section-title">Generace podle zdroje · Aktuální mix</div>',
