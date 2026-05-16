@@ -294,6 +294,29 @@ def fetch_dap(day_offset: int = 0):
     return raw.dropna()
 
 
+@st.cache_data(ttl=60 * 15, show_spinner=False)
+def fetch_activation_prices():
+    now   = pd.Timestamp.now(tz="Europe/Prague")
+    start = now.normalize()
+    end   = now + pd.Timedelta(hours=1)
+    try:
+        raw = client.query_activated_balancing_energy_prices(
+            country_code="CZ", start=start, end=end
+        )
+        if raw is None or raw.empty:
+            return pd.DataFrame()
+        df_act = raw.pivot_table(
+            index=raw.index, columns=["ReserveType", "Direction"], values="Price"
+        )
+        if df_act.index.tz is None:
+            df_act.index = df_act.index.tz_localize("UTC").tz_convert("Europe/Prague")
+        else:
+            df_act.index = df_act.index.tz_convert("Europe/Prague")
+        return df_act
+    except Exception:
+        return pd.DataFrame()
+
+
 def fetch_deltagreen(api_key: str):
     headers = {"x-api-key": api_key, "accept": "application/json"}
     r1 = requests.get(f"{DG_BASE}/copilot/portfolio-state",
@@ -468,6 +491,89 @@ def fig_imbalance(df, now, height=290):
     fig.update_layout(barmode="relative", bargap=.15)
     fig.update_xaxes(tickformat="%H:%M\n%d.%m")
     fig.update_yaxes(title_text="MWh / 15 min")
+    return fig
+
+
+def fig_signal(df_imbal, now, height=110):
+    """Panel signálu CHARGE / DISCHARGE / STANDBY."""
+    fig = go.Figure()
+    if df_imbal.empty:
+        return _base_layout(fig, height=height)
+    start = now.normalize()
+    end   = start + pd.Timedelta(days=1)
+    for sig, color, val in [
+        ("DISCHARGE", C_DEFICIT,  -1),
+        ("CHARGE",    C_SURPLUS,   1),
+        ("STANDBY",   C_MUTED,   0.1),
+    ]:
+        mask = df_imbal["signal"] == sig
+        if mask.any():
+            fig.add_trace(go.Bar(
+                x=df_imbal.index[mask], y=[val] * int(mask.sum()),
+                name=sig, marker_color=color, width=800_000,
+                hovertemplate=f"%{{x|%H:%M}}  {sig}<extra></extra>",
+            ))
+    _now_marker(fig, now)
+    fig.update_layout(
+        height=height, template="plotly_white", hovermode="x unified",
+        barmode="overlay", showlegend=True,
+        legend=dict(orientation="h", y=-0.35, x=0, font=dict(size=10),
+                    bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=65, r=15, t=10, b=45),
+        xaxis=dict(type="date", tickformat="%H:%M",
+                   range=[start.isoformat(), end.isoformat()], gridcolor=C_GRID),
+        yaxis=dict(tickvals=[-1, 0.1, 1], ticktext=["DISCHARGE", "STANDBY", "CHARGE"],
+                   gridcolor=C_GRID),
+    )
+    return fig
+
+
+def _act_series(df_act, reserve_kw, direction_kw) -> pd.Series:
+    """Najde sloupec v pivotovaném DataFrame cen aktivace (substring match)."""
+    for col in df_act.columns:
+        col_str = str(col).lower()
+        if reserve_kw.lower() in col_str and direction_kw.lower() in col_str:
+            s = df_act[col].dropna()
+            return s.tz_convert("Europe/Prague") if s.index.tz else s
+    return pd.Series(dtype=float)
+
+
+def fig_activation_prices(df_act, now, height=220):
+    """Graf cen aktivace záložních rezerv [EUR/MWh]."""
+    fig = go.Figure()
+    start = now.normalize()
+    end   = start + pd.Timedelta(days=1)
+    if df_act.empty:
+        fig.add_annotation(text="Data cen aktivace nejsou dostupná",
+                           x=0.5, y=0.5, xref="paper", yref="paper",
+                           showarrow=False, font=dict(size=12, color=C_MUTED))
+    else:
+        for reserve, direction, color in [
+            ("aFRR", "Up",   "#1565C0"),
+            ("aFRR", "Down", "#C62828"),
+            ("mFRR", "Up",   "#2E7D32"),
+        ]:
+            s = _act_series(df_act, reserve, direction)
+            if s.empty:
+                continue
+            fig.add_trace(go.Scatter(
+                x=s.index, y=s.values,
+                name=f"{reserve} {direction}", mode="lines",
+                line=dict(color=color, width=2),
+                hovertemplate=f"{reserve} {direction}: %{{y:,.2f}} EUR/MWh<extra></extra>",
+            ))
+    _now_marker(fig, now)
+    fig.update_layout(
+        height=height,
+        title_text="Ceny aktivace záložních rezerv [EUR/MWh]",
+        template="plotly_white", hovermode="x unified",
+        legend=dict(orientation="h", y=-0.22, x=0, font=dict(size=10),
+                    bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=65, r=15, t=40, b=55),
+        xaxis=dict(type="date", tickformat="%H:%M",
+                   range=[start.isoformat(), end.isoformat()], gridcolor=C_GRID),
+        yaxis=dict(title_text="EUR/MWh", gridcolor=C_GRID),
+    )
     return fig
 
 
@@ -855,6 +961,8 @@ with st.spinner("Načítám data rezerv…"):
                         mfrr_d_amt=pd.DataFrame(), mfrr_d_pri=pd.DataFrame(),
                         start=now.normalize(), end=now.normalize()+pd.Timedelta(days=10), now=now)
 
+df_act = fetch_activation_prices()
+
 last_imbal = float(df_imbal["odchylka_MWh"].iloc[-1]) if not df_imbal.empty else 0.0
 
 # ── BANNER ───────────────────────────────────────────────────────
@@ -956,6 +1064,14 @@ tab_dash, tab_out, tab_dap, tab_rezervy, tab_dg, tab_data = st.tabs([
 with tab_dash:
     st.markdown('<div class="section-title">Systémová odchylka</div>', unsafe_allow_html=True)
     st.plotly_chart(fig_imbalance(df_imbal, now), use_container_width=True,
+                    config={"displayModeBar": False})
+
+    st.plotly_chart(fig_signal(df_imbal, now), use_container_width=True,
+                    config={"displayModeBar": False})
+
+    st.markdown('<div class="section-title">Ceny aktivace záložních rezerv</div>',
+                unsafe_allow_html=True)
+    st.plotly_chart(fig_activation_prices(df_act, now), use_container_width=True,
                     config={"displayModeBar": False})
 
     st.markdown('<div class="section-title">Zatížení — skutečnost vs. prognóza D+1</div>',
