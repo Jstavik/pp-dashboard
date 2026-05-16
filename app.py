@@ -186,6 +186,20 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
+    with st.expander("🔋 Nastavení baterie"):
+        bat_capacity_kwh = st.number_input(
+            "Kapacita baterie [kWh]", value=100, min_value=10, max_value=10000, step=10)
+        bat_power_kw = st.number_input(
+            "Výkon baterie [kW]", value=50, min_value=5, max_value=5000, step=5)
+        max_cycles = st.slider("Max cyklů za den", min_value=1, max_value=5, value=2)
+        cycle_cost = st.number_input(
+            "Cena cyklování [EUR/MWh]", value=15.0, min_value=0.0, max_value=100.0, step=0.5,
+            help="Zahrnuje degradaci baterie + kompenzaci zákazníkovi. Průměr trhu: 12–18 EUR/MWh")
+        hold_enabled = st.checkbox(
+            "Povolit stav HOLD (drž SoC)", value=False,
+            help="Baterie drží aktuální SoC místo nabíjení/vybíjení pokud není jasný cenový signál")
+
+    st.markdown("---")
     st.markdown("### Zdroje dat")
     st.caption(
         "**ENTSO-E Transparency Platform**  \n"
@@ -963,6 +977,182 @@ def fig_reserve_prices(reserves, now, start, end, height=400):
     return _fig_reserve_simple(traces, "Rezervy — ceny [EUR/MW]", "EUR/MW", now, start, end, height)
 
 
+# ── STRATEGIE ───────────────────────────────────────────────────
+
+def simulate_battery_dap(prices, bat_capacity_kwh, bat_power_kw,
+                         max_cycles, cycle_cost, hold_enabled):
+    interval_h     = 0.25
+    soc            = 50.0
+    cycles_done    = 0.0
+    avg_price      = float(prices.mean())
+    low_threshold  = avg_price - cycle_cost / 2
+    high_threshold = avg_price + cycle_cost / 2
+    results        = []
+
+    for ts, price in prices.items():
+        if cycles_done >= max_cycles:
+            action, power = ("HOLD" if hold_enabled else "STANDBY"), 0.0
+        elif price <= low_threshold and soc < 95:
+            power  = min(bat_power_kw, (bat_capacity_kwh * (100 - soc) / 100) / interval_h)
+            soc    = min(100, soc + (power * interval_h / bat_capacity_kwh) * 100)
+            action = "CHARGE"
+        elif price >= high_threshold and soc > 5:
+            power  = -min(bat_power_kw, (bat_capacity_kwh * soc / 100) / interval_h)
+            soc    = max(0, soc + (power * interval_h / bat_capacity_kwh) * 100)
+            action = "DISCHARGE"
+            cycles_done += abs(power) * interval_h / bat_capacity_kwh
+        else:
+            action, power = ("HOLD" if hold_enabled else "STANDBY"), 0.0
+
+        revenue = -power * interval_h * price / 1000
+        results.append({"time": ts, "price": price, "action": action,
+                         "power_kw": power, "soc_pct": soc, "revenue_eur": revenue})
+
+    return pd.DataFrame(results).set_index("time"), cycles_done
+
+
+def balancing_strategy_ema(imbalance, ema_periods, threshold_mw):
+    ema    = imbalance.ewm(span=ema_periods, adjust=False).mean()
+    signal = pd.Series("STANDBY", index=imbalance.index)
+    signal[ema < -threshold_mw] = "DISCHARGE"
+    signal[ema >  threshold_mw] = "CHARGE"
+    return ema, signal
+
+
+_SIG_COLORS = {"CHARGE": "#2E7D32", "DISCHARGE": "#E65100",
+               "STANDBY": "#9E9E9E", "HOLD": "#1565C0"}
+_SIG_VALS   = {"CHARGE": 1, "DISCHARGE": -1, "STANDBY": 0, "HOLD": 0}
+_BAR_W_MS   = 900_000  # 15 min v milisekundách
+
+
+def fig_battery_strategy(df_sim, low_thresh, high_thresh, avg_price, now, height=600):
+    start_d0 = now.normalize()
+    end_d1   = start_d0 + pd.Timedelta(days=2)
+
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True,
+        specs=[[{}], [{}], [{"secondary_y": True}]],
+        subplot_titles=["DAP cena [EUR/MWh]", "SoC baterie [%]",
+                        "Signál + kumulativní P&L [EUR]"],
+        vertical_spacing=0.08,
+        row_heights=[0.35, 0.25, 0.40],
+    )
+
+    # Panel 1 — cena + prahy
+    fig.add_trace(go.Scatter(
+        x=df_sim.index, y=df_sim["price"], mode="lines", name="DAP cena",
+        line=dict(color="#1565C0", width=2),
+        hovertemplate="Cena: %{y:.2f} EUR/MWh<extra></extra>",
+    ), row=1, col=1)
+    for y_val, color, lbl in [
+        (low_thresh,  "#2E7D32", f"Nabíjecí práh ({low_thresh:.1f})"),
+        (high_thresh, "#C62828", f"Vybíjecí práh ({high_thresh:.1f})"),
+        (avg_price,   "#F9A825", f"Průměr ({avg_price:.1f})"),
+    ]:
+        fig.add_hline(y=y_val, line_color=color, line_dash="dash", line_width=1.2,
+                      annotation_text=lbl, annotation_position="right", row=1, col=1)
+
+    # Panel 2 — SoC
+    fig.add_trace(go.Scatter(
+        x=df_sim.index, y=df_sim["soc_pct"], mode="lines", name="SoC [%]",
+        fill="tozeroy", fillcolor="rgba(46,125,50,0.15)",
+        line=dict(color="#2E7D32", width=2),
+        hovertemplate="SoC: %{y:.1f} %<extra></extra>",
+    ), row=2, col=1)
+
+    # Panel 3 — signál bary
+    for action, color in _SIG_COLORS.items():
+        mask = df_sim["action"] == action
+        if not mask.any():
+            continue
+        fig.add_trace(go.Bar(
+            x=df_sim.index[mask], y=[_SIG_VALS[action]] * int(mask.sum()),
+            name=action, marker_color=color, width=_BAR_W_MS,
+            hovertemplate=f"{action}: %{{x|%a %H:%M}}<extra></extra>",
+        ), row=3, col=1, secondary_y=False)
+
+    # Panel 3 — kumulativní P&L (pravá osa)
+    cum_pnl = df_sim["revenue_eur"].cumsum()
+    fig.add_trace(go.Scatter(
+        x=df_sim.index, y=cum_pnl, mode="lines", name="Kum. P&L [EUR]",
+        line=dict(color="#212121", width=2),
+        hovertemplate="P&L: %{y:.2f} EUR<extra></extra>",
+    ), row=3, col=1, secondary_y=True)
+
+    fig.update_layout(
+        height=height, template="plotly_white", hovermode="x unified", barmode="overlay",
+        title_text=f"Strategie baterie — D0+D+1 ({now.strftime('%d.%m.%Y')})",
+        legend=dict(orientation="h", y=-0.07, x=0, font=dict(size=10),
+                    bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=65, r=70, t=50, b=60),
+        xaxis=dict(type="date", gridcolor=C_GRID,
+                   range=[start_d0.isoformat(), end_d1.isoformat()]),
+    )
+    fig.update_yaxes(title_text="EUR/MWh", gridcolor=C_GRID, row=1, col=1)
+    fig.update_yaxes(title_text="%", gridcolor=C_GRID, row=2, col=1, range=[0, 105])
+    fig.update_yaxes(title_text="Signál", gridcolor=C_GRID, row=3, col=1,
+                     secondary_y=False,
+                     tickvals=[-1, 0, 1], ticktext=["DISCHARGE", "STANDBY", "CHARGE"])
+    fig.update_yaxes(title_text="EUR", row=3, col=1, secondary_y=True, showgrid=False)
+    return fig
+
+
+def fig_balancing_strategy(df_imbal, ema, signal, threshold_mw, now, height=380):
+    start = now.normalize()
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        vertical_spacing=0.10,
+        subplot_titles=["Odchylka + EMA predikce [MWh/15min]", "Signál"],
+        row_heights=[0.65, 0.35],
+    )
+
+    # Panel 1 — odchylka bary + EMA + prahy
+    surplus = df_imbal["odchylka_MWh"] >= 0
+    fig.add_trace(go.Bar(
+        x=df_imbal.index[surplus], y=df_imbal.loc[surplus, "odchylka_MWh"],
+        marker_color=C_SURPLUS, name="Surplus",
+        hovertemplate="+%{y:.1f} MWh<extra>Surplus</extra>",
+    ), row=1, col=1)
+    fig.add_trace(go.Bar(
+        x=df_imbal.index[~surplus], y=df_imbal.loc[~surplus, "odchylka_MWh"],
+        marker_color=C_DEFICIT, name="Deficit",
+        hovertemplate="%{y:.1f} MWh<extra>Deficit</extra>",
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=ema.index, y=ema.values, mode="lines", name="EMA predikce",
+        line=dict(color="#E65100", width=2),
+        hovertemplate="EMA: %{y:.1f} MWh<extra></extra>",
+    ), row=1, col=1)
+    for y_val, color in [(threshold_mw, "#2E7D32"), (-threshold_mw, "#E65100")]:
+        fig.add_hline(y=y_val, line_color=color, line_dash="dash", line_width=1, row=1, col=1)
+    fig.add_vline(x=now.isoformat(), line_color=C_SURPLUS, line_width=1.5)
+
+    # Panel 2 — signál bary
+    sig_vals = {"DISCHARGE": -1, "STANDBY": 0, "CHARGE": 1}
+    for action, color in [("DISCHARGE", "#E65100"), ("STANDBY", "#9E9E9E"), ("CHARGE", "#2E7D32")]:
+        mask = signal == action
+        if not mask.any():
+            continue
+        fig.add_trace(go.Bar(
+            x=signal.index[mask], y=[sig_vals[action]] * int(mask.sum()),
+            name=f"{action}", marker_color=color, width=_BAR_W_MS,
+            hovertemplate=f"{action}: %{{x|%H:%M}}<extra></extra>",
+        ), row=2, col=1)
+
+    fig.update_layout(
+        height=height, template="plotly_white", hovermode="x unified", barmode="overlay",
+        legend=dict(orientation="h", y=-0.12, x=0, font=dict(size=10),
+                    bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=65, r=15, t=40, b=60),
+        xaxis=dict(type="date", tickformat="%H:%M",
+                   range=[start.isoformat(), now.isoformat()], gridcolor=C_GRID),
+    )
+    fig.update_yaxes(title_text="MWh", gridcolor=C_GRID, row=1, col=1)
+    fig.update_yaxes(title_text="Signál", gridcolor=C_GRID, row=2, col=1,
+                     tickvals=[-1, 0, 1], ticktext=["DISCHARGE", "STANDBY", "CHARGE"])
+    return fig
+
+
 # ── NAČTENÍ DAT ──────────────────────────────────────────────────
 with st.spinner("Načítám data z ENTSO-E…"):
     try:
@@ -1146,6 +1336,43 @@ with tab_dash:
             use_container_width=True, config={"displayModeBar": False},
         )
 
+    # ── Balancing strategie ───────────────────────────────────────
+    st.markdown('<div class="section-title">Balancing strategie</div>', unsafe_allow_html=True)
+    st.info(
+        "ℹ️ Data systémové odchylky mají zpoždění ~15 min. "
+        "EMA (Exponential Moving Average) dává větší váhu posledním intervalům "
+        "a slouží jako proxy pro odhad aktuálního stavu soustavy. "
+        "Zákazníci v balancing segmentu pomáhají síti a jsou za to benefitováni."
+    )
+    st.subheader("⚡ Balancing strategie (EMA predikce)")
+    _bc1, _bc2, _bc3 = st.columns(3)
+    with _bc1:
+        ema_periods = st.slider("EMA okno [ISP]", 1, 8, 4,
+                                help="Počet 15min intervalů pro EMA predikci. 4 ISP = 1 hodina.")
+    with _bc2:
+        threshold_mw = st.slider("Práh zásahu [MWh]", 10, 150, 50,
+                                 help="Minimální predikovaná odchylka pro aktivaci signálu. "
+                                      "Vyšší = méně zásahů, nižší = agresivnější balancing.")
+    with _bc3:
+        benefit_eur_mwh = st.number_input("Benefit zákazníka [EUR/MWh]", value=8.0,
+                                          help="Kolik EUR/MWh zákazník vydělá za pomoc síti.")
+
+    if not df_imbal.empty:
+        _ema, _signal = balancing_strategy_ema(
+            df_imbal["odchylka_MWh"], ema_periods, threshold_mw
+        )
+        st.plotly_chart(
+            fig_balancing_strategy(df_imbal, _ema, _signal, threshold_mw, now),
+            use_container_width=True, config={"displayModeBar": False},
+        )
+        _n_int = int((_signal != "STANDBY").sum())
+        _benefit = _n_int * 0.25 * benefit_eur_mwh
+        _bm1, _bm2 = st.columns(2)
+        _bm1.metric("Počet zásahů dnes", _n_int)
+        _bm2.metric("Odhadovaný benefit zákazníka", f"{_benefit:.2f} EUR/den")
+    else:
+        st.info("Data odchylky nejsou dostupná.")
+
 # ──────────── TAB 2: ODSTÁVKY ─────────────────────────────────────
 with tab_out:
     st.markdown(f'<div class="section-title">Výrobní jednotky (PU) — {n_pu} aktivních</div>',
@@ -1218,6 +1445,35 @@ with tab_dap:
             fig_reserve_prices(reserves, now, dap_start, dap_end, height=320),
             use_container_width=True, config={"displayModeBar": False},
         )
+
+    # ── Strategie baterie ─────────────────────────────────────────
+    st.markdown('<div class="section-title">Strategie baterie</div>', unsafe_allow_html=True)
+    st.info(
+        "ℹ️ Strategie nabíjí baterii při nízkých cenách a vybíjí při vysokých. "
+        "Cena cyklování zahrnuje degradaci baterie a kompenzaci zákazníkovi. "
+        "Strategie cykluje maximálně N×/den aby chránila životnost baterie."
+    )
+    _prices_combined = pd.concat([s_d0, s_d1]).sort_index().dropna()
+    if not _prices_combined.empty:
+        _avg = float(_prices_combined.mean())
+        _low = _avg - cycle_cost / 2
+        _hig = _avg + cycle_cost / 2
+        _df_sim, _cycles_done = simulate_battery_dap(
+            _prices_combined, bat_capacity_kwh, bat_power_kw,
+            max_cycles, cycle_cost, hold_enabled,
+        )
+        st.plotly_chart(
+            fig_battery_strategy(_df_sim, _low, _hig, _avg, now),
+            use_container_width=True, config={"displayModeBar": False},
+        )
+        _total_rev = float(_df_sim["revenue_eur"].sum())
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Celkový výnos D0+D+1", f"{_total_rev:.2f} EUR")
+        m2.metric("Počet cyklů", f"{_cycles_done:.1f} / {max_cycles}")
+        m3.metric("Výnos vs. bez strategie", f"{_total_rev:+.2f} EUR",
+                  help="Porovnání s pasivní strategií (baterie nečinná)")
+    else:
+        st.info("DAP data nejsou dostupná pro simulaci.")
 
 # ──────────── TAB 4: REZERVY ─────────────────────────────────────
 with tab_rezervy:
