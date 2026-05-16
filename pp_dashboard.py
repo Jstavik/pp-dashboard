@@ -693,148 +693,86 @@ def plot_load(load_actual: pd.Series, load_fc: pd.Series, now: pd.Timestamp):
 
 # ── BLOK: 15_fetch_reserves ─────────────────────────────────────
 def fetch_reserves(now: pd.Timestamp) -> dict:
-    """
-    Stáhne contracted reserve amounts + prices pro CZ:
-      A01 (denní)  — D-7 až D+1 (historická data)
-      A04 (roční)  — 2026-01-01 až 2026-07-01 (rovná čára)
-    Vrací dict s klíči a01_amount, a01_price, a04_amount, a04_price.
-    """
-    start    = now.normalize() - pd.Timedelta(days=7)
-    end      = now.normalize() + pd.Timedelta(days=1)
-    start_yr = pd.Timestamp("2026-01-01", tz="Europe/Prague")
-    end_yr   = pd.Timestamp("2026-07-01", tz="Europe/Prague")
+    start    = now.normalize()
+    end      = now.normalize() + pd.Timedelta(days=10)
+    start_yr = pd.Timestamp(f"{now.year}-01-01", tz="Europe/Prague")
+    end_yr   = pd.Timestamp(f"{now.year}-07-01", tz="Europe/Prague")
+    if now.month >= 7:
+        start_yr = pd.Timestamp(f"{now.year}-07-01", tz="Europe/Prague")
+        end_yr   = pd.Timestamp(f"{now.year+1}-01-01", tz="Europe/Prague")
 
-    def _q(fn, *a, **kw):
+    def _q(fn, pt, ma, s, e):
         try:
-            r = fn(*a, **kw)
-            return r if r is not None else pd.DataFrame()
-        except Exception as e:
-            print(f"  [WARN] rezervy: {e}")
+            return fn(country_code="CZ", start=s, end=e,
+                      process_type=pt, type_marketagreement_type=ma)
+        except Exception as ex:
+            print(f"  [WARN] {pt}/{ma}: {ex}")
             return pd.DataFrame()
 
     return dict(
-        a01_amount = _q(client.query_contracted_reserve_amount, "CZ", start, end, "A01"),
-        a01_price  = _q(client.query_contracted_reserve_prices,  "CZ", start, end, "A01"),
-        a04_amount = _q(client.query_contracted_reserve_amount, "CZ", start_yr, end_yr, "A04"),
-        a04_price  = _q(client.query_contracted_reserve_prices,  "CZ", start_yr, end_yr, "A04"),
-        start = start,
-        end   = end,
+        afrr_d_amt = _q(client.query_contracted_reserve_amount, "A51", "A01", start, end),
+        afrr_d_pri = _q(client.query_contracted_reserve_prices,  "A51", "A01", start, end),
+        afrr_y_amt = _q(client.query_contracted_reserve_amount, "A51", "A04", start_yr, end_yr),
+        afrr_y_pri = _q(client.query_contracted_reserve_prices,  "A51", "A04", start_yr, end_yr),
+        mfrr_d_amt = _q(client.query_contracted_reserve_amount, "A52", "A01", start, end),
+        mfrr_d_pri = _q(client.query_contracted_reserve_prices,  "A52", "A01", start, end),
+        start=start, end=end,
     )
-
-
-def _rseries(df, *keywords) -> pd.Series:
-    """Najde první sloupec df odpovídající klíčovému slovu (case-insensitive)."""
-    if df is None or df.empty:
-        return pd.Series(dtype=float)
-    for kw in keywords:
-        hits = [c for c in df.columns if kw.lower() in str(c).lower()]
-        if hits:
-            s = df[hits[0]].dropna()
-            if hasattr(s.index, "tz") and s.index.tz is not None:
-                s = s.tz_convert("Europe/Prague")
-            return s
-    num = df.select_dtypes("number").columns.tolist()
-    if num:
-        s = df[num[0]].dropna()
-        if hasattr(s.index, "tz") and s.index.tz is not None:
-            s = s.tz_convert("Europe/Prague")
-        return s
-    return pd.Series(dtype=float)
-
-
-_R_TRACES = [
-    # (amount_key, price_key, name_base, color, dash, width)
-    ("a01_amount", "a01_price", "aFRR A01 Up ↑",   "#1565C0", "solid", 2.0),
-    ("a01_amount", "a01_price", "aFRR A01 Down ↓",  "#C62828", "solid", 2.0),
-    ("a04_amount", "a04_price", "aFRR A04 Up ↑",   "#42A5F5", "dash",  1.8),
-    ("a04_amount", "a04_price", "aFRR A04 Down ↓",  "#EF5350", "dash",  1.8),
-    ("a01_amount", "a01_price", "mFRR A01 Sym",     "#2E7D32", "solid", 2.0),
-]
-_R_KEYWORDS = [
-    ("up",   "Up"),
-    ("down", "Down"),
-    ("up",   "Up"),
-    ("down", "Down"),
-    ("sym",  "Symm", "Symmetric"),
-]
 
 
 def plot_reserves(reserves: dict, now: pd.Timestamp):
-    """
-    Graf 1 — Objemy [MW]: aFRR A01 Up/Down + A04 Up/Down + mFRR A01 Sym
-    Graf 2 — Ceny [EUR/MW]: stejná struktura, stejné barvy, data z prices
-    """
-    start = reserves["start"]
-    end   = reserves["end"]
-    xaxis = dict(
-        type="date",
-        tickformat="%a %d.%m",
-        range=[start.isoformat(), end.isoformat()],
-        gridcolor="#E8EAED",
-    )
+    start   = reserves["start"]
+    end     = reserves["end"]
+    now_iso = now.isoformat()
+    xaxis   = dict(type="date", tickformat="%a %d.%m",
+                   range=[start.isoformat(), end.isoformat()],
+                   gridcolor="#E8EAED")
 
-    # ── Graf 1: Objemy [MW] ───────────────────────────────────────
-    fig1 = go.Figure()
-    for (amt_key, _, name_base, color, dash, width), kws in zip(_R_TRACES, _R_KEYWORDS):
-        s = _rseries(reserves[amt_key], *kws)
-        if s.empty:
-            continue
-        name = f"{name_base} [MW]"
-        fig1.add_trace(go.Scatter(
-            x=s.index, y=s.values, name=name, mode="lines",
-            line=dict(color=color, width=width, dash=dash),
-            hovertemplate=f"{name}: %{{y:,.0f}}<extra></extra>",
-        ))
-    fig1.add_vline(x=now.isoformat(), line_color="#1565C0", line_width=1.5)
-    fig1.update_layout(
-        height=420,
-        title_text=f"Rezervy — objemy [MW] ({now.strftime('%d.%m.%Y %H:%M')})",
-        template="plotly_white", hovermode="x unified",
-        legend=dict(orientation="h", y=-0.22, x=0, font=dict(size=10),
-                    bgcolor="rgba(0,0,0,0)"),
-        margin=dict(l=65, r=20, t=40, b=70),
-        xaxis=xaxis,
-        yaxis=dict(title_text="MW", gridcolor="#E8EAED"),
-    )
-    fig1.show()
+    def get(key, col):
+        df = reserves.get(key, pd.DataFrame())
+        if df is None or df.empty: return pd.Series(dtype=float)
+        if col in df.columns:
+            s = df[col].dropna()
+            return s.tz_convert("Europe/Prague") if s.index.tz else s
+        return pd.Series(dtype=float)
 
-    # ── Graf 2: Ceny [EUR/MW] ─────────────────────────────────────
-    fig2 = go.Figure()
-    for (_, prc_key, name_base, color, dash, width), kws in zip(_R_TRACES, _R_KEYWORDS):
-        s = _rseries(reserves[prc_key], *kws)
-        if s.empty:
-            continue
-        name = f"{name_base} [€/MW]"
-        fig2.add_trace(go.Scatter(
-            x=s.index, y=s.values, name=name, mode="lines",
-            line=dict(color=color, width=width, dash=dash),
-            hovertemplate=f"{name}: %{{y:,.2f}}<extra></extra>",
-        ))
-    fig2.add_vline(x=now.isoformat(), line_color="#1565C0", line_width=1.5)
-    fig2.update_layout(
-        height=420,
-        title_text=f"Rezervy — ceny [EUR/MW] ({now.strftime('%d.%m.%Y %H:%M')})",
-        template="plotly_white", hovermode="x unified",
-        legend=dict(orientation="h", y=-0.22, x=0, font=dict(size=10),
-                    bgcolor="rgba(0,0,0,0)"),
-        margin=dict(l=65, r=20, t=40, b=70),
-        xaxis=xaxis,
-        yaxis=dict(title_text="EUR/MW", gridcolor="#E8EAED"),
-    )
-    fig2.show()
+    traces_amt = [
+        (get("afrr_d_amt", "Up"),        "aFRR denní Up",   "#1565C0", "solid"),
+        (get("afrr_d_amt", "Down"),       "aFRR denní Down", "#C62828", "solid"),
+        (get("afrr_y_amt", "Up"),         "aFRR roční Up",   "#42A5F5", "dash"),
+        (get("afrr_y_amt", "Down"),       "aFRR roční Down", "#EF5350", "dash"),
+        (get("mfrr_d_amt", "Symmetric"),  "mFRR denní",      "#2E7D32", "solid"),
+    ]
+    traces_pri = [
+        (get("afrr_d_pri", "Up"),        "aFRR denní Up",   "#1565C0", "solid"),
+        (get("afrr_d_pri", "Down"),       "aFRR denní Down", "#C62828", "solid"),
+        (get("afrr_y_pri", "Up"),         "aFRR roční Up",   "#42A5F5", "dash"),
+        (get("afrr_y_pri", "Down"),       "aFRR roční Down", "#EF5350", "dash"),
+        (get("mfrr_d_pri", "Symmetric"),  "mFRR denní",      "#2E7D32", "solid"),
+    ]
 
-    # Textový výpis aktuálních hodnot
-    sep = "─" * 56
-    print(sep)
-    print(f"  REZERVY — aktuální hodnoty ({now.strftime('%H:%M')})")
-    print(sep)
-    for (amt_key, prc_key, name_base, *_), kws in zip(_R_TRACES, _R_KEYWORDS):
-        s_mw  = _rseries(reserves[amt_key], *kws)
-        s_eur = _rseries(reserves[prc_key], *kws)
-        val_mw  = f"{s_mw.iloc[-1]:,.0f}"  if not s_mw.empty  else "—"
-        val_eur = f"{s_eur.iloc[-1]:,.2f}" if not s_eur.empty else "—"
-        print(f"  {name_base:<22s}  {val_mw:>10s} MW   {val_eur:>10s} €/MW")
-    print(sep)
+    for traces, title, yunit in [
+        (traces_amt, "Rezervy — objemy", "MW"),
+        (traces_pri, "Rezervy — ceny",   "EUR/MW"),
+    ]:
+        fig = go.Figure()
+        for series, name, color, dash in traces:
+            if series.empty: continue
+            fig.add_trace(go.Scatter(
+                x=series.index, y=series.values, name=name, mode="lines",
+                line=dict(color=color, width=2, dash=dash),
+                hovertemplate=f"{name}: %{{y:,.2f}} {yunit}<extra></extra>",
+            ))
+        fig.add_vline(x=now_iso, line_color="#1565C0", line_width=1.5)
+        fig.update_layout(
+            height=380, title_text=f"{title} [{yunit}]",
+            template="plotly_white", hovermode="x unified",
+            legend=dict(orientation="h", y=-0.25, x=0, font=dict(size=10)),
+            margin=dict(l=65, r=20, t=45, b=80),
+            xaxis=xaxis,
+            yaxis=dict(title_text=yunit, gridcolor="#E8EAED"),
+        )
+        fig.show()
 
 # ── KONEC: 15_fetch_reserves ────────────────────────────────────
 
