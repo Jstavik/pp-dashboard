@@ -541,7 +541,6 @@ def fig_activation_prices(df_act, now, height=220):
     """Graf cen aktivace záložních rezerv [EUR/MWh]."""
     fig = go.Figure()
     start = now.normalize()
-    end   = start + pd.Timedelta(days=1)
     if df_act.empty:
         fig.add_annotation(text="Data cen aktivace nejsou dostupná",
                            x=0.5, y=0.5, xref="paper", yref="paper",
@@ -570,7 +569,7 @@ def fig_activation_prices(df_act, now, height=220):
                     bgcolor="rgba(0,0,0,0)"),
         margin=dict(l=65, r=15, t=40, b=55),
         xaxis=dict(type="date", tickformat="%H:%M",
-                   range=[start.isoformat(), end.isoformat()], gridcolor=C_GRID),
+                   range=[start.isoformat(), now.isoformat()], gridcolor=C_GRID),
         yaxis=dict(title_text="EUR/MWh", gridcolor=C_GRID),
     )
     return fig
