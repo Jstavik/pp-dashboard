@@ -695,14 +695,14 @@ def plot_load(load_actual: pd.Series, load_fc: pd.Series, now: pd.Timestamp):
 def fetch_reserves(now: pd.Timestamp) -> dict:
     """
     Stáhne contracted reserve amounts + prices pro CZ:
-      A01 (denní)  — D-1 až D+7
-      A04 (roční)  — ode dneška + 12 měsíců (rovná čára)
+      A01 (denní)  — D-7 až D+1 (historická data)
+      A04 (roční)  — 2026-01-01 až 2026-07-01 (rovná čára)
     Vrací dict s klíči a01_amount, a01_price, a04_amount, a04_price.
     """
-    start    = now.normalize() - pd.Timedelta(days=1)
-    end      = now.normalize() + pd.Timedelta(days=8)
-    start_yr = now.normalize()
-    end_yr   = now.normalize() + pd.Timedelta(days=366)
+    start    = now.normalize() - pd.Timedelta(days=7)
+    end      = now.normalize() + pd.Timedelta(days=1)
+    start_yr = pd.Timestamp("2026-01-01", tz="Europe/Prague")
+    end_yr   = pd.Timestamp("2026-07-01", tz="Europe/Prague")
 
     def _q(fn, *a, **kw):
         try:
@@ -742,99 +742,85 @@ def _rseries(df, *keywords) -> pd.Series:
     return pd.Series(dtype=float)
 
 
+_R_TRACES = [
+    # (amount_key, price_key, name_base, color, dash, width)
+    ("a01_amount", "a01_price", "aFRR A01 Up ↑",   "#1565C0", "solid", 2.0),
+    ("a01_amount", "a01_price", "aFRR A01 Down ↓",  "#C62828", "solid", 2.0),
+    ("a04_amount", "a04_price", "aFRR A04 Up ↑",   "#42A5F5", "dash",  1.8),
+    ("a04_amount", "a04_price", "aFRR A04 Down ↓",  "#EF5350", "dash",  1.8),
+    ("a01_amount", "a01_price", "mFRR A01 Sym",     "#2E7D32", "solid", 2.0),
+]
+_R_KEYWORDS = [
+    ("up",   "Up"),
+    ("down", "Down"),
+    ("up",   "Up"),
+    ("down", "Down"),
+    ("sym",  "Symm", "Symmetric"),
+]
+
+
 def plot_reserves(reserves: dict, now: pd.Timestamp):
     """
-    Graf 1 — aFRR (A01 denní + A04 roční): Up/Down množství (MW) + ceny (EUR/MW)
-    Graf 2 — mFRR (A01 denní): Symmetric množství (MW) + cena (EUR/MW)
-    Levá osa = MW, pravá osa = EUR/MW.
+    Graf 1 — Objemy [MW]: aFRR A01 Up/Down + A04 Up/Down + mFRR A01 Sym
+    Graf 2 — Ceny [EUR/MW]: stejná struktura, stejné barvy, data z prices
     """
     start = reserves["start"]
     end   = reserves["end"]
+    xaxis = dict(
+        type="date",
+        tickformat="%a %d.%m",
+        range=[start.isoformat(), end.isoformat()],
+        gridcolor="#E8EAED",
+    )
 
-    # ── Graf 1: aFRR ──────────────────────────────────────────────
-    a01_up_mw    = _rseries(reserves["a01_amount"], "up",   "Up")
-    a01_down_mw  = _rseries(reserves["a01_amount"], "down", "Down")
-    a04_up_mw    = _rseries(reserves["a04_amount"], "up",   "Up")
-    a04_down_mw  = _rseries(reserves["a04_amount"], "down", "Down")
-    a01_up_eur   = _rseries(reserves["a01_price"],  "up",   "Up")
-    a01_down_eur = _rseries(reserves["a01_price"],  "down", "Down")
-    a04_up_eur   = _rseries(reserves["a04_price"],  "up",   "Up")
-    a04_down_eur = _rseries(reserves["a04_price"],  "down", "Down")
-
-    from plotly.subplots import make_subplots as _msp
-    fig1 = _msp(specs=[[{"secondary_y": True}]])
-
-    CU, CD, CU2, CD2 = "#1565C0", "#C62828", "#42A5F5", "#EF5350"
-
-    for series, name, color, dash, sec, width in [
-        (a01_up_mw,    "A01 Up ↑ [MW]",     CU,  "solid",   False, 2.2),
-        (a01_down_mw,  "A01 Down ↓ [MW]",   CD,  "solid",   False, 2.2),
-        (a04_up_mw,    "A04 Up ↑ [MW]",     CU,  "dash",    False, 2.0),
-        (a04_down_mw,  "A04 Down ↓ [MW]",   CD,  "dash",    False, 2.0),
-        (a01_up_eur,   "A01 Up ↑ [€/MW]",   CU2, "dot",     True,  1.5),
-        (a01_down_eur, "A01 Down ↓ [€/MW]", CD2, "dot",     True,  1.5),
-        (a04_up_eur,   "A04 Up ↑ [€/MW]",   CU2, "dashdot", True,  1.5),
-        (a04_down_eur, "A04 Down ↓ [€/MW]", CD2, "dashdot", True,  1.5),
-    ]:
-        if series.empty:
+    # ── Graf 1: Objemy [MW] ───────────────────────────────────────
+    fig1 = go.Figure()
+    for (amt_key, _, name_base, color, dash, width), kws in zip(_R_TRACES, _R_KEYWORDS):
+        s = _rseries(reserves[amt_key], *kws)
+        if s.empty:
             continue
+        name = f"{name_base} [MW]"
         fig1.add_trace(go.Scatter(
-            x=series.index, y=series.values, name=name, mode="lines",
+            x=s.index, y=s.values, name=name, mode="lines",
             line=dict(color=color, width=width, dash=dash),
-            hovertemplate=f"{name}: %{{y:,.1f}}<extra></extra>",
-        ), secondary_y=sec)
-
+            hovertemplate=f"{name}: %{{y:,.0f}}<extra></extra>",
+        ))
     fig1.add_vline(x=now.isoformat(), line_color="#1565C0", line_width=1.5)
     fig1.update_layout(
         height=420,
-        title_text=f"aFRR — rezervy a ceny CZ ({now.strftime('%d.%m.%Y %H:%M')})",
+        title_text=f"Rezervy — objemy [MW] ({now.strftime('%d.%m.%Y %H:%M')})",
         template="plotly_white", hovermode="x unified",
-        legend=dict(orientation="h", y=-0.22, x=0, font=dict(size=10)),
-        margin=dict(l=65, r=70, t=45, b=75),
-        xaxis=dict(
-            type="date",
-            tickformat="%a %d.%m\n%H:%M",
-            range=[start.isoformat(), end.isoformat()],
-        ),
+        legend=dict(orientation="h", y=-0.22, x=0, font=dict(size=10),
+                    bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=65, r=20, t=40, b=70),
+        xaxis=xaxis,
+        yaxis=dict(title_text="MW", gridcolor="#E8EAED"),
     )
-    fig1.update_yaxes(title_text="MW",     secondary_y=False)
-    fig1.update_yaxes(title_text="EUR/MW", secondary_y=True, showgrid=False)
     fig1.show()
 
-    # ── Graf 2: mFRR ──────────────────────────────────────────────
-    sym_mw  = _rseries(reserves["a01_amount"], "sym", "Symm", "Symmetric")
-    sym_eur = _rseries(reserves["a01_price"],  "sym", "Symm", "Symmetric")
-
-    fig2 = _msp(specs=[[{"secondary_y": True}]])
-    CS, CS2 = "#2E7D32", "#66BB6A"
-
-    for series, name, color, dash, sec, width in [
-        (sym_mw,  "A01 Symmetric [MW]",   CS,  "solid", False, 2.2),
-        (sym_eur, "A01 Symmetric [€/MW]", CS2, "dot",   True,  1.5),
-    ]:
-        if series.empty:
+    # ── Graf 2: Ceny [EUR/MW] ─────────────────────────────────────
+    fig2 = go.Figure()
+    for (_, prc_key, name_base, color, dash, width), kws in zip(_R_TRACES, _R_KEYWORDS):
+        s = _rseries(reserves[prc_key], *kws)
+        if s.empty:
             continue
+        name = f"{name_base} [€/MW]"
         fig2.add_trace(go.Scatter(
-            x=series.index, y=series.values, name=name, mode="lines",
+            x=s.index, y=s.values, name=name, mode="lines",
             line=dict(color=color, width=width, dash=dash),
-            hovertemplate=f"{name}: %{{y:,.1f}}<extra></extra>",
-        ), secondary_y=sec)
-
+            hovertemplate=f"{name}: %{{y:,.2f}}<extra></extra>",
+        ))
     fig2.add_vline(x=now.isoformat(), line_color="#1565C0", line_width=1.5)
     fig2.update_layout(
-        height=380,
-        title_text=f"mFRR — rezervy a ceny CZ ({now.strftime('%d.%m.%Y %H:%M')})",
+        height=420,
+        title_text=f"Rezervy — ceny [EUR/MW] ({now.strftime('%d.%m.%Y %H:%M')})",
         template="plotly_white", hovermode="x unified",
-        legend=dict(orientation="h", y=-0.22, x=0, font=dict(size=10)),
-        margin=dict(l=65, r=70, t=45, b=75),
-        xaxis=dict(
-            type="date",
-            tickformat="%a %d.%m\n%H:%M",
-            range=[start.isoformat(), end.isoformat()],
-        ),
+        legend=dict(orientation="h", y=-0.22, x=0, font=dict(size=10),
+                    bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=65, r=20, t=40, b=70),
+        xaxis=xaxis,
+        yaxis=dict(title_text="EUR/MW", gridcolor="#E8EAED"),
     )
-    fig2.update_yaxes(title_text="MW",     secondary_y=False)
-    fig2.update_yaxes(title_text="EUR/MW", secondary_y=True, showgrid=False)
     fig2.show()
 
     # Textový výpis aktuálních hodnot
@@ -842,18 +828,12 @@ def plot_reserves(reserves: dict, now: pd.Timestamp):
     print(sep)
     print(f"  REZERVY — aktuální hodnoty ({now.strftime('%H:%M')})")
     print(sep)
-    for label, s in [
-        ("aFRR A01 Up MW",     a01_up_mw),
-        ("aFRR A01 Down MW",   a01_down_mw),
-        ("aFRR A04 Up MW",     a04_up_mw),
-        ("aFRR A04 Down MW",   a04_down_mw),
-        ("aFRR A01 Up €/MW",   a01_up_eur),
-        ("aFRR A01 Down €/MW", a01_down_eur),
-        ("mFRR A01 Sym MW",    sym_mw),
-        ("mFRR A01 Sym €/MW",  sym_eur),
-    ]:
-        val = f"{s.iloc[-1]:,.1f}" if not s.empty else "—"
-        print(f"  {label:<22s}  {val:>10s}")
+    for (amt_key, prc_key, name_base, *_), kws in zip(_R_TRACES, _R_KEYWORDS):
+        s_mw  = _rseries(reserves[amt_key], *kws)
+        s_eur = _rseries(reserves[prc_key], *kws)
+        val_mw  = f"{s_mw.iloc[-1]:,.0f}"  if not s_mw.empty  else "—"
+        val_eur = f"{s_eur.iloc[-1]:,.2f}" if not s_eur.empty else "—"
+        print(f"  {name_base:<22s}  {val_mw:>10s} MW   {val_eur:>10s} €/MW")
     print(sep)
 
 # ── KONEC: 15_fetch_reserves ────────────────────────────────────

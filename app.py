@@ -735,14 +735,18 @@ def calc_dap_stats(s: pd.Series) -> dict:
 def fetch_reserves():
     """
     Stáhne contracted reserve amounts + prices pro CZ:
-      A01 (denní)  — D-1 až D+7
-      A04 (roční)  — ode dneška + 12 měsíců (vrátí rovnou čáru)
+      A01 (denní)  — D-7 až D+7 (historická data + co ENTSO-E poskytne dopředu)
+      A04 (roční)  — aktuální pololetní kontrakt (dynamicky)
     """
     now      = pd.Timestamp.now(tz="Europe/Prague")
-    start    = now.normalize() - pd.Timedelta(days=1)
-    end      = now.normalize() + pd.Timedelta(days=8)
-    start_yr = now.normalize()
-    end_yr   = now.normalize() + pd.Timedelta(days=366)
+    start    = now.normalize() - pd.Timedelta(days=7)
+    end      = now.normalize() + pd.Timedelta(days=8)   # D+7 včetně
+    if now.month < 7:
+        start_yr = pd.Timestamp(f"{now.year}-01-01", tz="Europe/Prague")
+        end_yr   = pd.Timestamp(f"{now.year}-07-01", tz="Europe/Prague")
+    else:
+        start_yr = pd.Timestamp(f"{now.year}-07-01", tz="Europe/Prague")
+        end_yr   = pd.Timestamp(f"{now.year + 1}-01-01", tz="Europe/Prague")
 
     def _q(fn, *a, **kw):
         try:
@@ -784,14 +788,14 @@ def _rseries(df, *keywords) -> pd.Series:
     return pd.Series(dtype=float)
 
 
-def _fig_reserve(traces_cfg, title, now, start, end, height=400):
+def _fig_reserve_simple(traces_cfg, title, y_label, now, start, end, height=380):
     """
-    Sdílený layout pro aFRR i mFRR.
-    traces_cfg: list of (series, name, color, dash, secondary_y, width)
+    Sdílený layout pro grafy rezerv — jednoduchá osa Y (bez secondary_y).
+    traces_cfg: list of (series, name, color, dash, width, hover_fmt)
     """
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig = go.Figure()
     has_data = False
-    for series, name, color, dash, sec, width in traces_cfg:
+    for series, name, color, dash, width, hover_fmt in traces_cfg:
         if series.empty:
             continue
         has_data = True
@@ -799,8 +803,8 @@ def _fig_reserve(traces_cfg, title, now, start, end, height=400):
             x=series.index, y=series.values,
             name=name, mode="lines",
             line=dict(color=color, width=width, dash=dash),
-            hovertemplate=f"{name}: %{{y:,.1f}}<extra></extra>",
-        ), secondary_y=sec)
+            hovertemplate=f"{name}: %{{y:{hover_fmt}}}<extra></extra>",
+        ))
     if not has_data:
         fig.add_annotation(text="Data nejsou dostupná",
                            x=0.5, y=0.5, xref="paper", yref="paper",
@@ -812,66 +816,59 @@ def _fig_reserve(traces_cfg, title, now, start, end, height=400):
         title_text=title,
         template="plotly_white",
         hovermode="x unified",
-        legend=dict(orientation="h", y=-0.24, x=0, font=dict(size=10),
+        legend=dict(orientation="h", y=-0.22, x=0, font=dict(size=10),
                     bgcolor="rgba(0,0,0,0)"),
-        margin=dict(l=65, r=70, t=40, b=75),
+        margin=dict(l=65, r=20, t=40, b=70),
         xaxis=dict(
             type="date",
-            tickformat="%a %d.%m\n%H:%M",
+            tickformat="%a %d.%m",
             range=[start.isoformat(), end.isoformat()],
             gridcolor=C_GRID,
         ),
+        yaxis=dict(title_text=y_label, gridcolor=C_GRID),
     )
-    fig.update_yaxes(title_text="MW",     secondary_y=False, gridcolor=C_GRID)
-    fig.update_yaxes(title_text="EUR/MW", secondary_y=True,  showgrid=False)
     return fig
 
 
-def fig_afrr(reserves, now, start, end, height=420):
-    """
-    aFRR: A01 (denní) + A04 (roční) — Up/Down množství (MW) + ceny (EUR/MW).
-    Plné čáry = MW (levá osa), tečkované = EUR/MW (pravá osa).
-    """
-    a01_up_mw    = _rseries(reserves["a01_amount"], "up",   "Up")
-    a01_down_mw  = _rseries(reserves["a01_amount"], "down", "Down")
-    a04_up_mw    = _rseries(reserves["a04_amount"], "up",   "Up")
-    a04_down_mw  = _rseries(reserves["a04_amount"], "down", "Down")
-    a01_up_eur   = _rseries(reserves["a01_price"],  "up",   "Up")
-    a01_down_eur = _rseries(reserves["a01_price"],  "down", "Down")
-    a04_up_eur   = _rseries(reserves["a04_price"],  "up",   "Up")
-    a04_down_eur = _rseries(reserves["a04_price"],  "down", "Down")
-
-    # barvy: Up = modrá, Down = červená; světlejší odstín pro ceny
-    CU, CD     = "#1565C0", "#C62828"
-    CU2, CD2   = "#42A5F5", "#EF5350"
-
-    traces = [
-        (a01_up_mw,    "A01 Up ↑ [MW]",     CU,  "solid",   False, 2.2),
-        (a01_down_mw,  "A01 Down ↓ [MW]",   CD,  "solid",   False, 2.2),
-        (a04_up_mw,    "A04 Up ↑ [MW]",     CU,  "dash",    False, 2.0),
-        (a04_down_mw,  "A04 Down ↓ [MW]",   CD,  "dash",    False, 2.0),
-        (a01_up_eur,   "A01 Up ↑ [€/MW]",   CU2, "dot",     True,  1.5),
-        (a01_down_eur, "A01 Down ↓ [€/MW]", CD2, "dot",     True,  1.5),
-        (a04_up_eur,   "A04 Up ↑ [€/MW]",   CU2, "dashdot", True,  1.5),
-        (a04_down_eur, "A04 Down ↓ [€/MW]", CD2, "dashdot", True,  1.5),
-    ]
-    return _fig_reserve(traces, "aFRR — rezervy a ceny CZ", now, start, end, height)
+# Společné barvy a čáry pro oba grafy (volumes i prices)
+_R_TRACES = [
+    # (amount_key, price_key, name_base, color, dash, width)
+    ("a01_amount", "a01_price", "aFRR A01 Up ↑",   "#1565C0", "solid", 2.0),
+    ("a01_amount", "a01_price", "aFRR A01 Down ↓",  "#C62828", "solid", 2.0),
+    ("a04_amount", "a04_price", "aFRR A04 Up ↑",   "#42A5F5", "dash",  1.8),
+    ("a04_amount", "a04_price", "aFRR A04 Down ↓",  "#EF5350", "dash",  1.8),
+    ("a01_amount", "a01_price", "mFRR A01 Sym",     "#2E7D32", "solid", 2.0),
+]
+# Klíčová slova pro extrakci sloupců (jedno za každý řádek výše)
+_R_KEYWORDS = [
+    ("up",   "Up"),
+    ("down", "Down"),
+    ("up",   "Up"),
+    ("down", "Down"),
+    ("sym",  "Symm", "Symmetric"),
+]
 
 
-def fig_mfrr(reserves, now, start, end, height=380):
-    """
-    mFRR: A01 (denní) — Symmetric množství (MW) + cena (EUR/MW).
-    """
-    sym_mw  = _rseries(reserves["a01_amount"], "sym", "Symm", "Symmetric")
-    sym_eur = _rseries(reserves["a01_price"],  "sym", "Symm", "Symmetric")
+def fig_reserve_volumes(reserves, now, start, end, height=400):
+    """Graf 1 — Objemy [MW]: aFRR A01 Up/Down + A04 Up/Down + mFRR A01 Sym."""
+    traces = []
+    for (amt_key, _, name_base, color, dash, width), kws in zip(_R_TRACES, _R_KEYWORDS):
+        s = _rseries(reserves[amt_key], *kws)
+        traces.append((s, f"{name_base} [MW]", color, dash, width, ",.0f"))
+    return _fig_reserve_simple(
+        traces, "Rezervy — objemy [MW]", "MW", now, start, end, height,
+    )
 
-    CS, CS2 = "#2E7D32", "#66BB6A"
 
-    traces = [
-        (sym_mw,  "A01 Symmetric [MW]",    CS,  "solid", False, 2.2),
-        (sym_eur, "A01 Symmetric [€/MW]",  CS2, "dot",   True,  1.5),
-    ]
-    return _fig_reserve(traces, "mFRR — rezervy a ceny CZ", now, start, end, height)
+def fig_reserve_prices(reserves, now, start, end, height=400):
+    """Graf 2 — Ceny [EUR/MW]: stejná struktura, stejné barvy, data z prices."""
+    traces = []
+    for (_, prc_key, name_base, color, dash, width), kws in zip(_R_TRACES, _R_KEYWORDS):
+        s = _rseries(reserves[prc_key], *kws)
+        traces.append((s, f"{name_base} [€/MW]", color, dash, width, ",.2f"))
+    return _fig_reserve_simple(
+        traces, "Rezervy — ceny [EUR/MW]", "EUR/MW", now, start, end, height,
+    )
 
 
 # ── NAČTENÍ DAT ──────────────────────────────────────────────────
@@ -893,7 +890,7 @@ with st.spinner("Načítám data rezerv…"):
     except Exception:
         reserves = dict(a01_amount=pd.DataFrame(), a01_price=pd.DataFrame(),
                         a04_amount=pd.DataFrame(), a04_price=pd.DataFrame(),
-                        start=now.normalize()-pd.Timedelta(days=1),
+                        start=now.normalize()-pd.Timedelta(days=7),
                         end=now.normalize()+pd.Timedelta(days=8), now=now)
 
 last_imbal = float(df_imbal["odchylka_MWh"].iloc[-1]) if not df_imbal.empty else 0.0
@@ -1023,6 +1020,23 @@ with tab_dash:
         st.markdown('<div class="section-title">Mix</div>', unsafe_allow_html=True)
         st.markdown(render_mix_legend(gen_raw), unsafe_allow_html=True)
 
+    # Rezervy — D0 (stejná granularita jako odchylka)
+    st.markdown('<div class="section-title">aFRR + mFRR — D0 (objemy a ceny)</div>',
+                unsafe_allow_html=True)
+    _d0_start = now.normalize()
+    _d0_end   = now.normalize() + pd.Timedelta(days=1)
+    rd1, rd2  = st.columns(2)
+    with rd1:
+        st.plotly_chart(
+            fig_reserve_volumes(reserves, now, _d0_start, _d0_end, height=300),
+            use_container_width=True, config={"displayModeBar": False},
+        )
+    with rd2:
+        st.plotly_chart(
+            fig_reserve_prices(reserves, now, _d0_start, _d0_end, height=300),
+            use_container_width=True, config={"displayModeBar": False},
+        )
+
 # ──────────── TAB 2: ODSTÁVKY ─────────────────────────────────────
 with tab_out:
     st.markdown(f'<div class="section-title">Výrobní jednotky (PU) — {n_pu} aktivních</div>',
@@ -1079,45 +1093,46 @@ with tab_dap:
     with c_r:
         _stat_table(calc_dap_stats(s_d1), f"D+1 — {(now+pd.Timedelta(days=1)).strftime('%d.%m.%Y')}")
 
-    # Rezervy pro D0 + D+1 (stejné období jako DAP grafy výše)
-    st.markdown('<div class="section-title">aFRR &amp; mFRR — D0 a D+1</div>',
+    # Rezervy — D0 + D+1 (stejné období jako DAP grafy výše)
+    st.markdown('<div class="section-title">aFRR + mFRR — D0 + D+1 (objemy a ceny)</div>',
                 unsafe_allow_html=True)
-    dap_start = now.normalize()
-    dap_end   = now.normalize() + pd.Timedelta(days=2)
+    dap_start = now.normalize()                           # D0
+    dap_end   = now.normalize() + pd.Timedelta(days=2)   # konec D+1
     rc1, rc2  = st.columns(2)
     with rc1:
         st.plotly_chart(
-            fig_afrr(reserves, now, dap_start, dap_end, height=340),
+            fig_reserve_volumes(reserves, now, dap_start, dap_end, height=320),
             use_container_width=True, config={"displayModeBar": False},
         )
     with rc2:
         st.plotly_chart(
-            fig_mfrr(reserves, now, dap_start, dap_end, height=340),
+            fig_reserve_prices(reserves, now, dap_start, dap_end, height=320),
             use_container_width=True, config={"displayModeBar": False},
         )
 
 # ──────────── TAB 4: REZERVY ─────────────────────────────────────
 with tab_rezervy:
-    res_start = reserves["start"]
-    res_end   = reserves["end"]
+    res_start = now.normalize()
+    res_end   = now.normalize() + pd.Timedelta(days=7)
+    # Dynamický label A04 kontraktu
+    if now.month < 7:
+        _a04_label = f"{now.year}-01-01 – {now.year}-07-01"
+    else:
+        _a04_label = f"{now.year}-07-01 – {now.year + 1}-01-01"
 
-    st.markdown('<div class="section-title">aFRR — automatické frekvenční rezervy (D-1 až D+7)</div>',
-                unsafe_allow_html=True)
     st.markdown(
-        "**Plné čáry** = množství [MW, levá osa] &nbsp;·&nbsp; "
-        "**Tečkované** = cena [EUR/MW, pravá osa] &nbsp;·&nbsp; "
-        "**Solid** = A01 denní &nbsp;·&nbsp; **Dash** = A04 roční",
-        unsafe_allow_html=False,
+        '<div class="section-title">'
+        f'aFRR + mFRR — D0 až D+7 &nbsp;·&nbsp; '
+        f'Solid = A01 denní &nbsp;·&nbsp; Dash = A04 roční ({_a04_label})'
+        '</div>',
+        unsafe_allow_html=True,
     )
     st.plotly_chart(
-        fig_afrr(reserves, now, res_start, res_end, height=440),
+        fig_reserve_volumes(reserves, now, res_start, res_end, height=420),
         use_container_width=True, config={"displayModeBar": False},
     )
-
-    st.markdown('<div class="section-title">mFRR — manuální frekvenční rezervy (D-1 až D+7)</div>',
-                unsafe_allow_html=True)
     st.plotly_chart(
-        fig_mfrr(reserves, now, res_start, res_end, height=380),
+        fig_reserve_prices(reserves, now, res_start, res_end, height=420),
         use_container_width=True, config={"displayModeBar": False},
     )
 
