@@ -463,21 +463,26 @@ def sparkline_svg(values, color="#1565C0", width=140, height=28):
 
 
 # ── GRAFY ────────────────────────────────────────────────────────
-def fig_imbalance(df, now, height=290):
-    fig = go.Figure()
+def fig_imbalance(df, now, load_actual=None, load_fc=None, height=290):
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
     if df.empty:
         return _base_layout(fig, height=height)
+
+    # Primární osa — odchylka
     surplus = df["odchylka_MWh"] >= 0
     fig.add_trace(go.Bar(x=df.index[surplus], y=df.loc[surplus,"odchylka_MWh"],
                          marker_color=C_SURPLUS, name="Surplus",
-                         hovertemplate="<b>%{x|%a %d.%m %H:%M}</b><br>+%{y:.1f} MWh<extra></extra>"))
+                         hovertemplate="<b>%{x|%a %d.%m %H:%M}</b><br>+%{y:.1f} MWh<extra></extra>"),
+                  secondary_y=False)
     fig.add_trace(go.Bar(x=df.index[~surplus], y=df.loc[~surplus,"odchylka_MWh"],
                          marker_color=C_DEFICIT, name="Deficit",
-                         hovertemplate="<b>%{x|%a %d.%m %H:%M}</b><br>%{y:.1f} MWh<extra></extra>"))
+                         hovertemplate="<b>%{x|%a %d.%m %H:%M}</b><br>%{y:.1f} MWh<extra></extra>"),
+                  secondary_y=False)
     if len(df) >= 4:
         ma = df["odchylka_MWh"].rolling(4, min_periods=1).mean()
         fig.add_trace(go.Scatter(x=df.index, y=ma, mode="lines", name="1h avg",
-                                 line=dict(color="#212121", width=1.5), hoverinfo="skip", opacity=.7))
+                                 line=dict(color="#212121", width=1.5), hoverinfo="skip", opacity=.7),
+                      secondary_y=False)
     fig.add_hline(y=0, line_color="#9E9E9E", line_width=.8)
     fig.add_hline(y=THRESHOLD,  line_color="#9E9E9E", line_width=.4, line_dash="dot")
     fig.add_hline(y=-THRESHOLD, line_color="#9E9E9E", line_width=.4, line_dash="dot")
@@ -486,11 +491,32 @@ def fig_imbalance(df, now, height=290):
                        showarrow=False, yshift=14 if last >= 0 else -14,
                        font=dict(size=12, color=C_SURPLUS if last >= 0 else C_DEFICIT),
                        bgcolor="rgba(255,255,255,.85)", borderpad=2)
+
+    # Sekundární osa (vpravo) — zatížení, jen dnešní úsek do now
+    day_start = now.normalize()
+    if load_fc is not None and not load_fc.empty:
+        s = load_fc[(load_fc.index >= day_start) & (load_fc.index <= now)]
+        if not s.empty:
+            fig.add_trace(go.Scatter(
+                x=s.index, y=s.values, mode="lines", name="Prognóza zatížení",
+                line=dict(color="#26A69A", width=1.5, dash="dot"),
+                hovertemplate="Prognóza: %{y:,.0f} MW<extra></extra>",
+            ), secondary_y=True)
+    if load_actual is not None and not load_actual.empty:
+        s = load_actual[(load_actual.index >= day_start) & (load_actual.index <= now)]
+        if not s.empty:
+            fig.add_trace(go.Scatter(
+                x=s.index, y=s.values, mode="lines", name="Zatížení skutečnost",
+                line=dict(color="#E91E63", width=1.5),
+                hovertemplate="Zatížení: %{y:,.0f} MW<extra></extra>",
+            ), secondary_y=True)
+
     _now_marker(fig, now)
     _base_layout(fig, height=height)
     fig.update_layout(barmode="relative", bargap=.15)
-    fig.update_xaxes(tickformat="%H:%M\n%d.%m")
-    fig.update_yaxes(title_text="MWh / 15 min")
+    fig.update_layout(xaxis=dict(type="date", tickformat="%H:%M\n%d.%m", gridcolor=C_GRID))
+    fig.update_yaxes(title_text="MWh / 15 min", secondary_y=False)
+    fig.update_yaxes(title_text="MW", secondary_y=True, showgrid=False)
     return fig
 
 
@@ -1061,8 +1087,8 @@ tab_dash, tab_out, tab_dap, tab_rezervy, tab_dg, tab_data = st.tabs([
 # ──────────── TAB 1: ODCHYLKA + GENERACE ─────────────────────────
 with tab_dash:
     st.markdown('<div class="section-title">Systémová odchylka</div>', unsafe_allow_html=True)
-    st.plotly_chart(fig_imbalance(df_imbal, now), use_container_width=True,
-                    config={"displayModeBar": False})
+    st.plotly_chart(fig_imbalance(df_imbal, now, load_actual=load_actual, load_fc=load_fc),
+                    use_container_width=True, config={"displayModeBar": False})
 
     st.markdown('<div class="section-title">Signál pro řízení flexibility (Delta Green API)</div>',
                 unsafe_allow_html=True)
