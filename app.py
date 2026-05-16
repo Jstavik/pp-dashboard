@@ -733,58 +733,39 @@ def calc_dap_stats(s: pd.Series) -> dict:
 # ── REZERVY — FETCH + GRAFY ─────────────────────────────────────
 @st.cache_data(ttl=60 * 60, show_spinner=False)
 def fetch_reserves():
-    """
-    Stáhne contracted reserve amounts + prices pro CZ:
-      A01 (denní)  — D-7 až D+7 (historická data + co ENTSO-E poskytne dopředu)
-      A04 (roční)  — aktuální pololetní kontrakt (dynamicky)
-    """
     now      = pd.Timestamp.now(tz="Europe/Prague")
-    start    = now.normalize() - pd.Timedelta(days=7)
-    end      = now.normalize() + pd.Timedelta(days=8)   # D+7 včetně
-    if now.month < 7:
-        start_yr = pd.Timestamp(f"{now.year}-01-01", tz="Europe/Prague")
-        end_yr   = pd.Timestamp(f"{now.year}-07-01", tz="Europe/Prague")
-    else:
+    start    = now.normalize()
+    end      = now.normalize() + pd.Timedelta(days=10)
+    start_yr = pd.Timestamp(f"{now.year}-01-01", tz="Europe/Prague")
+    end_yr   = pd.Timestamp(f"{now.year}-07-01", tz="Europe/Prague")
+    if now.month >= 7:
         start_yr = pd.Timestamp(f"{now.year}-07-01", tz="Europe/Prague")
-        end_yr   = pd.Timestamp(f"{now.year + 1}-01-01", tz="Europe/Prague")
+        end_yr   = pd.Timestamp(f"{now.year+1}-01-01", tz="Europe/Prague")
 
-    def _q(fn, *a, **kw):
+    def _q(fn, pt, ma, s, e):
         try:
-            r = fn(*a, **kw)
-            return r if r is not None else pd.DataFrame()
+            return fn(country_code="CZ", start=s, end=e,
+                      process_type=pt, type_marketagreement_type=ma)
         except Exception:
             return pd.DataFrame()
 
     return dict(
-        a01_amount = _q(client.query_contracted_reserve_amount, "CZ", start, end, "A01"),
-        a01_price  = _q(client.query_contracted_reserve_prices,  "CZ", start, end, "A01"),
-        a04_amount = _q(client.query_contracted_reserve_amount, "CZ", start_yr, end_yr, "A04"),
-        a04_price  = _q(client.query_contracted_reserve_prices,  "CZ", start_yr, end_yr, "A04"),
-        start = start,
-        end   = end,
-        now   = now,
+        afrr_d_amt = _q(client.query_contracted_reserve_amount, "A51", "A01", start, end),
+        afrr_d_pri = _q(client.query_contracted_reserve_prices,  "A51", "A01", start, end),
+        afrr_y_amt = _q(client.query_contracted_reserve_amount, "A51", "A04", start_yr, end_yr),
+        afrr_y_pri = _q(client.query_contracted_reserve_prices,  "A51", "A04", start_yr, end_yr),
+        mfrr_d_amt = _q(client.query_contracted_reserve_amount, "A52", "A01", start, end),
+        mfrr_d_pri = _q(client.query_contracted_reserve_prices,  "A52", "A01", start, end),
+        now=now, start=start, end=end,
     )
 
 
-def _rseries(df, *keywords) -> pd.Series:
-    """Najde první sloupec df odpovídající klíčovému slovu (case-insensitive)."""
-    if df is None or df.empty:
-        return pd.Series(dtype=float)
-    cols = list(df.columns)
-    for kw in keywords:
-        hits = [c for c in cols if kw.lower() in str(c).lower()]
-        if hits:
-            s = df[hits[0]].dropna()
-            if hasattr(s.index, "tz") and s.index.tz is not None:
-                s = s.tz_convert("Europe/Prague")
-            return s
-    # fallback — první numerický sloupec
-    num = df.select_dtypes("number").columns.tolist()
-    if num:
-        s = df[num[0]].dropna()
-        if hasattr(s.index, "tz") and s.index.tz is not None:
-            s = s.tz_convert("Europe/Prague")
-        return s
+def _get_rseries(reserves, key, col) -> pd.Series:
+    df = reserves.get(key, pd.DataFrame())
+    if df is None or df.empty: return pd.Series(dtype=float)
+    if col in df.columns:
+        s = df[col].dropna()
+        return s.tz_convert("Europe/Prague") if s.index.tz else s
     return pd.Series(dtype=float)
 
 
@@ -816,9 +797,9 @@ def _fig_reserve_simple(traces_cfg, title, y_label, now, start, end, height=380)
         title_text=title,
         template="plotly_white",
         hovermode="x unified",
-        legend=dict(orientation="h", y=-0.22, x=0, font=dict(size=10),
+        legend=dict(orientation="h", y=-0.25, x=0, font=dict(size=10),
                     bgcolor="rgba(0,0,0,0)"),
-        margin=dict(l=65, r=20, t=40, b=70),
+        margin=dict(l=65, r=20, t=45, b=80),
         xaxis=dict(
             type="date",
             tickformat="%a %d.%m",
@@ -830,45 +811,26 @@ def _fig_reserve_simple(traces_cfg, title, y_label, now, start, end, height=380)
     return fig
 
 
-# Společné barvy a čáry pro oba grafy (volumes i prices)
-_R_TRACES = [
-    # (amount_key, price_key, name_base, color, dash, width)
-    ("a01_amount", "a01_price", "aFRR A01 Up ↑",   "#1565C0", "solid", 2.0),
-    ("a01_amount", "a01_price", "aFRR A01 Down ↓",  "#C62828", "solid", 2.0),
-    ("a04_amount", "a04_price", "aFRR A04 Up ↑",   "#42A5F5", "dash",  1.8),
-    ("a04_amount", "a04_price", "aFRR A04 Down ↓",  "#EF5350", "dash",  1.8),
-    ("a01_amount", "a01_price", "mFRR A01 Sym",     "#2E7D32", "solid", 2.0),
-]
-# Klíčová slova pro extrakci sloupců (jedno za každý řádek výše)
-_R_KEYWORDS = [
-    ("up",   "Up"),
-    ("down", "Down"),
-    ("up",   "Up"),
-    ("down", "Down"),
-    ("sym",  "Symm", "Symmetric"),
-]
-
-
 def fig_reserve_volumes(reserves, now, start, end, height=400):
-    """Graf 1 — Objemy [MW]: aFRR A01 Up/Down + A04 Up/Down + mFRR A01 Sym."""
-    traces = []
-    for (amt_key, _, name_base, color, dash, width), kws in zip(_R_TRACES, _R_KEYWORDS):
-        s = _rseries(reserves[amt_key], *kws)
-        traces.append((s, f"{name_base} [MW]", color, dash, width, ",.0f"))
-    return _fig_reserve_simple(
-        traces, "Rezervy — objemy [MW]", "MW", now, start, end, height,
-    )
+    traces = [
+        (_get_rseries(reserves, "afrr_d_amt", "Up"),        "aFRR denní Up",   "#1565C0", "solid", 2.0, ",.0f"),
+        (_get_rseries(reserves, "afrr_d_amt", "Down"),       "aFRR denní Down", "#C62828", "solid", 2.0, ",.0f"),
+        (_get_rseries(reserves, "afrr_y_amt", "Up"),         "aFRR roční Up",   "#42A5F5", "dash",  1.8, ",.0f"),
+        (_get_rseries(reserves, "afrr_y_amt", "Down"),       "aFRR roční Down", "#EF5350", "dash",  1.8, ",.0f"),
+        (_get_rseries(reserves, "mfrr_d_amt", "Symmetric"),  "mFRR denní",      "#2E7D32", "solid", 2.0, ",.0f"),
+    ]
+    return _fig_reserve_simple(traces, "Rezervy — objemy [MW]", "MW", now, start, end, height)
 
 
 def fig_reserve_prices(reserves, now, start, end, height=400):
-    """Graf 2 — Ceny [EUR/MW]: stejná struktura, stejné barvy, data z prices."""
-    traces = []
-    for (_, prc_key, name_base, color, dash, width), kws in zip(_R_TRACES, _R_KEYWORDS):
-        s = _rseries(reserves[prc_key], *kws)
-        traces.append((s, f"{name_base} [€/MW]", color, dash, width, ",.2f"))
-    return _fig_reserve_simple(
-        traces, "Rezervy — ceny [EUR/MW]", "EUR/MW", now, start, end, height,
-    )
+    traces = [
+        (_get_rseries(reserves, "afrr_d_pri", "Up"),        "aFRR denní Up",   "#1565C0", "solid", 2.0, ",.2f"),
+        (_get_rseries(reserves, "afrr_d_pri", "Down"),       "aFRR denní Down", "#C62828", "solid", 2.0, ",.2f"),
+        (_get_rseries(reserves, "afrr_y_pri", "Up"),         "aFRR roční Up",   "#42A5F5", "dash",  1.8, ",.2f"),
+        (_get_rseries(reserves, "afrr_y_pri", "Down"),       "aFRR roční Down", "#EF5350", "dash",  1.8, ",.2f"),
+        (_get_rseries(reserves, "mfrr_d_pri", "Symmetric"),  "mFRR denní",      "#2E7D32", "solid", 2.0, ",.2f"),
+    ]
+    return _fig_reserve_simple(traces, "Rezervy — ceny [EUR/MW]", "EUR/MW", now, start, end, height)
 
 
 # ── NAČTENÍ DAT ──────────────────────────────────────────────────
@@ -888,10 +850,10 @@ with st.spinner("Načítám data rezerv…"):
     try:
         reserves = fetch_reserves()
     except Exception:
-        reserves = dict(a01_amount=pd.DataFrame(), a01_price=pd.DataFrame(),
-                        a04_amount=pd.DataFrame(), a04_price=pd.DataFrame(),
-                        start=now.normalize()-pd.Timedelta(days=7),
-                        end=now.normalize()+pd.Timedelta(days=8), now=now)
+        reserves = dict(afrr_d_amt=pd.DataFrame(), afrr_d_pri=pd.DataFrame(),
+                        afrr_y_amt=pd.DataFrame(), afrr_y_pri=pd.DataFrame(),
+                        mfrr_d_amt=pd.DataFrame(), mfrr_d_pri=pd.DataFrame(),
+                        start=now.normalize(), end=now.normalize()+pd.Timedelta(days=10), now=now)
 
 last_imbal = float(df_imbal["odchylka_MWh"].iloc[-1]) if not df_imbal.empty else 0.0
 
@@ -1138,12 +1100,14 @@ with tab_rezervy:
 
     # CSV export surových dat
     with st.expander("📥 Stáhnout surová data rezerv"):
-        ec1, ec2, ec3, ec4 = st.columns(4)
+        ec1, ec2, ec3, ec4, ec5, ec6 = st.columns(6)
         for col_obj, df_r, label, fname in [
-            (ec1, reserves["a01_amount"], "A01 Množství", "reserves_a01_amount.csv"),
-            (ec2, reserves["a01_price"],  "A01 Ceny",     "reserves_a01_price.csv"),
-            (ec3, reserves["a04_amount"], "A04 Množství", "reserves_a04_amount.csv"),
-            (ec4, reserves["a04_price"],  "A04 Ceny",     "reserves_a04_price.csv"),
+            (ec1, reserves["afrr_d_amt"], "aFRR denní obj.", "afrr_d_amount.csv"),
+            (ec2, reserves["afrr_d_pri"], "aFRR denní ceny", "afrr_d_price.csv"),
+            (ec3, reserves["afrr_y_amt"], "aFRR roční obj.", "afrr_y_amount.csv"),
+            (ec4, reserves["afrr_y_pri"], "aFRR roční ceny", "afrr_y_price.csv"),
+            (ec5, reserves["mfrr_d_amt"], "mFRR denní obj.", "mfrr_d_amount.csv"),
+            (ec6, reserves["mfrr_d_pri"], "mFRR denní ceny", "mfrr_d_price.csv"),
         ]:
             with col_obj:
                 if not df_r.empty:
