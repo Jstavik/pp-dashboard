@@ -67,12 +67,32 @@ _FALLBACK_COLORS = [
     "#3949AB","#00ACC1","#43A047","#FB8C00","#6D4C41",
 ]
 
+PSR_NAMES = {
+    "Solar":                               ("Solární",              "#F9A825"),
+    "Nuclear":                             ("Jaderná",              "#7B1FA2"),
+    "Wind Onshore":                        ("Vítr onshore",         "#29B6F6"),
+    "Wind Offshore":                       ("Vítr offshore",        "#0097A7"),
+    "Hydro Pumped Storage":                ("Přečerpávací hydro",   "#006064"),
+    "Hydro Run-of-river and poundage":     ("Průtočná voda",        "#1565C0"),
+    "Hydro Water Reservoir":               ("Vodní nádrž",          "#0D47A1"),
+    "Fossil Brown coal/Lignite":           ("Lignit",               "#5D4037"),
+    "Fossil Hard coal":                    ("Černé uhlí",           "#37474F"),
+    "Fossil Gas":                          ("Zemní plyn",           "#FF7043"),
+    "Fossil Oil":                          ("Topný olej",           "#FFA000"),
+    "Fossil Coal-derived gas":             ("Plyn z uhlí",          "#8D6E63"),
+    "Biomass":                             ("Biomasa",              "#43A047"),
+    "Waste":                               ("Odpad",                "#78909C"),
+    "Other renewable":                     ("Ostatní OZE",          "#66BB6A"),
+    "Other":                               ("Ostatní",              "#90A4AE"),
+    "Geothermal":                          ("Geotermální",          "#00695C"),
+}
+
 def psr_lookup(col) -> tuple:
-    """Vrátí (název, barva) pro daný PSR sloupec (kód nebo tuple)."""
     psr = str(col[0]) if isinstance(col, tuple) else str(col)
     if psr in PSR_TYPES:
         return PSR_TYPES[psr]
-    # Fallback — deterministická barva z hashe
+    if psr in PSR_NAMES:
+        return PSR_NAMES[psr]
     color = _FALLBACK_COLORS[abs(hash(psr)) % len(_FALLBACK_COLORS)]
     return (psr, color)
 
@@ -715,7 +735,7 @@ def fig_wind_solar_forecast(ws, now, gen_raw=None, height=240):
         ws_slice = ws[(ws.index >= start_fc) & (ws.index < end_fc)]
         for col in ws_slice.columns:
             psr = str(col[0]) if isinstance(col, tuple) else str(col)
-            if psr == "B16":
+            if psr in ("B16", "Solar"):
                 series = ws_slice[col].fillna(0)
                 fig.add_trace(go.Scatter(
                     x=series.index, y=series.values, stackgroup="solar", name="Solární prognóza",
