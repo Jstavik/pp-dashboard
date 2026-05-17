@@ -183,6 +183,22 @@ def _get_ceps_client():
 
 ceps = _get_ceps_client()
 
+CEPS_WSDL = "https://www.ceps.cz/_layouts/CepsData.asmx?WSDL"
+CEPS_NS   = "https://www.ceps.cz/CepsData/StructuredData/1.0"
+
+def _parse_ceps(result) -> pd.DataFrame:
+    series = {}
+    for s in result.findall(f"{{{CEPS_NS}}}series/{{{CEPS_NS}}}serie"):
+        series[s.get("id")] = s.get("name")
+    rows = []
+    for item in result.findall(f"{{{CEPS_NS}}}data/{{{CEPS_NS}}}item"):
+        row = {"time": pd.Timestamp(item.get("date")).tz_convert("Europe/Prague")}
+        for vid, name in series.items():
+            val = item.get(vid)
+            row[name] = float(val) if val is not None else 0.0
+        rows.append(row)
+    return pd.DataFrame(rows).set_index("time") if rows else pd.DataFrame()
+
 # ── SESSION STATE ────────────────────────────────────────────────
 for key, default in [
     ("df_out_prev", None),
@@ -460,6 +476,63 @@ def fetch_ceps_imbalance_price():
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_ceps_all():
+    """Stáhne všechna ČEPS data najednou — jeden cache entry."""
+    now   = pd.Timestamp.now(tz="Europe/Prague")
+    start = now.normalize()
+
+    def call(method, **kw):
+        fn = getattr(ceps.service, method)
+        return fn(
+            dateFrom=start.to_pydatetime().replace(tzinfo=None),
+            dateTo  =now.to_pydatetime().replace(tzinfo=None),
+            **kw
+        )
+
+    def safe(method, **kw):
+        try:    return _parse_ceps(call(method, **kw))
+        except: return pd.DataFrame()
+
+    df_imbal = safe("AktualniSystemovaOdchylkaCR", agregation="MI", function="AVG")
+    df_svr   = safe("AktivaceSVRvCR", agregation="MI", function="AVG", param1="all")
+    df_load  = safe("Load", agregation="MI", function="AVG", version="RT")
+    df_gen   = safe("Generation", agregation="QH", function="AVG", version="RT", para1="all")
+    df_res   = safe("GenerationRES", agregation="MI", function="AVG", version="RT", para1="all")
+    df_freq  = safe("Frekvence")
+    df_cb    = safe("CrossborderPowerFlows", agregation="MI", function="AVG", version="RT")
+
+    # Cena odchylky — jiný parser
+    df_cena = pd.DataFrame()
+    try:
+        r_cena = call("OdhadovanaCenaOdchylky")
+        rows_c = []
+        for item in r_cena.findall(f"{{{CEPS_NS}}}data/{{{CEPS_NS}}}item"):
+            interval = item.get("value15", "")
+            price    = float(item.get("value2", 0) or 0)
+            if not interval or price == 0:
+                continue
+            hh, mm = interval.split("-")[0].split(":")
+            ts = start + pd.Timedelta(hours=int(hh), minutes=int(mm))
+            rows_c.append({"time": ts, "Cena odchylky (CZK/MWh)": price})
+        if rows_c:
+            df_cena = pd.DataFrame(rows_c).set_index("time")
+    except Exception:
+        pass
+
+    # Net export
+    if not df_cb.empty:
+        actual_cols = [c for c in df_cb.columns if "Actual" in c]
+        if actual_cols:
+            df_cb["Net Export (MW)"] = df_cb[actual_cols].sum(axis=1)
+
+    return {
+        "imbal": df_imbal, "svr": df_svr, "load": df_load,
+        "gen": df_gen, "res": df_res, "freq": df_freq,
+        "cb": df_cb, "cena": df_cena, "now": now,
+    }
+
+
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def fetch_wind_solar_forecast():
     now       = pd.Timestamp.now(tz="Europe/Prague")
@@ -630,6 +703,201 @@ def sparkline_svg(values, color="#1565C0", width=140, height=28):
 
 
 # ── GRAFY ────────────────────────────────────────────────────────
+def fig_ceps_dashboard(data: dict) -> go.Figure:
+    """6-panelový ČEPS real-time dashboard."""
+    df_imbal = data["imbal"]
+    df_svr   = data["svr"]
+    df_load  = data["load"]
+    df_gen   = data["gen"]
+    df_res   = data["res"]
+    df_freq  = data["freq"]
+    df_cb    = data["cb"]
+    df_cena  = data["cena"]
+    now      = data["now"]
+
+    xrange  = [now.normalize().isoformat(), now.isoformat()]
+    now_iso = now.isoformat()
+
+    fig = make_subplots(
+        rows=6, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=[0.22, 0.14, 0.16, 0.16, 0.16, 0.16],
+        subplot_titles=[
+            "Systémová odchylka (MW) + Zatížení (MW) + Cena odchylky (CZK/MWh)",
+            "Aktivace SVR — aFRR / mFRR (MW)",
+            "Přeshraniční toky ČR (MW)  —  kladné = export",
+            "Výroba podle zdroje (MW, 15min)",
+            "OZE real-time — Vítr + Solar (MW)",
+            "Frekvence sítě (Hz)",
+        ]
+    )
+
+    # Panel 1: Odchylka + Zatížení + Cena
+    if not df_imbal.empty:
+        col = df_imbal.columns[0]
+        surplus = df_imbal[col] >= 0
+        fig.add_trace(go.Bar(
+            x=df_imbal.index[surplus], y=df_imbal.loc[surplus, col],
+            name="Surplus", marker_color=C_SURPLUS, opacity=0.8,
+            hovertemplate="%{x|%H:%M}  %{y:+.1f} MW<extra>Surplus</extra>",
+        ), row=1, col=1)
+        fig.add_trace(go.Bar(
+            x=df_imbal.index[~surplus], y=df_imbal.loc[~surplus, col],
+            name="Deficit", marker_color=C_DEFICIT, opacity=0.8,
+            hovertemplate="%{x|%H:%M}  %{y:+.1f} MW<extra>Deficit</extra>",
+        ), row=1, col=1)
+        if len(df_imbal) >= 5:
+            ma = df_imbal[col].rolling(5, min_periods=1).mean()
+            fig.add_trace(go.Scatter(
+                x=df_imbal.index, y=ma, mode="lines", name="5min MA",
+                line=dict(color="#212121", width=1.5), showlegend=True,
+            ), row=1, col=1)
+    if not df_load.empty and "Load [MW]" in df_load.columns:
+        fig.add_trace(go.Scatter(
+            x=df_load.index, y=df_load["Load [MW]"],
+            name="Zatížení", mode="lines",
+            line=dict(color="#E91E63", width=1.5),
+            hovertemplate="%{x|%H:%M}  %{y:,.0f} MW<extra>Zatížení</extra>",
+            yaxis="y2",
+        ), row=1, col=1)
+    if not df_cena.empty:
+        fig.add_trace(go.Scatter(
+            x=df_cena.index, y=df_cena.iloc[:, 0],
+            name="Cena odchylky (CZK/MWh)", mode="lines+markers",
+            line=dict(color="#7B1FA2", width=2, shape="hv", dash="dash"),
+            hovertemplate="%{x|%H:%M}  %{y:,.0f} CZK/MWh<extra>Cena</extra>",
+            yaxis="y3",
+        ), row=1, col=1)
+    fig.add_hline(y=0, line_color="#9E9E9E", line_width=0.8, row=1, col=1)
+
+    # Panel 2: SVR aktivace
+    SVR_CFG = [
+        ("aFRR+ [MW]", "#1565C0"), ("aFRR- [MW]", "#C62828"),
+        ("mFRR+ [MW]", "#2E7D32"), ("mFRR- [MW]", "#E65100"),
+        ("mFRR5 [MW]", "#7B1FA2"),
+    ]
+    if not df_svr.empty:
+        for col, color in SVR_CFG:
+            if col in df_svr.columns:
+                fig.add_trace(go.Bar(
+                    x=df_svr.index, y=df_svr[col],
+                    name=col.replace(" [MW]", ""), marker_color=color, opacity=0.85,
+                    hovertemplate=f"{col}: %{{y:.2f}} MW<extra></extra>",
+                ), row=2, col=1)
+
+    # Panel 3: Přeshraniční toky
+    CB_CFG = [
+        ("PSE Actual [MW]",    "#E53935", "PSE (Polsko)"),
+        ("SEPS Actual [MW]",   "#FB8C00", "SEPS (Slovensko)"),
+        ("APG Actual [MW]",    "#43A047", "APG (Rakousko)"),
+        ("TenneT Actual [MW]", "#1E88E5", "TenneT (DE západ)"),
+        ("50HzT Actual [MW]",  "#8E24AA", "50HzT (DE východ)"),
+    ]
+    if not df_cb.empty:
+        for col, color, label in CB_CFG:
+            if col in df_cb.columns:
+                fig.add_trace(go.Bar(
+                    x=df_cb.index, y=df_cb[col],
+                    name=label, marker_color=color, opacity=0.85,
+                    hovertemplate=f"{label}: %{{y:+.0f}} MW<extra></extra>",
+                ), row=3, col=1)
+        if "Net Export (MW)" in df_cb.columns:
+            fig.add_trace(go.Scatter(
+                x=df_cb.index, y=df_cb["Net Export (MW)"],
+                name="Net Export celkem", mode="lines",
+                line=dict(color="#212121", width=2),
+                hovertemplate="Net: %{y:+.0f} MW<extra></extra>",
+            ), row=3, col=1)
+        fig.add_hline(y=0, line_color="#9E9E9E", line_width=0.8, row=3, col=1)
+
+    # Panel 4: Výroba podle zdroje
+    GEN_CFG = [
+        ("NPP [MW]",   "#7B1FA2", "Jaderné (NPP)"),
+        ("TPP [MW]",   "#5D4037", "Tepelné (TPP)"),
+        ("CCGT [MW]",  "#FF7043", "Paroplynové (CCGT)"),
+        ("HPP [MW]",   "#1565C0", "Vodní (HPP)"),
+        ("PsPP [MW]",  "#006064", "Přečerpávací (PsPP)"),
+        ("AltPP [MW]", "#66BB6A", "Alternativní (AltPP)"),
+        ("WPP [MW]",   "#29B6F6", "Vítr (WPP)"),
+        ("PVPP [MW]",  "#F9A825", "Solar (PVPP)"),
+    ]
+    if not df_gen.empty:
+        for col, color, label in GEN_CFG:
+            if col in df_gen.columns and df_gen[col].sum() > 0:
+                r, g, b = int(color[1:3],16), int(color[3:5],16), int(color[5:7],16)
+                fig.add_trace(go.Scatter(
+                    x=df_gen.index, y=df_gen[col],
+                    name=label, stackgroup="gen",
+                    line=dict(width=0, color=color),
+                    fillcolor=f"rgba({r},{g},{b},0.8)",
+                    hovertemplate=f"{label}: %{{y:,.0f}} MW<extra></extra>",
+                ), row=4, col=1)
+
+    # Panel 5: OZE real-time
+    if not df_res.empty:
+        if "WPP [MW]" in df_res.columns:
+            fig.add_trace(go.Scatter(
+                x=df_res.index, y=df_res["WPP [MW]"],
+                name="Vítr RT", stackgroup="oze",
+                line=dict(width=0, color="#29B6F6"),
+                fillcolor="rgba(41,182,246,0.75)",
+                hovertemplate="%{x|%H:%M}  Vítr: %{y:.1f} MW<extra></extra>",
+            ), row=5, col=1)
+        if "PVPP [MW]" in df_res.columns:
+            fig.add_trace(go.Scatter(
+                x=df_res.index, y=df_res["PVPP [MW]"],
+                name="Solar RT", stackgroup="oze",
+                line=dict(width=0, color="#F9A825"),
+                fillcolor="rgba(249,168,37,0.75)",
+                hovertemplate="%{x|%H:%M}  Solar: %{y:.1f} MW<extra></extra>",
+            ), row=5, col=1)
+
+    # Panel 6: Frekvence
+    if not df_freq.empty:
+        col = df_freq.columns[0]
+        fig.add_trace(go.Scatter(
+            x=df_freq.index, y=df_freq[col],
+            name="Frekvence (Hz)", mode="lines",
+            line=dict(color="#00897B", width=1.2),
+            hovertemplate="%{x|%H:%M}  %{y:.4f} Hz<extra></extra>",
+        ), row=6, col=1)
+        fig.add_hline(y=50.0, line_color="#9E9E9E",
+                      line_dash="dot", line_width=1, row=6, col=1)
+        fig.add_hrect(y0=49.8, y1=50.2,
+                      fillcolor="rgba(0,137,123,0.06)",
+                      line_width=0, row=6, col=1)
+
+    # Svislá čára NOW
+    for r in range(1, 7):
+        fig.add_vline(x=now_iso, line_color=C_SURPLUS,
+                      line_width=1.5, line_dash="dot", row=r, col=1)
+
+    fig.update_layout(
+        height=1200,
+        title_text=f"ČEPS Real-time — {now.strftime('%d.%m.%Y %H:%M')}",
+        template="plotly_white",
+        hovermode="x unified",
+        barmode="relative",
+        bargap=0.05,
+        showlegend=True,
+        legend=dict(orientation="h", y=-0.04, x=0,
+                    font=dict(size=9), bgcolor="rgba(255,255,255,0.8)"),
+        margin=dict(l=60, r=80, t=70, b=60),
+        yaxis =dict(title_text="MW (odchylka)", gridcolor=C_GRID),
+        yaxis2=dict(overlaying="y", side="right",
+                    showgrid=False, title_text="MW (zatížení)"),
+        yaxis3=dict(overlaying="y", side="right", position=0.97,
+                    showgrid=False, title_text="CZK/MWh", anchor="free"),
+    )
+    for r in range(1, 7):
+        fig.update_xaxes(type="date", tickformat="%H:%M",
+                         range=xrange, gridcolor=C_GRID, row=r, col=1)
+    for r, title in {1:"MW (odchylka)",2:"MW",3:"MW",4:"MW",5:"MW",6:"Hz"}.items():
+        fig.update_yaxes(title_text=title, gridcolor=C_GRID, row=r, col=1)
+    return fig
+
+
 def fig_ceps_combined(df_imbal: pd.DataFrame, df_price: pd.DataFrame,
                       load_actual, load_fc, now: pd.Timestamp, height=320):
     """
@@ -1666,8 +1934,9 @@ if n_new or len(changes.get("ended", set())) or not changes["changed_mw"].empty:
                 unsafe_allow_html=True)
 
 # ── ZÁLOŽKY ──────────────────────────────────────────────────────
-tab_dash, tab_out, tab_dap, tab_rezervy, tab_dg, tab_data = st.tabs([
+tab_dash, tab_ceps, tab_out, tab_dap, tab_rezervy, tab_dg, tab_data = st.tabs([
     "📊 Odchylka & Generace",
+    "⚡ ČEPS",
     "🔧 Odstávky",
     "💶 DAP Ceny",
     "⚖️ Rezervy",
@@ -1785,6 +2054,44 @@ with tab_dash:
             fig_reserve_prices(reserves, now, _d0_start, _d0_end, height=300),
             use_container_width=True, config={"displayModeBar": False},
         )
+
+
+# ──────────── TAB ČEPS: REAL-TIME DASHBOARD ──────────────────────
+with tab_ceps:
+    st.markdown(
+        "Zdroj: **ČEPS a.s.** — data jsou anonymní, bez autentizace. "
+        "Zpoždění ~1–5 minut. Výroba podle zdroje má granularitu 15 min, "
+        "ostatní data jsou minutová."
+    )
+    with st.spinner("Načítám ČEPS real-time data..."):
+        ceps_data = fetch_ceps_all()
+
+    st.plotly_chart(
+        fig_ceps_dashboard(ceps_data),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
+
+    # KPI řádek
+    df_i = ceps_data["imbal"]
+    df_f = ceps_data["freq"]
+    df_l = ceps_data["load"]
+    c1, c2, c3, c4 = st.columns(4)
+    if not df_i.empty:
+        last_imb = float(df_i.iloc[-1, 0])
+        c1.metric("Odchylka", f"{last_imb:+.1f} MW",
+                  delta="Surplus" if last_imb >= 0 else "Deficit")
+    if not df_f.empty:
+        last_hz = float(df_f.iloc[-1, 0])
+        c2.metric("Frekvence", f"{last_hz:.3f} Hz",
+                  delta=f"{last_hz-50:.3f} Hz")
+    if not df_l.empty and "Load [MW]" in df_l.columns:
+        last_load = float(df_l["Load [MW]"].iloc[-1])
+        c3.metric("Zatížení", f"{last_load:,.0f} MW")
+    if not ceps_data["cb"].empty and "Net Export (MW)" in ceps_data["cb"].columns:
+        net = float(ceps_data["cb"]["Net Export (MW)"].iloc[-1])
+        c4.metric("Net Export", f"{net:+.0f} MW",
+                  delta="export" if net >= 0 else "import")
 
 
 # ──────────── TAB 2: ODSTÁVKY ─────────────────────────────────────
