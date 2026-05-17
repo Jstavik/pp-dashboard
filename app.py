@@ -703,12 +703,7 @@ def fig_ceps_combined(df_imbal: pd.DataFrame, df_price: pd.DataFrame,
     fig.update_layout(
         barmode="relative", bargap=0.05,
         hovermode="x unified",
-        xaxis=dict(
-            type="date", tickformat="%H:%M\n%d.%m",
-            range=[day_start.isoformat(),
-                   (day_start + pd.Timedelta(days=2)).isoformat()],
-            gridcolor=C_GRID,
-        ),
+        xaxis=dict(type="date", tickformat="%H:%M", gridcolor=C_GRID),
         yaxis =dict(title_text="MW (odchylka)", gridcolor=C_GRID),
         yaxis2=dict(title_text="MW (zatížení)", overlaying="y",
                     side="right", showgrid=False),
