@@ -231,6 +231,10 @@ with st.sidebar:
         "Odchylka · Ceny · Generace · Zatížení · Odstávky"
     )
     st.caption(
+        "**ČEPS API**  \n"
+        "Odchylka · Aktivace SVR · Cena odchylky (real-time)"
+    )
+    st.caption(
         "**Delta Green API**  \n"
         "Portfolio · Flexibilita (volitelné)"
     )
@@ -426,6 +430,32 @@ def fetch_ceps_svr():
                 row[name] = float(item.get(vid, 0))
             rows.append(row)
         return pd.DataFrame(rows).set_index("time")
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60 * 15, show_spinner=False)
+def fetch_ceps_imbalance_price():
+    """Odhadovaná cena odchylky z ČEPS — 15min, CZK/MWh."""
+    NS    = "https://www.ceps.cz/CepsData/StructuredData/1.0"
+    now   = pd.Timestamp.now(tz="Europe/Prague")
+    today = now.normalize()
+    try:
+        result = ceps.service.OdhadovanaCenaOdchylky(
+            dateFrom=today.to_pydatetime().replace(tzinfo=None),
+            dateTo  =now.to_pydatetime().replace(tzinfo=None),
+        )
+        rows = []
+        for item in result.findall(f"{{{NS}}}data/{{{NS}}}item"):
+            interval = item.get("value15", "")
+            price    = float(item.get("value2", 0))
+            if not interval or price == 0:
+                continue
+            hh, mm = interval.split("-")[0].split(":")
+            ts = today + pd.Timedelta(hours=int(hh), minutes=int(mm))
+            rows.append({"time": ts, "cena_CZK_MWh": price})
+        df = pd.DataFrame(rows).set_index("time")
+        return df
     except Exception:
         return pd.DataFrame()
 
@@ -642,11 +672,13 @@ def fig_ceps_imbalance(df: pd.DataFrame, now: pd.Timestamp, height=280):
     return fig
 
 
-def fig_ceps_svr(df: pd.DataFrame, now: pd.Timestamp, height=220):
-    """Aktivace SVR v ČR z ČEPS [MW]."""
+def fig_ceps_svr(df: pd.DataFrame, now: pd.Timestamp, height=240):
+    """Aktivace SVR v ČR z ČEPS — stacked bar [MW]."""
     fig = go.Figure()
     if df.empty:
         return _base_layout(fig, height=height)
+    pos_cols = ["aFRR+ [MW]", "mFRR+ [MW]", "mFRR5 [MW]"]
+    neg_cols = ["aFRR- [MW]", "mFRR- [MW]"]
     colors = {
         "aFRR+ [MW]": "#1565C0",
         "aFRR- [MW]": "#C62828",
@@ -654,19 +686,60 @@ def fig_ceps_svr(df: pd.DataFrame, now: pd.Timestamp, height=220):
         "mFRR- [MW]": "#E65100",
         "mFRR5 [MW]": "#7B1FA2",
     }
-    for col in df.columns:
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df[col], name=col, mode="lines",
-            line=dict(color=colors.get(col, "#9E9E9E"), width=1.5),
+    for col in pos_cols + neg_cols:
+        if col not in df.columns:
+            continue
+        fig.add_trace(go.Bar(
+            x=df.index, y=df[col], name=col,
+            marker_color=colors.get(col, "#9E9E9E"),
             hovertemplate=f"{col}: %{{y:.2f}} MW<extra></extra>",
         ))
     fig.add_hline(y=0, line_color="#9E9E9E", line_width=0.8)
     _now_marker(fig, now)
     _base_layout(fig, height=height)
     fig.update_layout(
+        barmode="relative", bargap=0.05,
         hovermode="x unified",
         xaxis=dict(type="date", tickformat="%H:%M", gridcolor=C_GRID),
         yaxis=dict(title_text="MW", gridcolor=C_GRID),
+    )
+    return fig
+
+
+def fig_ceps_imbalance_price(df: pd.DataFrame, now: pd.Timestamp, height=200):
+    """Odhadovaná cena odchylky ČR z ČEPS [CZK/MWh]."""
+    fig = go.Figure()
+    if df.empty:
+        fig.add_annotation(text="Cena odchylky nedostupna",
+                           x=0.5, y=0.5, xref="paper", yref="paper",
+                           showarrow=False, font=dict(size=12, color=C_MUTED))
+    else:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["cena_CZK_MWh"],
+            mode="lines+markers", name="Cena odchylky",
+            line=dict(color="#7B1FA2", width=2, shape="hv"),
+            fill="tozeroy", fillcolor="rgba(123,31,162,0.10)",
+            hovertemplate="%{x|%H:%M}  %{y:,.0f} CZK/MWh<extra></extra>",
+        ))
+        last_val = df["cena_CZK_MWh"].iloc[-1]
+        fig.add_annotation(
+            x=df.index[-1], y=last_val,
+            text=f"<b>{last_val:,.0f}</b>",
+            showarrow=False, yshift=14,
+            font=dict(size=11, color="#7B1FA2"),
+            bgcolor="rgba(255,255,255,.85)", borderpad=2,
+        )
+    _now_marker(fig, now)
+    _base_layout(fig, height=height)
+    today = now.normalize()
+    fig.update_layout(
+        hovermode="x unified",
+        xaxis=dict(
+            type="date", tickformat="%H:%M",
+            range=[today.isoformat(), (today + pd.Timedelta(days=1)).isoformat()],
+            gridcolor=C_GRID,
+        ),
+        yaxis=dict(title_text="CZK/MWh", gridcolor=C_GRID),
     )
     return fig
 
@@ -1570,6 +1643,12 @@ with tab_dash:
     st.plotly_chart(fig_ceps_svr(df_svr, now_ceps),
                     use_container_width=True, config={"displayModeBar": False})
 
+    st.markdown('<div class="section-title">Odhadovaná cena odchylky — ČEPS [CZK/MWh]</div>',
+                unsafe_allow_html=True)
+    df_ceps_price = fetch_ceps_imbalance_price()
+    st.plotly_chart(fig_ceps_imbalance_price(df_ceps_price, now_ceps),
+                    use_container_width=True, config={"displayModeBar": False})
+
     # ENTSO-E — záložní, 15min granularita, obsahuje ceny
     st.markdown('<div class="section-title">Imbalance ceny — ENTSO-E (15min)</div>',
                 unsafe_allow_html=True)
@@ -1651,7 +1730,7 @@ with tab_dash:
     _bc1, _bc2, _bc3 = st.columns(3)
     with _bc1:
         ema_periods = st.slider("EMA okno [ISP]", 1, 8, 4,
-                                help="Počet 15min intervalů pro EMA predikci. 4 ISP = 1 hodina.")
+                                help="Počet 5min intervalů pro EMA. 4 = 20 minut.")
     with _bc2:
         threshold_mw = st.slider("Práh zásahu [MWh]", 10, 150, 50,
                                  help="Minimální predikovaná odchylka pro aktivaci signálu. "
@@ -1660,10 +1739,13 @@ with tab_dash:
         benefit_eur_mwh = st.number_input("Benefit zákazníka [EUR/MWh]", value=8.0,
                                           help="Kolik EUR/MWh zákazník vydělá za pomoc síti.")
 
-    if not df_imbal.empty:
-        _ema, _signal = balancing_strategy_ema(
-            df_imbal["odchylka_MWh"], ema_periods, threshold_mw
-        )
+    if not df_ceps_imbal.empty:
+        imbal_5min = df_ceps_imbal["odchylka_MW"].resample("5min").mean().dropna()
+        _ema, _signal = balancing_strategy_ema(imbal_5min, ema_periods, threshold_mw)
+    elif not df_imbal.empty:
+        imbal_5min = df_imbal["odchylka_MWh"]
+        _ema, _signal = balancing_strategy_ema(imbal_5min, ema_periods, threshold_mw)
+    if not df_ceps_imbal.empty or not df_imbal.empty:
         st.plotly_chart(
             fig_balancing_strategy(df_imbal, _ema, _signal, threshold_mw, now),
             use_container_width=True, config={"displayModeBar": False},
