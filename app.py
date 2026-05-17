@@ -704,7 +704,7 @@ def sparkline_svg(values, color="#1565C0", width=140, height=28):
 
 # ── GRAFY ────────────────────────────────────────────────────────
 def fig_ceps_dashboard(data: dict) -> go.Figure:
-    """6-panelový ČEPS real-time dashboard."""
+    """7-panelový ČEPS real-time dashboard — každý panel má vlastní osu."""
     df_imbal = data["imbal"]
     df_svr   = data["svr"]
     df_load  = data["load"]
@@ -719,106 +719,93 @@ def fig_ceps_dashboard(data: dict) -> go.Figure:
     now_iso = now.isoformat()
 
     fig = make_subplots(
-        rows=6, cols=1,
+        rows=7, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.03,
-        row_heights=[0.22, 0.14, 0.16, 0.16, 0.16, 0.16],
+        vertical_spacing=0.025,
+        row_heights=[0.18, 0.12, 0.12, 0.14, 0.16, 0.14, 0.14],
         subplot_titles=[
-            "Systémová odchylka (MW) + Zatížení (MW) + Cena odchylky (CZK/MWh)",
+            "Systémová odchylka (MW)",
+            "Cena odchylky (CZK/MWh)",
+            "Zatížení (MW)",
             "Aktivace SVR — aFRR / mFRR (MW)",
-            "Přeshraniční toky ČR (MW) — kladné = export",
             "Výroba podle zdroje (MW, 15min)",
-            "OZE real-time — Vítr + Solar (MW)",
-            "Frekvence sítě (Hz)",
+            "Přeshraniční toky ČR (MW) — kladné = export z ČR",
+            "OZE real-time — Vítr + Solar (MW) | Frekvence (Hz)",
         ]
     )
 
-    # Panel 1: Odchylka + Zatížení + Cena
-    # offsetgroup="p1" izoluje bary od jiných panelů
+    # ── Panel 1: Odchylka ────────────────────────────────────
     if not df_imbal.empty:
         col = df_imbal.columns[0]
         surplus = df_imbal[col] >= 0
         fig.add_trace(go.Bar(
             x=df_imbal.index[surplus], y=df_imbal.loc[surplus, col],
-            name="Surplus", marker_color=C_SURPLUS, opacity=0.8,
-            offsetgroup="p1",
+            name="Surplus", marker_color=C_SURPLUS, opacity=0.85,
             hovertemplate="%{x|%H:%M}  %{y:+.1f} MW<extra>Surplus</extra>",
         ), row=1, col=1)
         fig.add_trace(go.Bar(
             x=df_imbal.index[~surplus], y=df_imbal.loc[~surplus, col],
-            name="Deficit", marker_color=C_DEFICIT, opacity=0.8,
-            offsetgroup="p1",
+            name="Deficit", marker_color=C_DEFICIT, opacity=0.85,
             hovertemplate="%{x|%H:%M}  %{y:+.1f} MW<extra>Deficit</extra>",
         ), row=1, col=1)
         if len(df_imbal) >= 5:
             ma = df_imbal[col].rolling(5, min_periods=1).mean()
             fig.add_trace(go.Scatter(
                 x=df_imbal.index, y=ma, mode="lines", name="5min MA",
-                line=dict(color="#212121", width=1.5), showlegend=True,
+                line=dict(color="#212121", width=1.5),
             ), row=1, col=1)
-    if not df_load.empty and "Load [MW]" in df_load.columns:
-        fig.add_trace(go.Scatter(
-            x=df_load.index, y=df_load["Load [MW]"],
-            name="Zatížení", mode="lines",
-            line=dict(color="#E91E63", width=1.5),
-            hovertemplate="%{x|%H:%M}  %{y:,.0f} MW<extra>Zatížení</extra>",
-            yaxis="y2",
-        ), row=1, col=1)
+        fig.add_hline(y=0, line_color="#9E9E9E", line_width=0.8, row=1, col=1)
+
+    # ── Panel 2: Cena odchylky ───────────────────────────────
     if not df_cena.empty:
         fig.add_trace(go.Scatter(
             x=df_cena.index, y=df_cena.iloc[:, 0],
-            name="Cena odchylky (CZK/MWh)", mode="lines+markers",
-            line=dict(color="#7B1FA2", width=2, shape="hv", dash="dash"),
+            name="Cena odchylky", mode="lines+markers",
+            line=dict(color="#7B1FA2", width=2, shape="hv"),
+            fill="tozeroy", fillcolor="rgba(123,31,162,0.08)",
             hovertemplate="%{x|%H:%M}  %{y:,.0f} CZK/MWh<extra>Cena</extra>",
-            yaxis="y3",
-        ), row=1, col=1)
-    fig.add_hline(y=0, line_color="#9E9E9E", line_width=0.8, row=1, col=1)
+        ), row=2, col=1)
 
-    # Panel 2: SVR aktivace — Scatter místo Bar (izolace od globálního barmode)
+    # ── Panel 3: Zatížení ────────────────────────────────────
+    if not df_load.empty:
+        if "Load [MW]" in df_load.columns:
+            fig.add_trace(go.Scatter(
+                x=df_load.index, y=df_load["Load [MW]"],
+                name="Zatížení", mode="lines",
+                line=dict(color="#E91E63", width=1.5),
+                hovertemplate="%{x|%H:%M}  %{y:,.0f} MW<extra>Zatížení</extra>",
+            ), row=3, col=1)
+        if "Load including pumping [MW]" in df_load.columns:
+            fig.add_trace(go.Scatter(
+                x=df_load.index, y=df_load["Load including pumping [MW]"],
+                name="Zatížení vč. čerpání", mode="lines",
+                line=dict(color="#F48FB1", width=1, dash="dot"),
+                hovertemplate="%{x|%H:%M}  %{y:,.0f} MW<extra>vč. čerpání</extra>",
+            ), row=3, col=1)
+
+    # ── Panel 4: SVR aktivace ────────────────────────────────
     SVR_CFG = [
-        ("aFRR+ [MW]", "#1565C0"), ("aFRR- [MW]", "#C62828"),
-        ("mFRR+ [MW]", "#2E7D32"), ("mFRR- [MW]", "#E65100"),
-        ("mFRR5 [MW]", "#7B1FA2"),
+        ("aFRR+ [MW]", "#1565C0", "aFRR+"),
+        ("aFRR- [MW]", "#C62828", "aFRR-"),
+        ("mFRR+ [MW]", "#2E7D32", "mFRR+"),
+        ("mFRR- [MW]", "#E65100", "mFRR-"),
+        ("mFRR5 [MW]", "#7B1FA2", "mFRR5"),
     ]
     if not df_svr.empty:
-        for col, color in SVR_CFG:
+        for col, color, label in SVR_CFG:
             if col in df_svr.columns:
-                dname = col.replace("[", "(").replace("]", ")")
+                r2, g2, b2 = int(color[1:3],16), int(color[3:5],16), int(color[5:7],16)
                 fig.add_trace(go.Scatter(
                     x=df_svr.index, y=df_svr[col],
-                    name=dname, stackgroup="svr",
-                    line=dict(width=0, color=color),
-                    fillcolor=color,
-                    hovertemplate=f"{dname}: %{{y:.2f}} MW<extra></extra>",
-                ), row=2, col=1)
+                    name=label, mode="lines",
+                    line=dict(color=color, width=1.2),
+                    fill="tozeroy",
+                    fillcolor=f"rgba({r2},{g2},{b2},0.25)",
+                    hovertemplate=f"{label}: %{{y:.2f}} MW<extra></extra>",
+                ), row=4, col=1)
+        fig.add_hline(y=0, line_color="#9E9E9E", line_width=0.8, row=4, col=1)
 
-    # Panel 3: Přeshraniční toky — Bar s offsetgroup="p3" + base=0
-    CB_CFG = [
-        ("PSE Actual [MW]",    "#E53935", "PSE (Polsko)"),
-        ("SEPS Actual [MW]",   "#FB8C00", "SEPS (Slovensko)"),
-        ("APG Actual [MW]",    "#43A047", "APG (Rakousko)"),
-        ("TenneT Actual [MW]", "#1E88E5", "TenneT (DE západ)"),
-        ("50HzT Actual [MW]",  "#8E24AA", "50HzT (DE východ)"),
-    ]
-    if not df_cb.empty:
-        for col, color, label in CB_CFG:
-            if col in df_cb.columns:
-                fig.add_trace(go.Bar(
-                    x=df_cb.index, y=df_cb[col],
-                    name=label, marker_color=color, opacity=0.85,
-                    offsetgroup="p3", base=0,
-                    hovertemplate=f"{label}: %{{y:+.0f}} MW<extra></extra>",
-                ), row=3, col=1)
-        if "Net Export (MW)" in df_cb.columns:
-            fig.add_trace(go.Scatter(
-                x=df_cb.index, y=df_cb["Net Export (MW)"],
-                name="Net Export celkem", mode="lines",
-                line=dict(color="#212121", width=2),
-                hovertemplate="Net: %{y:+.0f} MW<extra></extra>",
-            ), row=3, col=1)
-        fig.add_hline(y=0, line_color="#9E9E9E", line_width=0.8, row=3, col=1)
-
-    # Panel 4: Výroba podle zdroje
+    # ── Panel 5: Výroba podle zdroje ────────────────────────
     GEN_CFG = [
         ("NPP [MW]",   "#7B1FA2", "Jaderné (NPP)"),
         ("TPP [MW]",   "#5D4037", "Tepelné (TPP)"),
@@ -832,16 +819,55 @@ def fig_ceps_dashboard(data: dict) -> go.Figure:
     if not df_gen.empty:
         for col, color, label in GEN_CFG:
             if col in df_gen.columns and df_gen[col].sum() > 0:
-                r, g, b = int(color[1:3],16), int(color[3:5],16), int(color[5:7],16)
+                r2, g2, b2 = int(color[1:3],16), int(color[3:5],16), int(color[5:7],16)
                 fig.add_trace(go.Scatter(
                     x=df_gen.index, y=df_gen[col],
                     name=label, stackgroup="gen",
                     line=dict(width=0, color=color),
-                    fillcolor=f"rgba({r},{g},{b},0.8)",
+                    fillcolor=f"rgba({r2},{g2},{b2},0.85)",
                     hovertemplate=f"{label}: %{{y:,.0f}} MW<extra></extra>",
-                ), row=4, col=1)
+                ), row=5, col=1)
 
-    # Panel 5: OZE real-time
+    # ── Panel 6: Přeshraniční toky ───────────────────────────
+    CB_CFG = [
+        ("PSE Actual [MW]",    "#E53935", "PSE (Polsko)"),
+        ("SEPS Actual [MW]",   "#FB8C00", "SEPS (Slovensko)"),
+        ("APG Actual [MW]",    "#43A047", "APG (Rakousko)"),
+        ("TenneT Actual [MW]", "#1E88E5", "TenneT (DE západ)"),
+        ("50HzT Actual [MW]",  "#8E24AA", "50HzT (DE východ)"),
+    ]
+    if not df_cb.empty:
+        for col, color, label in CB_CFG:
+            if col in df_cb.columns:
+                r2, g2, b2 = int(color[1:3],16), int(color[3:5],16), int(color[5:7],16)
+                pos = df_cb[col].clip(lower=0)
+                neg = df_cb[col].clip(upper=0)
+                fig.add_trace(go.Scatter(
+                    x=df_cb.index, y=pos,
+                    name=label, stackgroup="cb_pos",
+                    line=dict(width=0, color=color),
+                    fillcolor=f"rgba({r2},{g2},{b2},0.7)",
+                    showlegend=True,
+                    hovertemplate=f"{label}: %{{y:+.0f}} MW<extra></extra>",
+                ), row=6, col=1)
+                fig.add_trace(go.Scatter(
+                    x=df_cb.index, y=neg,
+                    name=label + " (import)", stackgroup="cb_neg",
+                    line=dict(width=0, color=color),
+                    fillcolor=f"rgba({r2},{g2},{b2},0.4)",
+                    showlegend=False,
+                    hovertemplate=f"{label}: %{{y:+.0f}} MW<extra></extra>",
+                ), row=6, col=1)
+        if "Net Export (MW)" in df_cb.columns:
+            fig.add_trace(go.Scatter(
+                x=df_cb.index, y=df_cb["Net Export (MW)"],
+                name="Net Export", mode="lines",
+                line=dict(color="#212121", width=2),
+                hovertemplate="Net: %{y:+.0f} MW<extra></extra>",
+            ), row=6, col=1)
+        fig.add_hline(y=0, line_color="#9E9E9E", line_width=0.8, row=6, col=1)
+
+    # ── Panel 7: OZE RT + Frekvence ─────────────────────────
     if not df_res.empty:
         if "WPP [MW]" in df_res.columns:
             fig.add_trace(go.Scatter(
@@ -850,7 +876,7 @@ def fig_ceps_dashboard(data: dict) -> go.Figure:
                 line=dict(width=0, color="#29B6F6"),
                 fillcolor="rgba(41,182,246,0.75)",
                 hovertemplate="%{x|%H:%M}  Vítr: %{y:.1f} MW<extra></extra>",
-            ), row=5, col=1)
+            ), row=7, col=1)
         if "PVPP [MW]" in df_res.columns:
             fig.add_trace(go.Scatter(
                 x=df_res.index, y=df_res["PVPP [MW]"],
@@ -858,50 +884,45 @@ def fig_ceps_dashboard(data: dict) -> go.Figure:
                 line=dict(width=0, color="#F9A825"),
                 fillcolor="rgba(249,168,37,0.75)",
                 hovertemplate="%{x|%H:%M}  Solar: %{y:.1f} MW<extra></extra>",
-            ), row=5, col=1)
-
-    # Panel 6: Frekvence
+            ), row=7, col=1)
     if not df_freq.empty:
-        col = df_freq.columns[0]
         fig.add_trace(go.Scatter(
-            x=df_freq.index, y=df_freq[col],
+            x=df_freq.index, y=df_freq.iloc[:, 0],
             name="Frekvence (Hz)", mode="lines",
             line=dict(color="#00897B", width=1.2),
+            yaxis="y14",
             hovertemplate="%{x|%H:%M}  %{y:.4f} Hz<extra></extra>",
-        ), row=6, col=1)
-        fig.add_hline(y=50.0, line_color="#9E9E9E",
-                      line_dash="dot", line_width=1, row=6, col=1)
+        ), row=7, col=1)
         fig.add_hrect(y0=49.8, y1=50.2,
-                      fillcolor="rgba(0,137,123,0.06)",
-                      line_width=0, row=6, col=1)
+                      fillcolor="rgba(0,137,123,0.05)",
+                      line_width=0, row=7, col=1)
 
-    # Svislá čára NOW
-    for r in range(1, 7):
+    # ── NOW čáry ─────────────────────────────────────────────
+    for r in range(1, 8):
         fig.add_vline(x=now_iso, line_color=C_SURPLUS,
                       line_width=1.5, line_dash="dot", row=r, col=1)
 
+    # ── Layout ───────────────────────────────────────────────
     fig.update_layout(
-        height=1200,
+        height=1300,
         title_text=f"ČEPS Real-time — {now.strftime('%d.%m.%Y %H:%M')}",
         template="plotly_white",
         hovermode="x unified",
         barmode="relative",
         bargap=0.05,
         showlegend=True,
-        legend=dict(orientation="h", y=-0.04, x=0,
-                    font=dict(size=9), bgcolor="rgba(255,255,255,0.8)"),
-        margin=dict(l=60, r=80, t=70, b=60),
-        yaxis =dict(title_text="MW (odchylka)", gridcolor=C_GRID),
-        yaxis2=dict(overlaying="y", side="right",
-                    showgrid=False, title_text="MW (zatížení)"),
-        yaxis3=dict(overlaying="y", side="right", position=0.97,
-                    showgrid=False, title_text="CZK/MWh", anchor="free"),
+        legend=dict(
+            orientation="h", y=-0.03, x=0,
+            font=dict(size=9), bgcolor="rgba(255,255,255,0.85)",
+            tracegroupgap=4,
+        ),
+        margin=dict(l=70, r=30, t=70, b=80),
     )
-    for r in range(1, 7):
+    y_labels = {1:"MW", 2:"CZK/MWh", 3:"MW", 4:"MW", 5:"MW", 6:"MW", 7:"MW"}
+    for r in range(1, 8):
         fig.update_xaxes(type="date", tickformat="%H:%M",
                          range=xrange, gridcolor=C_GRID, row=r, col=1)
-    for r, title in {1:"MW (odchylka)",2:"MW",3:"MW",4:"MW",5:"MW",6:"Hz"}.items():
-        fig.update_yaxes(title_text=title, gridcolor=C_GRID, row=r, col=1)
+        fig.update_yaxes(title_text=y_labels[r], gridcolor=C_GRID, row=r, col=1)
     return fig
 
 
