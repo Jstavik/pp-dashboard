@@ -325,6 +325,23 @@ def fetch_dap(day_offset: int = 0):
     return raw.dropna()
 
 
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
+def fetch_installed_capacity():
+    now   = pd.Timestamp.now(tz="Europe/Prague")
+    start = now.normalize()
+    end   = start + pd.Timedelta(days=1)
+    try:
+        raw = client.query_installed_generation_capacity(
+            country_code="CZ", start=start, end=end, psr_type=None
+        )
+        if raw is None or raw.empty:
+            return pd.Series(dtype=float)
+        last = raw.iloc[-1]
+        return last.dropna()
+    except Exception:
+        return pd.Series(dtype=float)
+
+
 @st.cache_data(ttl=60 * 15, show_spinner=False)
 def fetch_activation_prices():
     now   = pd.Timestamp.now(tz="Europe/Prague")
@@ -820,6 +837,40 @@ def fig_load(load_actual, load_fc, now, height=280):
     fig.update_xaxes(tickformat="%H:%M\n%d.%m")
     fig.update_yaxes(title_text="Zatížení (MW)")
     fig.update_layout(hovermode="x unified")
+    return fig
+
+
+def fig_installed_capacity(cap: pd.Series, height=280):
+    fig = go.Figure()
+    if cap.empty:
+        return _base_layout(fig, height=height)
+    items = []
+    for col, val in cap.items():
+        name, color = psr_lookup(col)
+        if pd.notna(val) and float(val) > 0:
+            items.append((float(val), name, color))
+    items.sort(reverse=True)
+    fig.add_trace(go.Bar(
+        x=[v for v, _, _ in items],
+        y=[n for _, n, _ in items],
+        orientation="h",
+        marker_color=[c for _, _, c in items],
+        marker_line=dict(width=0.5, color="rgba(0,0,0,0.15)"),
+        hovertemplate="<b>%{y}</b><br>%{x:,.0f} MW<extra></extra>",
+        text=[f"{v:,.0f} MW" for v, _, _ in items],
+        textposition="outside",
+        textfont=dict(size=10),
+    ))
+    total = sum(v for v, _, _ in items)
+    fig.update_layout(
+        height=height,
+        title_text=f"Instalovaná kapacita CZ podle zdroje — celkem {total:,.0f} MW",
+        template="plotly_white",
+        margin=dict(l=160, r=80, t=40, b=20),
+        xaxis=dict(title_text="MW", gridcolor=C_GRID),
+        yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
+        showlegend=False,
+    )
     return fig
 
 
@@ -1476,6 +1527,13 @@ with tab_dash:
 
 # ──────────── TAB 2: ODSTÁVKY ─────────────────────────────────────
 with tab_out:
+    st.markdown('<div class="section-title">Instalovaná kapacita podle zdroje (14.1.A)</div>',
+                unsafe_allow_html=True)
+    cap = fetch_installed_capacity()
+    if not cap.empty:
+        st.plotly_chart(fig_installed_capacity(cap), use_container_width=True,
+                        config={"displayModeBar": False})
+
     st.markdown(f'<div class="section-title">Výrobní jednotky (PU) — {n_pu} aktivních</div>',
                 unsafe_allow_html=True)
     st.plotly_chart(fig_outages_gantt(df_out, "PU", now, changes),
