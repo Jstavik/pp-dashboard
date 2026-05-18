@@ -296,11 +296,14 @@ with tab_dash:
 
     st.markdown('<div class="section-title">Zatížení — skutečnost vs. prognóza D+1</div>',
                 unsafe_allow_html=True)
-    if load_actual.empty and load_fc.empty:
+    ceps_d = fetch_ceps_all()
+    if load_fc.empty:
         st.info("Data zatížení nejsou dostupná.")
     else:
-        st.plotly_chart(fig_load(load_actual, load_fc, now), use_container_width=True,
-                        config={"displayModeBar": False})
+        st.plotly_chart(
+            fig_load(load_fc, ceps_d["load"], ceps_d["gen"], now),
+            use_container_width=True, config={"displayModeBar": False},
+        )
 
     st.markdown('<div class="section-title">Forecast solární výroby [MW] | D0 + D+1</div>',
                 unsafe_allow_html=True)
