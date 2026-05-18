@@ -154,25 +154,41 @@ def render_mix_legend(df_gen) -> str:
     return f'<div class="mix-legend">{"".join(rows)}</div>'
 
 
-def fig_load(load_actual, load_fc, now, height=280):
+def fig_load(load_fc, ceps_load, ceps_gen, now, height=280):
     fig = go.Figure()
     if not load_fc.empty:
         fig.add_trace(go.Scatter(
             x=load_fc.index, y=load_fc.values, mode="lines",
-            name="Prognóza (D+1)", line=dict(color="#26A69A", width=2, shape="hv"),
-            hovertemplate="<b>%{x|%a %d.%m %H:%M}</b><br>Prognóza: %{y:,.0f} MW<extra></extra>",
+            name="Prognóza zatížení D+1", line=dict(color="#26A69A", width=2, shape="hv"),
+            hovertemplate="Prognóza D+1: %{y:,.0f} MW<extra></extra>",
         ))
-    if not load_actual.empty:
-        fig.add_trace(go.Scatter(
-            x=load_actual.index, y=load_actual.values, mode="lines",
-            name="Skutečnost", line=dict(color="#E91E63", width=2, shape="hv"),
-            hovertemplate="<b>%{x|%a %d.%m %H:%M}</b><br>Skutečnost: %{y:,.0f} MW<extra></extra>",
+    if ceps_load is not None and not ceps_load.empty:
+        load_col = next(
+            (c for c in ceps_load.columns
+             if "load" in str(c).lower() or "zatížení" in str(c).lower()),
+            None,
+        )
+        if load_col is None:
+            num_cols = ceps_load.select_dtypes(include="number").columns
+            load_col = num_cols[0] if len(num_cols) > 0 else None
+        if load_col is not None:
+            s = ceps_load[load_col].dropna()
+            fig.add_trace(go.Scatter(
+                x=s.index, y=s.values, mode="lines",
+                name="Zatížení skutečnost (ČEPS)", line=dict(color="#E91E63", width=2, shape="hv"),
+                hovertemplate="Zatížení ČEPS: %{y:,.0f} MW<extra></extra>",
+            ))
+    if ceps_gen is not None and not ceps_gen.empty:
+        total_gen = ceps_gen.sum(axis=1).dropna()
+        fig.add_trace(go.Bar(
+            x=total_gen.index, y=total_gen.values,
+            name="Plán výroby (ČEPS)", marker_color="#1565C0", opacity=0.4, yaxis="y",
         ))
     _now_marker(fig, now)
     _base_layout(fig, height=height)
     fig.update_xaxes(tickformat="%H:%M\n%d.%m")
-    fig.update_yaxes(title_text="Zatížení (MW)")
-    fig.update_layout(hovermode="x unified")
+    fig.update_yaxes(title_text="Zatížení / Výroba (MW)")
+    fig.update_layout(hovermode="x unified", barmode="overlay")
     return fig
 
 
