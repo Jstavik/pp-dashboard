@@ -168,18 +168,15 @@ def fig_load(load_fc, ceps_load, ceps_gen, now, height=280):
         # Prefer pumping variant as it includes čerpání přečerpávacích elektráren
         PREFERRED = ("Zatížení vč. čerpání [MW]", "Load including pumping [MW]",
                      "Zatížení [MW]", "Load [MW]")
-        load_col = next((c for c in PREFERRED if c in ceps_load.columns), None)
-        if load_col is None:
-            load_col = next(
-                (c for c in ceps_load.columns
-                 if "load" in str(c).lower() or "zatížení" in str(c).lower()),
-                None,
-            )
-        if load_col is None:
-            num_cols = ceps_load.select_dtypes(include="number").columns
-            load_col = num_cols[0] if len(num_cols) > 0 else None
-        if load_col is not None:
-            s = ceps_load[load_col].dropna()
+        if isinstance(ceps_load, pd.Series):
+            load_series = ceps_load
+        elif isinstance(ceps_load, pd.DataFrame):
+            load_col = next((c for c in PREFERRED if c in ceps_load.columns), None)
+            load_series = ceps_load[load_col] if load_col else pd.Series(dtype=float)
+        else:
+            load_series = pd.Series(dtype=float)
+        s = load_series.dropna()
+        if not s.empty:
             fig.add_trace(go.Scatter(
                 x=s.index, y=s.values, mode="lines",
                 name="Zatížení skutečnost (ČEPS)", line=dict(color="#E91E63", width=2, shape="hv"),
