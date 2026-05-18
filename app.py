@@ -19,6 +19,8 @@ from data.ceps import (
     fetch_ceps_imbalance, fetch_ceps_svr, fetch_ceps_imbalance_price, fetch_ceps_all,
 )
 from data.deltagreen import fetch_deltagreen
+from data.entsog import fetch_entsog_flows
+from charts.gas import fig_gas_flows_bar, fig_gas_point_history, build_gas_map
 from charts.imbalance import (
     parse_imbalance,
     fig_ceps_dashboard, fig_ceps_combined, fig_ceps_svr,
@@ -89,6 +91,10 @@ with st.sidebar:
         hold_enabled = st.checkbox(
             "Povolit stav HOLD (drž SoC)", value=False,
             help="Baterie drží aktuální SoC místo nabíjení/vybíjení pokud není jasný cenový signál")
+
+    st.markdown("---")
+    st.markdown("### 🔵 Plyn")
+    show_gas = st.checkbox("Zobrazit plynovou sekci", value=False)
 
     st.markdown("---")
     st.markdown("### Zdroje dat")
@@ -604,3 +610,38 @@ with tab_data:
             st.info("Data generace nejsou dostupná.")
 
 st.session_state.iteration += 1
+
+if show_gas:
+    st.markdown("---")
+    st.markdown("## 🔵 Fyzické toky plynu — CZ")
+
+    with st.spinner("Načítám data ENTSO-G..."):
+        pivot_gas = fetch_entsog_flows(days=90)
+
+    if pivot_gas.empty:
+        st.warning("ENTSO-G data nejsou dostupná.")
+    else:
+        tab_map, tab_bar, tab_hist = st.tabs(["🗺️ Mapa", "📊 Toky", "📈 Historie"])
+
+        with tab_map:
+            gas_map = build_gas_map(pivot_gas)
+            from streamlit_folium import st_folium
+            st_folium(gas_map, width=900, height=500)
+
+        with tab_bar:
+            days_sel = st.slider("Počet dní", 7, 90, 30, key="gas_days")
+            st.plotly_chart(
+                fig_gas_flows_bar(pivot_gas.tail(days_sel)),
+                use_container_width=True,
+            )
+
+        with tab_hist:
+            point_sel = st.selectbox(
+                "Hraniční přechod",
+                options=[c for c in pivot_gas.columns if pivot_gas[c].abs().sum() > 0],
+                key="gas_point_sel",
+            )
+            st.plotly_chart(
+                fig_gas_point_history(pivot_gas, point_sel),
+                use_container_width=True,
+            )
