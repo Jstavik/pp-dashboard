@@ -4,6 +4,153 @@ import plotly.graph_objects as go
 import streamlit as st
 from data.entsog import POINTS_CONFIG
 
+FLOW_COLORS = [
+    "#1565C0","#C62828","#2E7D32","#F57F17","#6A1B9A",
+    "#00838F","#E65100","#4527A0","#558B2F","#AD1457",
+]
+
+
+def fig_flow_timeseries(
+    df: pd.DataFrame,
+    countries: list,
+    points: list,
+    systems: list,
+    directions: list,
+    height: int = 380,
+) -> go.Figure:
+    """
+    Časová osa fyzických toků.
+    df má sloupce: date, countryLabel, pointsNames,
+                   adjacentSystemsKey, directionKey, value_GWh
+    """
+    fig = go.Figure()
+
+    mask = pd.Series(True, index=df.index)
+    if countries:
+        mask &= df["countryLabel"].isin(countries)
+    if points:
+        mask &= df["pointsNames"].isin(points)
+    if systems:
+        mask &= df["adjacentSystemsKey"].isin(systems)
+    if directions:
+        mask &= df["directionKey"].isin(directions)
+
+    filtered = df[mask].copy()
+    if filtered.empty:
+        fig.add_annotation(
+            text="Žádná data pro vybranou kombinaci filtrů",
+            x=0.5, y=0.5, xref="paper", yref="paper",
+            showarrow=False, font=dict(size=14, color="#888"),
+        )
+        return fig
+
+    group_cols = ["countryLabel", "pointsNames"]
+    groups = filtered.groupby(group_cols)
+
+    for i, (key, grp) in enumerate(groups):
+        series = grp.groupby("date")["value_GWh"].sum().sort_index()
+        label  = f"{key[0]} · {key[1]}"
+        color  = FLOW_COLORS[i % len(FLOW_COLORS)]
+        fig.add_trace(go.Scatter(
+            x=series.index, y=series.values,
+            mode="lines", name=label,
+            line=dict(color=color, width=1.8),
+            hovertemplate=f"<b>{label}</b><br>%{{x|%d.%m.%Y}}<br>%{{y:.1f}} GWh/d<extra></extra>",
+        ))
+
+    fig.add_hline(y=0, line_color="black", line_width=0.8)
+    fig.update_layout(
+        height=height,
+        title="Fyzické toky — časová osa [GWh/d]",
+        template="plotly_white",
+        hovermode="x unified",
+        legend=dict(orientation="h", y=-0.2),
+        xaxis=dict(tickformat="%d.%m.%Y", gridcolor="#f0f0f0"),
+        yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),
+        margin=dict(l=60, r=20, t=50, b=80),
+    )
+    return fig
+
+
+def fig_flow_seasonality(
+    df: pd.DataFrame,
+    countries: list,
+    points: list,
+    systems: list,
+    directions: list,
+    years: list,
+    height: int = 360,
+) -> go.Figure:
+    """
+    Sezonnost — agregát vybraných filtrů, jedna křivka = jeden rok.
+    Osa X = den v roce (1–366).
+    """
+    YEAR_COLORS = {
+        2020: "#BDBDBD", 2021: "#90A4AE", 2022: "#42A5F5",
+        2023: "#1565C0", 2024: "#F57F17", 2025: "#C62828",
+        2026: "#2E7D32",
+    }
+
+    fig = go.Figure()
+
+    mask = pd.Series(True, index=df.index)
+    if countries:
+        mask &= df["countryLabel"].isin(countries)
+    if points:
+        mask &= df["pointsNames"].isin(points)
+    if systems:
+        mask &= df["adjacentSystemsKey"].isin(systems)
+    if directions:
+        mask &= df["directionKey"].isin(directions)
+
+    filtered = df[mask].copy()
+    if filtered.empty:
+        fig.add_annotation(
+            text="Žádná data pro vybranou kombinaci filtrů",
+            x=0.5, y=0.5, xref="paper", yref="paper",
+            showarrow=False, font=dict(size=14, color="#888"),
+        )
+        return fig
+
+    filtered["date"]        = pd.to_datetime(filtered["date"])
+    filtered["year"]        = filtered["date"].dt.year
+    filtered["day_of_year"] = filtered["date"].dt.day_of_year
+
+    sel_years = years if years else sorted(filtered["year"].unique())
+
+    for yr in sorted(sel_years):
+        grp = filtered[filtered["year"] == yr]
+        if grp.empty:
+            continue
+        series = grp.groupby("day_of_year")["value_GWh"].sum().sort_index()
+        color  = YEAR_COLORS.get(yr, "#9E9E9E")
+        width  = 2.5 if yr == pd.Timestamp.now().year else 1.5
+        fig.add_trace(go.Scatter(
+            x=series.index, y=series.values,
+            mode="lines", name=str(yr),
+            line=dict(color=color, width=width),
+            hovertemplate=f"<b>{yr}</b><br>Den %{{x}}<br>%{{y:.1f}} GWh/d<extra></extra>",
+        ))
+
+    fig.add_hline(y=0, line_color="black", line_width=0.8)
+    fig.update_layout(
+        height=height,
+        title="Sezonnost fyzických toků [GWh/d]",
+        template="plotly_white",
+        hovermode="x unified",
+        legend=dict(orientation="h", y=-0.2),
+        xaxis=dict(
+            title="Den v roce",
+            tickvals=[1,32,60,91,121,152,182,213,244,274,305,335],
+            ticktext=["Led","Úno","Bře","Dub","Kvě","Čvn",
+                      "Čvc","Srp","Zář","Říj","Lis","Pro"],
+            gridcolor="#f0f0f0",
+        ),
+        yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),
+        margin=dict(l=60, r=20, t=50, b=80),
+    )
+    return fig
+
 def fig_gas_flows_bar(pivot: pd.DataFrame, height: int = 380) -> go.Figure:
     """Sloupcový graf fyzických toků CZ — netto GWh/d."""
     colors = {

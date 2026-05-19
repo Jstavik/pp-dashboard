@@ -19,8 +19,11 @@ from data.ceps import (
     fetch_ceps_imbalance, fetch_ceps_svr, fetch_ceps_imbalance_price, fetch_ceps_all,
 )
 from data.deltagreen import fetch_deltagreen
-from data.entsog import fetch_entsog_flows
-from charts.gas import fig_gas_flows_bar, fig_gas_point_history, build_gas_map
+from data.entsog import fetch_entsog_flows, load_entsog_history
+from charts.gas import (
+    fig_gas_flows_bar, fig_gas_point_history, build_gas_map,
+    fig_flow_timeseries, fig_flow_seasonality,
+)
 from charts.imbalance import (
     parse_imbalance,
     fig_ceps_dashboard, fig_ceps_combined, fig_ceps_svr,
@@ -659,11 +662,84 @@ if show_gas:
             st.components.v1.html(gas_map_html, height=520, scrolling=False)
 
         with tab_bar:
-            days_sel = st.slider("Počet dní", 7, 90, 30, key="gas_days")
-            st.plotly_chart(
-                fig_gas_flows_bar(pivot_gas.tail(days_sel)),
-                use_container_width=True,
-            )
+            df_hist = load_entsog_history()
+
+            if df_hist.empty:
+                st.warning("Historická data ENTSO-G nejsou dostupná.")
+            else:
+                df_hist["date"] = pd.to_datetime(df_hist["date"])
+
+                all_countries  = sorted(df_hist["countryLabel"].dropna().unique())
+                all_points     = sorted(df_hist["pointsNames"].dropna().unique())
+                all_systems    = sorted(df_hist["adjacentSystemsKey"].dropna().unique())
+                all_directions = sorted(df_hist["directionKey"].dropna().unique())
+                all_years      = sorted(df_hist["date"].dt.year.unique())
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    sel_countries = st.multiselect(
+                        "🌍 Země", all_countries,
+                        default=["Czechia"],
+                        key="gas_countries",
+                    )
+                    sel_directions = st.multiselect(
+                        "↕ Směr", all_directions,
+                        default=all_directions,
+                        key="gas_directions",
+                    )
+                with col2:
+                    sel_points = st.multiselect(
+                        "📍 Bod (pointsNames)", all_points,
+                        default=[],
+                        key="gas_points",
+                        help="Prázdný výběr = všechny body",
+                    )
+                    sel_systems = st.multiselect(
+                        "🔧 Systém", all_systems,
+                        default=[],
+                        key="gas_systems",
+                        help="Prázdný výběr = všechny systémy",
+                    )
+                with col3:
+                    sel_years = st.multiselect(
+                        "📅 Roky (sezonnost)", all_years,
+                        default=all_years[-5:],
+                        key="gas_years",
+                    )
+                    date_range = st.date_input(
+                        "📆 Rozsah (časová osa)",
+                        value=(
+                            df_hist["date"].max() - pd.Timedelta(days=365),
+                            df_hist["date"].max(),
+                        ),
+                        key="gas_daterange",
+                    )
+
+                st.markdown("---")
+
+                if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+                    df_range = df_hist[
+                        (df_hist["date"] >= pd.Timestamp(date_range[0])) &
+                        (df_hist["date"] <= pd.Timestamp(date_range[1]))
+                    ]
+                else:
+                    df_range = df_hist
+
+                st.plotly_chart(
+                    fig_flow_timeseries(
+                        df_range, sel_countries, sel_points,
+                        sel_systems, sel_directions,
+                    ),
+                    use_container_width=True,
+                )
+
+                st.plotly_chart(
+                    fig_flow_seasonality(
+                        df_hist, sel_countries, sel_points,
+                        sel_systems, sel_directions, sel_years,
+                    ),
+                    use_container_width=True,
+                )
 
         with tab_hist:
             point_sel = st.selectbox(
