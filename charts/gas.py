@@ -15,6 +15,7 @@ def fig_flow_timeseries(
     points: list,
     systems: list,
     directions: list,
+    chart_type: str = "Linie",
     height: int = 380,
 ) -> go.Figure:
     """
@@ -53,14 +54,29 @@ def fig_flow_timeseries(
         series = grp.groupby("date")["value_GWh"].sum().sort_index()
         label  = f"{key[0]} · {key[1]}"
         color  = FLOW_COLORS[i % len(FLOW_COLORS)]
-        fig.add_trace(go.Scatter(
-            x=series.index, y=series.values,
-            mode="lines", name=label,
-            line=dict(color=color, width=1.8),
-            hovertemplate=f"<b>{label}</b><br>%{{x|%d.%m.%Y}}<br>%{{y:.1f}} GWh/d<extra></extra>",
-        ))
+        if chart_type == "Sloupcový":
+            fig.add_trace(go.Bar(
+                x=series.index, y=series.values, name=label,
+                marker_color=color,
+                hovertemplate=f"<b>{label}</b><br>%{{x|%d.%m.%Y}}<br>%{{y:.1f}} GWh/d<extra></extra>",
+            ))
+        elif chart_type == "Plocha":
+            fig.add_trace(go.Scatter(
+                x=series.index, y=series.values, mode="lines", name=label,
+                line=dict(color=color, width=1.8),
+                fill="tozeroy",
+                fillcolor=color,
+                hovertemplate=f"<b>{label}</b><br>%{{x|%d.%m.%Y}}<br>%{{y:.1f}} GWh/d<extra></extra>",
+            ))
+        else:
+            fig.add_trace(go.Scatter(
+                x=series.index, y=series.values, mode="lines", name=label,
+                line=dict(color=color, width=1.8),
+                hovertemplate=f"<b>{label}</b><br>%{{x|%d.%m.%Y}}<br>%{{y:.1f}} GWh/d<extra></extra>",
+            ))
 
     fig.add_hline(y=0, line_color="black", line_width=0.8)
+    layout_extra = dict(barmode="relative") if chart_type == "Sloupcový" else {}
     fig.update_layout(
         height=height,
         title="Fyzické toky — časová osa [GWh/d]",
@@ -70,6 +86,7 @@ def fig_flow_timeseries(
         xaxis=dict(tickformat="%d.%m.%Y", gridcolor="#f0f0f0"),
         yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),
         margin=dict(l=60, r=20, t=50, b=80),
+        **layout_extra,
     )
     return fig
 
@@ -81,6 +98,7 @@ def fig_flow_seasonality(
     systems: list,
     directions: list,
     years: list,
+    chart_type: str = "Linie",
     height: int = 360,
 ) -> go.Figure:
     """
@@ -130,14 +148,28 @@ def fig_flow_seasonality(
         series = grp.groupby("day_of_year")["value_GWh"].sum().sort_index()
         color  = YEAR_COLORS.get(yr, "#9E9E9E")
         width  = 2.5 if yr == pd.Timestamp.now().year else 1.5
-        fig.add_trace(go.Scatter(
-            x=series.index, y=series.values,
-            mode="lines", name=str(yr),
-            line=dict(color=color, width=width),
-            hovertemplate=f"<b>{yr}</b><br>Den %{{x}}<br>%{{y:.1f}} GWh/d<extra></extra>",
-        ))
+        if chart_type == "Sloupcový":
+            fig.add_trace(go.Bar(
+                x=series.index, y=series.values, name=str(yr),
+                marker_color=color,
+                hovertemplate=f"<b>{yr}</b><br>Den %{{x}}<br>%{{y:.1f}} GWh/d<extra></extra>",
+            ))
+        elif chart_type == "Plocha":
+            fig.add_trace(go.Scatter(
+                x=series.index, y=series.values, mode="lines", name=str(yr),
+                line=dict(color=color, width=width),
+                fill="tozeroy",
+                hovertemplate=f"<b>{yr}</b><br>Den %{{x}}<br>%{{y:.1f}} GWh/d<extra></extra>",
+            ))
+        else:
+            fig.add_trace(go.Scatter(
+                x=series.index, y=series.values, mode="lines", name=str(yr),
+                line=dict(color=color, width=width),
+                hovertemplate=f"<b>{yr}</b><br>Den %{{x}}<br>%{{y:.1f}} GWh/d<extra></extra>",
+            ))
 
     fig.add_hline(y=0, line_color="black", line_width=0.8)
+    layout_extra = dict(barmode="group") if chart_type == "Sloupcový" else {}
     fig.update_layout(
         height=height,
         title="Sezonnost fyzických toků [GWh/d]",
