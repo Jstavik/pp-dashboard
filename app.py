@@ -667,50 +667,71 @@ if show_gas:
             if df_hist.empty:
                 st.warning("Historická data ENTSO-G nejsou dostupná.")
             else:
-                df_hist["date"] = pd.to_datetime(df_hist["date"])
+                # ── Kaskádové filtry ────────────────────────────
+                df_hist["date"] = pd.to_datetime(df_hist["date"], utc=True)
 
-                all_countries  = sorted(df_hist["countryLabel"].dropna().unique())
-                all_points     = sorted(df_hist["pointsNames"].dropna().unique())
-                all_systems    = sorted(df_hist["adjacentSystemsKey"].dropna().unique())
-                all_directions = sorted(df_hist["directionKey"].dropna().unique())
-                all_years      = sorted(df_hist["date"].dt.year.unique())
+                # 1. Země
+                all_countries = sorted(df_hist["countryLabel"].dropna().unique())
+                sel_countries = st.multiselect(
+                    "🌍 Země", all_countries,
+                    default=["Czechia"],
+                    key="gas_countries",
+                )
 
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    sel_countries = st.multiselect(
-                        "🌍 Země", all_countries,
-                        default=["Czechia"],
-                        key="gas_countries",
-                    )
-                    sel_directions = st.multiselect(
-                        "↕ Směr", all_directions,
-                        default=all_directions,
-                        key="gas_directions",
-                    )
-                with col2:
-                    sel_points = st.multiselect(
-                        "📍 Bod (pointsNames)", all_points,
-                        default=[],
-                        key="gas_points",
-                        help="Prázdný výběr = všechny body",
-                    )
-                    sel_systems = st.multiselect(
-                        "🔧 Systém", all_systems,
-                        default=[],
-                        key="gas_systems",
-                        help="Prázdný výběr = všechny systémy",
-                    )
-                with col3:
+                df_f1 = df_hist[df_hist["countryLabel"].isin(sel_countries)] \
+                        if sel_countries else df_hist
+
+                # 2. Směr
+                all_directions = sorted(df_f1["directionKey"].dropna().unique())
+                sel_directions = st.multiselect(
+                    "↕ Směr", all_directions,
+                    default=all_directions,
+                    key="gas_directions",
+                )
+
+                df_f2 = df_f1[df_f1["directionKey"].isin(sel_directions)] \
+                        if sel_directions else df_f1
+
+                # 3. Systém
+                all_systems = sorted(df_f2["adjacentSystemsKey"].dropna().unique())
+                sel_systems = st.multiselect(
+                    "🔧 Systém", all_systems,
+                    default=[],
+                    key="gas_systems",
+                    help="Prázdný výběr = všechny systémy",
+                )
+
+                df_f3 = df_f2[df_f2["adjacentSystemsKey"].isin(sel_systems)] \
+                        if sel_systems else df_f2
+
+                # 4. Bod
+                all_points = sorted(df_f3["pointsNames"].dropna().unique())
+                sel_points = st.multiselect(
+                    "📍 Bod", all_points,
+                    default=[],
+                    key="gas_points",
+                    help="Prázdný výběr = všechny body",
+                )
+
+                df_f4 = df_f3[df_f3["pointsNames"].isin(sel_points)] \
+                        if sel_points else df_f3
+
+                # 5. Roky + rozsah dat (vedle sebe)
+                col_yr, col_dr = st.columns(2)
+                with col_yr:
+                    all_years = sorted(df_hist["date"].dt.year.unique())
                     sel_years = st.multiselect(
                         "📅 Roky (sezonnost)", all_years,
                         default=all_years[-5:],
                         key="gas_years",
                     )
+                with col_dr:
                     date_range = st.date_input(
                         "📆 Rozsah (časová osa)",
                         value=(
-                            df_hist["date"].max() - pd.Timedelta(days=365),
-                            df_hist["date"].max(),
+                            df_hist["date"].dt.tz_localize(None).max()
+                            - pd.Timedelta(days=365),
+                            df_hist["date"].dt.tz_localize(None).max(),
                         ),
                         key="gas_daterange",
                     )
@@ -720,26 +741,20 @@ if show_gas:
                 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
                     ts_from = pd.Timestamp(date_range[0]).tz_localize("UTC")
                     ts_to   = pd.Timestamp(date_range[1]).tz_localize("UTC")
-                    df_range = df_hist[
-                        (df_hist["date"] >= ts_from) &
-                        (df_hist["date"] <= ts_to)
+                    df_range = df_f4[
+                        (df_f4["date"] >= ts_from) &
+                        (df_f4["date"] <= ts_to)
                     ]
                 else:
-                    df_range = df_hist
+                    df_range = df_f4
 
                 st.plotly_chart(
-                    fig_flow_timeseries(
-                        df_range, sel_countries, sel_points,
-                        sel_systems, sel_directions,
-                    ),
+                    fig_flow_timeseries(df_range, [], [], [], []),
                     use_container_width=True,
                 )
 
                 st.plotly_chart(
-                    fig_flow_seasonality(
-                        df_hist, sel_countries, sel_points,
-                        sel_systems, sel_directions, sel_years,
-                    ),
+                    fig_flow_seasonality(df_f4, [], [], [], [], sel_years),
                     use_container_width=True,
                 )
 
