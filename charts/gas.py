@@ -24,17 +24,20 @@ def fig_flow_timeseries(
     """
     fig = go.Figure()
 
-    mask = pd.Series(True, index=df.index)
-    if countries:
-        mask &= df["countryLabel"].isin(countries)
-    if points:
-        mask &= df["pointsNames"].isin(points)
-    if systems:
-        mask &= df["adjacentSystemsKey"].isin(systems)
-    if directions:
-        mask &= df["directionKey"].isin(directions)
+    if any([countries, points, systems, directions]):
+        mask = pd.Series(True, index=df.index)
+        if countries:
+            mask &= df["countryLabel"].isin(countries)
+        if points:
+            mask &= df["pointsNames"].isin(points)
+        if systems:
+            mask &= df["adjacentSystemsKey"].isin(systems)
+        if directions:
+            mask &= df["directionKey"].isin(directions)
+        filtered = df[mask].copy()
+    else:
+        filtered = df.copy()
 
-    filtered = df[mask].copy()
     if filtered.empty:
         fig.add_annotation(
             text="Žádná data pro vybranou kombinaci filtrů",
@@ -92,17 +95,20 @@ def fig_flow_seasonality(
 
     fig = go.Figure()
 
-    mask = pd.Series(True, index=df.index)
-    if countries:
-        mask &= df["countryLabel"].isin(countries)
-    if points:
-        mask &= df["pointsNames"].isin(points)
-    if systems:
-        mask &= df["adjacentSystemsKey"].isin(systems)
-    if directions:
-        mask &= df["directionKey"].isin(directions)
+    if any([countries, points, systems, directions]):
+        mask = pd.Series(True, index=df.index)
+        if countries:
+            mask &= df["countryLabel"].isin(countries)
+        if points:
+            mask &= df["pointsNames"].isin(points)
+        if systems:
+            mask &= df["adjacentSystemsKey"].isin(systems)
+        if directions:
+            mask &= df["directionKey"].isin(directions)
+        filtered = df[mask].copy()
+    else:
+        filtered = df.copy()
 
-    filtered = df[mask].copy()
     if filtered.empty:
         fig.add_annotation(
             text="Žádná data pro vybranou kombinaci filtrů",
