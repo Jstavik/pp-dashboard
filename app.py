@@ -690,6 +690,11 @@ if show_gas:
                 ).fillna(0)
                 pivot_map.index = pd.to_datetime(pivot_map.index, utc=True)
 
+                st.write(
+                    df_map.groupby("countryLabel")["pointsNames"]
+                    .apply(lambda x: x.unique().tolist())
+                    .to_dict()
+                )
                 gas_map_html = build_gas_map(pivot_map)
                 st.components.v1.html(gas_map_html, height=520, scrolling=False)
 
