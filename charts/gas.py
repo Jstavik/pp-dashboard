@@ -65,7 +65,9 @@ def fig_flow_timeseries(
                 x=series.index, y=series.values, mode="lines", name=label,
                 line=dict(color=color, width=1.8),
                 fill="tozeroy",
-                fillcolor=color,
+                fillcolor="rgba({},{},{},0.2)".format(
+                    int(color[1:3],16), int(color[3:5],16), int(color[5:7],16)
+                ),
                 hovertemplate=f"<b>{label}</b><br>%{{x|%d.%m.%Y}}<br>%{{y:.1f}} GWh/d<extra></extra>",
             ))
         else:
@@ -76,7 +78,8 @@ def fig_flow_timeseries(
             ))
 
     fig.add_hline(y=0, line_color="black", line_width=0.8)
-    layout_extra = dict(barmode="relative") if chart_type == "Sloupcový" else {}
+    if chart_type == "Sloupcový":
+        fig.update_layout(barmode="relative")
     fig.update_layout(
         height=height,
         title="Fyzické toky — časová osa [GWh/d]",
@@ -86,7 +89,6 @@ def fig_flow_timeseries(
         xaxis=dict(tickformat="%d.%m.%Y", gridcolor="#f0f0f0"),
         yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),
         margin=dict(l=60, r=20, t=50, b=80),
-        **layout_extra,
     )
     return fig
 
@@ -159,6 +161,9 @@ def fig_flow_seasonality(
                 x=series.index, y=series.values, mode="lines", name=str(yr),
                 line=dict(color=color, width=width),
                 fill="tozeroy",
+                fillcolor="rgba({},{},{},0.2)".format(
+                    int(color[1:3],16), int(color[3:5],16), int(color[5:7],16)
+                ),
                 hovertemplate=f"<b>{yr}</b><br>Den %{{x}}<br>%{{y:.1f}} GWh/d<extra></extra>",
             ))
         else:
@@ -169,7 +174,8 @@ def fig_flow_seasonality(
             ))
 
     fig.add_hline(y=0, line_color="black", line_width=0.8)
-    layout_extra = dict(barmode="group") if chart_type == "Sloupcový" else {}
+    if chart_type == "Sloupcový":
+        fig.update_layout(barmode="group")
     fig.update_layout(
         height=height,
         title="Sezonnost fyzických toků [GWh/d]",
