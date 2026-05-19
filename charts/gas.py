@@ -296,23 +296,31 @@ def build_gas_map(pivot: pd.DataFrame) -> str:
     )
 
     if not pivot.empty and len(pivot) >= 2:
-        last       = pivot.iloc[-2]
-        prev       = pivot.iloc[-3]
+        # Seřaď podle data — nejnovější nakonec
+        pivot = pivot.sort_index()
+        last       = pivot.iloc[-1]   # poslední dostupný den
+        prev       = pivot.iloc[-2]   # předchozí den
         dod        = last - prev
-        dod_pct    = (dod / prev.abs().replace(0, float("nan")) * 100).fillna(0)
-        date_label = pivot.index[-2].strftime("%d.%m.%Y")
+        # dod_pct — bezpečně
+        dod_pct    = pd.Series(dtype=float)
+        for col in prev.index:
+            p = prev[col]
+            d = dod[col]
+            dod_pct[col] = (d / abs(p) * 100) if abs(p) > 0.01 else 0.0
+        date_label = pivot.index[-1].strftime("%d.%m.%Y")
     else:
-        last = prev = dod = dod_pct = {}
+        last = pd.Series(dtype=float)
+        prev = pd.Series(dtype=float)
+        dod  = pd.Series(dtype=float)
+        dod_pct = pd.Series(dtype=float)
         date_label = "N/A"
 
-    def scalar(series_or_val, key, default=0.0):
-        """Bezpečně vytáhne skalár z Series nebo dict."""
+    def scalar(s, key, default=0.0):
         try:
-            val = series_or_val[key]
-            if hasattr(val, "__len__") and not isinstance(val, str):
-                return float(val.iloc[0]) if len(val) > 0 else default
-            return float(val)
-        except (KeyError, IndexError, TypeError, ValueError):
+            if isinstance(s, pd.Series):
+                return float(s[key]) if key in s.index else default
+            return float(s.get(key, default))
+        except (TypeError, ValueError):
             return default
 
     def arrow_marker(m, p1, p2, color, pos=0.65):
