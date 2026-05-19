@@ -305,15 +305,15 @@ def build_gas_map(pivot: pd.DataFrame) -> str:
         last = prev = dod = dod_pct = {}
         date_label = "N/A"
 
-    def get_val(key):
-        if key is None: return 0.0
-        val = last.get(key, 0)
-        if hasattr(val, "iloc"):
-            val = val.iloc[0] if len(val) > 0 else 0
+    def scalar(series_or_val, key, default=0.0):
+        """Bezpečně vytáhne skalár z Series nebo dict."""
         try:
-            return float(val or 0)
-        except (TypeError, ValueError):
-            return 0.0
+            val = series_or_val[key]
+            if hasattr(val, "__len__") and not isinstance(val, str):
+                return float(val.iloc[0]) if len(val) > 0 else default
+            return float(val)
+        except (KeyError, IndexError, TypeError, ValueError):
+            return default
 
     def arrow_marker(m, p1, p2, color, pos=0.65):
         lat = p1[0] * (1 - pos) + p2[0] * pos
@@ -349,7 +349,7 @@ def build_gas_map(pivot: pd.DataFrame) -> str:
             ).add_to(m)
             continue
 
-        val = get_val(data_key)
+        val = scalar(last, data_key) if data_key else 0.0
 
         if val < 0:
             draw_p1, draw_p2 = p2, p1
@@ -386,9 +386,9 @@ def build_gas_map(pivot: pd.DataFrame) -> str:
         coords = GAS_NODES.get(name)
         if not coords:
             continue
-        val   = float(last.get(name, 0) or 0)
-        delta = float(dod.get(name, 0) if hasattr(dod, "get") else 0)
-        dpct  = float(dod_pct.get(name, 0) if hasattr(dod_pct, "get") else 0)
+        val   = scalar(last, name)
+        delta = scalar(dod, name)
+        dpct  = scalar(dod_pct, name)
         sign  = "+" if val >= 0 else ""
         dsign = "+" if delta >= 0 else ""
 
