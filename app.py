@@ -655,7 +655,9 @@ if show_gas:
     if pivot_gas.empty:
         st.warning("ENTSO-G data nejsou dostupná.")
     else:
-        tab_map, tab_bar, tab_hist = st.tabs(["🗺️ Mapa", "📊 Toky", "📈 Historie"])
+        tab_map, tab_bar, tab_season, tab_hist = st.tabs(
+            ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost", "📈 Historie"]
+        )
 
         with tab_map:
             gas_map_html = build_gas_map(pivot_gas)
@@ -716,16 +718,13 @@ if show_gas:
                 df_f4 = df_f3[df_f3["pointsNames"].isin(sel_points)] \
                         if sel_points else df_f3
 
-                # 5. Roky + rozsah dat (vedle sebe)
-                col_yr, col_dr = st.columns(2)
-                with col_yr:
-                    all_years = sorted(df_hist["date"].dt.year.unique())
-                    sel_years = st.multiselect(
-                        "📅 Roky (sezonnost)", all_years,
-                        default=all_years[-5:],
-                        key="gas_years",
-                    )
-                with col_dr:
+                # 5. Typ grafu + rychlé datum
+                col_ct, col_qd = st.columns([1, 2])
+                with col_ct:
+                    chart_type = st.radio(
+                        "Typ grafu", ["Linie", "Plocha", "Sloupcový"],
+                        horizontal=True, key="gas_chart_type")
+                with col_qd:
                     date_range = st.date_input(
                         "📆 Rozsah (časová osa)",
                         value=(
@@ -735,6 +734,24 @@ if show_gas:
                         ),
                         key="gas_daterange",
                     )
+                    st.markdown("**Rychlý výběr období:**")
+                    qd_cols = st.columns(6)
+                    labels  = ["Týden","Měsíc","Kvartál","Půlrok","Rok","Maximum"]
+                    deltas  = [7, 30, 90, 182, 365, None]
+                    max_date = df_hist["date"].dt.tz_localize(None).max()
+                    for i, (lbl, delta) in enumerate(zip(labels, deltas)):
+                        if qd_cols[i].button(lbl, key=f"qd_{lbl}"):
+                            if delta:
+                                st.session_state["gas_daterange"] = (
+                                    (max_date - pd.Timedelta(days=delta)).date(),
+                                    max_date.date(),
+                                )
+                            else:
+                                min_date = df_hist["date"].dt.tz_localize(None).min()
+                                st.session_state["gas_daterange"] = (
+                                    min_date.date(), max_date.date(),
+                                )
+                            st.rerun()
 
                 st.markdown("---")
 
@@ -749,12 +766,54 @@ if show_gas:
                     df_range = df_f4
 
                 st.plotly_chart(
-                    fig_flow_timeseries(df_range, [], [], [], []),
+                    fig_flow_timeseries(df_range, [], [], [], [], chart_type),
                     use_container_width=True,
                 )
 
+        with tab_season:
+            df_hist_s = load_entsog_history()
+            if df_hist_s.empty:
+                st.warning("Data nejsou dostupná.")
+            else:
+                df_hist_s["date"] = pd.to_datetime(df_hist_s["date"], utc=True)
+
+                all_countries_s = sorted(df_hist_s["countryLabel"].dropna().unique())
+                sel_countries_s = st.multiselect(
+                    "🌍 Země", all_countries_s, default=["Czechia"], key="seas_countries")
+                df_s1 = df_hist_s[df_hist_s["countryLabel"].isin(sel_countries_s)] \
+                        if sel_countries_s else df_hist_s
+
+                all_dir_s = sorted(df_s1["directionKey"].dropna().unique())
+                sel_dir_s = st.multiselect(
+                    "↕ Směr", all_dir_s, default=all_dir_s, key="seas_dir")
+                df_s2 = df_s1[df_s1["directionKey"].isin(sel_dir_s)] \
+                        if sel_dir_s else df_s1
+
+                all_sys_s = sorted(df_s2["adjacentSystemsKey"].dropna().unique())
+                sel_sys_s = st.multiselect(
+                    "🔧 Systém", all_sys_s, default=[], key="seas_sys",
+                    help="Prázdný = všechny")
+                df_s3 = df_s2[df_s2["adjacentSystemsKey"].isin(sel_sys_s)] \
+                        if sel_sys_s else df_s2
+
+                all_pts_s = sorted(df_s3["pointsNames"].dropna().unique())
+                sel_pts_s = st.multiselect(
+                    "📍 Bod", all_pts_s, default=[], key="seas_pts",
+                    help="Prázdný = všechny")
+                df_s4 = df_s3[df_s3["pointsNames"].isin(sel_pts_s)] \
+                        if sel_pts_s else df_s3
+
+                all_years_s = sorted(df_hist_s["date"].dt.year.unique())
+                sel_years_s = st.multiselect(
+                    "📅 Roky", all_years_s, default=all_years_s[-5:], key="seas_years")
+
+                chart_type_s = st.radio(
+                    "Typ grafu", ["Linie", "Plocha", "Sloupcový"],
+                    horizontal=True, key="seas_chart_type")
+
+                st.markdown("---")
                 st.plotly_chart(
-                    fig_flow_seasonality(df_f4, [], [], [], [], sel_years),
+                    fig_flow_seasonality(df_s4, [], [], [], [], sel_years_s, chart_type_s),
                     use_container_width=True,
                 )
 
