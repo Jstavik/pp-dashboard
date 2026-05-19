@@ -23,6 +23,9 @@ GAS_NODES = {
     "HU":  (47.20, 19.00),
     "NL":  (52.20,  5.30),
     "FR":  (46.50,  2.50),
+    "BE":  (50.50,  4.50),
+    "IT":  (42.50, 12.50),
+    "DK":  (56.00,  9.50),
 }
 
 # Koridory: (uzel_od, uzel_do, label, datový_klíč_v_pivot)
@@ -39,6 +42,10 @@ GAS_CORRIDORS = [
     ("AT",  "SK",   "AT→SK Transit",  None),
     ("SK",  "HU",   "SK→HU",          None),
     ("PL",  "Český Těšín (PL)", "PL→Těšín", None),
+    ("BE", "NL", "BE↔NL",  None),
+    ("BE", "FR", "BE↔FR",  None),
+    ("DK", "DE", "DK→DE Ellund", None),
+    ("IT", "AT", "IT→AT Tarvisio", None),
 ]
 
 
@@ -284,7 +291,8 @@ def fig_gas_point_history(pivot: pd.DataFrame, point: str, height: int = 260) ->
     return fig
 
 
-def build_gas_map(pivot: pd.DataFrame) -> str:
+def build_gas_map(pivot_cz: pd.DataFrame,
+                  pivot_eu: pd.DataFrame = None) -> str:
     """Interaktivní mapa fyzických toků CZ — čáry s šipkami."""
     import folium
     import numpy as np
@@ -295,11 +303,11 @@ def build_gas_map(pivot: pd.DataFrame) -> str:
         tiles="CartoDB positron",
     )
 
-    if not pivot.empty and len(pivot) >= 2:
+    if not pivot_cz.empty and len(pivot_cz) >= 2:
         # Seřaď podle data — nejnovější nakonec
-        pivot = pivot.sort_index()
-        last       = pivot.iloc[-1]   # poslední dostupný den
-        prev       = pivot.iloc[-2]   # předchozí den
+        pivot_cz = pivot_cz.sort_index()
+        last       = pivot_cz.iloc[-1]   # poslední dostupný den
+        prev       = pivot_cz.iloc[-2]   # předchozí den
         dod        = last - prev
         # dod_pct — bezpečně
         dod_pct    = pd.Series(dtype=float)
@@ -307,13 +315,47 @@ def build_gas_map(pivot: pd.DataFrame) -> str:
             p = prev[col]
             d = dod[col]
             dod_pct[col] = (d / abs(p) * 100) if abs(p) > 0.01 else 0.0
-        date_label = pivot.index[-1].strftime("%d.%m.%Y")
+        date_label = pivot_cz.index[-1].strftime("%d.%m.%Y")
     else:
         last = pd.Series(dtype=float)
         prev = pd.Series(dtype=float)
         dod  = pd.Series(dtype=float)
         dod_pct = pd.Series(dtype=float)
         date_label = "N/A"
+
+    # EU country flows
+    if pivot_eu is not None and not pivot_eu.empty and len(pivot_eu) >= 2:
+        pivot_eu = pivot_eu.sort_index()
+        last_eu  = pivot_eu.iloc[-1]
+        prev_eu  = pivot_eu.iloc[-2]
+        dod_eu   = last_eu - prev_eu
+    else:
+        last_eu = dod_eu = pd.Series(dtype=float)
+
+    COUNTRY_TO_NODE = {
+        "Germany":     "DE",
+        "Netherlands": "NL",
+        "France":      "FR",
+        "Austria":     "AT",
+        "Slovakia":    "SK",
+        "Hungary":     "HU",
+        "Poland":      "PL",
+        "Belgium":     "BE",
+        "Italy":       "IT",
+        "Denmark":     "DK",
+    }
+
+    def country_val(country):
+        try:
+            return float(last_eu[country]) if country in last_eu.index else 0.0
+        except Exception:
+            return 0.0
+
+    def country_dod(country):
+        try:
+            return float(dod_eu[country]) if country in dod_eu.index else 0.0
+        except Exception:
+            return 0.0
 
     def scalar(s, key, default=0.0):
         try:
@@ -388,6 +430,55 @@ def build_gas_map(pivot: pd.DataFrame) -> str:
         fill_opacity=0.9,
         tooltip="CZ — síťový uzel",
     ).add_to(m)
+
+    # Uzly evropských zemí s daty
+    for country_label, node_key in COUNTRY_TO_NODE.items():
+        coords = GAS_NODES.get(node_key)
+        if not coords:
+            continue
+        val  = country_val(country_label)
+        dval = country_dod(country_label)
+
+        if abs(val) < 0.1:
+            color, radius = "#BDBDBD", 6
+        elif val > 0:
+            color, radius = "#1565C0", max(8, min(20, val * 0.02))
+        else:
+            color, radius = "#C62828", max(8, min(20, abs(val) * 0.02))
+
+        sign  = "+" if val  >= 0 else ""
+        dsign = "+" if dval >= 0 else ""
+
+        folium.CircleMarker(
+            location=coords,
+            radius=radius,
+            color=color, weight=2,
+            fill=True, fill_color=color, fill_opacity=0.7,
+            tooltip=(f"{country_label}: {sign}{val:.0f} GWh/d "
+                     f"(DoD: {dsign}{dval:.0f})"),
+            popup=folium.Popup(
+                f"<b>{country_label}</b><br>"
+                f"Net cross-border: <b>{sign}{val:.1f} GWh/d</b><br>"
+                f"DoD: {dsign}{dval:.1f} GWh/d<br>"
+                f"<span style='color:#888;font-size:10px'>"
+                f"+ = net importer, − = net exporter</span>",
+                max_width=220,
+            ),
+        ).add_to(m)
+
+        folium.Marker(
+            location=[coords[0] + 0.4, coords[1]],
+            icon=folium.DivIcon(
+                html=(
+                    f'<div style="font-size:10px;font-weight:bold;'
+                    f'color:{color};white-space:nowrap;'
+                    f'text-shadow:1px 1px 2px white">'
+                    f'{node_key}: {sign}{val:.0f}</div>'
+                ),
+                icon_size=(120, 18),
+                icon_anchor=(0, 0),
+            ),
+        ).add_to(m)
 
     # Anotace datových bodů
     for name, cfg in POINTS_CONFIG.items():
