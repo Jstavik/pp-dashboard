@@ -8,6 +8,41 @@ FLOW_COLORS = [
     "#00838F","#E65100","#4527A0","#558B2F","#AD1457",
 ]
 
+GAS_NODES = {
+    # Hraniční přechody CZ
+    "Brandov/Waidhaus (DE)": (50.61, 13.39),
+    "Lanžhot (SK)":          (48.72, 17.04),
+    "Český Těšín (PL)":      (49.75, 18.62),
+    "Zásobníky":             (49.75, 15.80),
+    "Distribuce":            (49.40, 16.20),
+    "Koneční spotřebitelé":  (49.10, 15.50),
+    # Sousední centroidy
+    "DE":  (51.20, 10.50),
+    "SK":  (48.50, 19.50),
+    "PL":  (52.00, 20.00),
+    "AT":  (47.80, 13.00),
+    "HU":  (47.20, 19.00),
+    # Vzdálené země
+    "NL":  (52.30,  5.30),
+    "FR":  (46.50,  2.50),
+    # CZ centroid
+    "CZ":  (49.80, 15.50),
+}
+
+# Koridory: (uzel_od, uzel_do, label, datový_klíč_v_pivot)
+GAS_CORRIDORS = [
+    ("DE",  "Brandov/Waidhaus (DE)", "DE→CZ Brandov",    "Brandov/Waidhaus (DE)"),
+    ("Brandov/Waidhaus (DE)", "CZ",  "Import Brandov→CZ", "Brandov/Waidhaus (DE)"),
+    ("CZ",  "Lanžhot (SK)",          "CZ→SK Lanžhot",    "Lanžhot (SK)"),
+    ("CZ",  "Český Těšín (PL)",      "CZ→PL Těšín",      "Český Těšín (PL)"),
+    ("CZ",  "Zásobníky",             "Zásobníky CZ",     "Zásobníky"),
+    ("NL",  "DE",                    "NL→DE",             None),
+    ("FR",  "DE",                    "FR→DE",             None),
+    ("DE",  "AT",                    "DE→AT",             None),
+    ("AT",  "SK",                    "AT→SK",             None),
+    ("SK",  "HU",                    "SK→HU",             None),
+]
+
 
 def fig_flow_timeseries(
     df: pd.DataFrame,
@@ -252,23 +287,89 @@ def fig_gas_point_history(pivot: pd.DataFrame, point: str, height: int = 260) ->
 
 
 def build_gas_map(pivot: pd.DataFrame) -> str:
-    """Interaktivní mapa fyzických toků CZ."""
+    """Interaktivní mapa fyzických toků CZ — čáry s šipkami."""
     import folium
-    if pivot.empty or len(pivot) < 2:
-        return folium.Map(location=[49.8, 15.5], zoom_start=7, tiles="CartoDB positron")._repr_html_()
+    import numpy as np
 
-    last      = pivot.iloc[-2]
-    prev      = pivot.iloc[-3]
-    dod       = last - prev
-    dod_pct   = (dod / prev.abs().replace(0, float("nan")) * 100).fillna(0)
-    date_label = pivot.index[-2].strftime("%d.%m.%Y")
+    m = folium.Map(
+        location=[49.5, 13.0],
+        zoom_start=5,
+        tiles="CartoDB positron",
+    )
 
-    m = folium.Map(location=[49.8, 15.5], zoom_start=7, tiles="CartoDB positron")
+    if not pivot.empty and len(pivot) >= 2:
+        last       = pivot.iloc[-2]
+        prev       = pivot.iloc[-3]
+        dod        = last - prev
+        dod_pct    = (dod / prev.abs().replace(0, float("nan")) * 100).fillna(0)
+        date_label = pivot.index[-2].strftime("%d.%m.%Y")
+    else:
+        last = prev = dod = dod_pct = {}
+        date_label = "N/A"
 
+    def get_val(key):
+        if key is None: return 0.0
+        return float(last.get(key, 0) or 0)
+
+    def arrow_marker(m, p1, p2, color, pos=0.65):
+        lat = p1[0] * (1 - pos) + p2[0] * pos
+        lon = p1[1] * (1 - pos) + p2[1] * pos
+        angle = np.degrees(np.arctan2(p2[1] - p1[1], p2[0] - p1[0]))
+        folium.Marker(
+            [lat, lon],
+            icon=folium.DivIcon(
+                html=(
+                    f'<div style="font-size:16px;color:{color};'
+                    f'transform:rotate({-angle:.0f}deg);'
+                    f'text-shadow:1px 1px 2px white;'
+                    f'line-height:1">&#10148;</div>'
+                ),
+                icon_size=(20, 20),
+                icon_anchor=(10, 10),
+            ),
+        ).add_to(m)
+
+    # Kresli koridory
+    for from_key, to_key, label, data_key in GAS_CORRIDORS:
+        p1 = GAS_NODES.get(from_key)
+        p2 = GAS_NODES.get(to_key)
+        if not p1 or not p2:
+            continue
+
+        val      = get_val(data_key)
+        has_data = data_key is not None
+
+        if has_data and val < 0:
+            draw_p1, draw_p2 = p2, p1
+            color = "#C62828"
+        elif has_data and val > 0:
+            draw_p1, draw_p2 = p1, p2
+            color = "#1565C0"
+        else:
+            draw_p1, draw_p2 = p1, p2
+            color = "#BDBDBD"
+
+        weight  = max(1.5, min(10, abs(val) * 0.04)) if has_data else 1.5
+        opacity = 0.85 if has_data else 0.35
+
+        folium.PolyLine(
+            locations=[draw_p1, draw_p2],
+            color=color,
+            weight=weight,
+            opacity=opacity,
+            tooltip=f"{label}: {val:+.1f} GWh/d" if has_data else label,
+        ).add_to(m)
+
+        arrow_marker(m, draw_p1, draw_p2, color)
+
+    # Anotace datových bodů
     for name, cfg in POINTS_CONFIG.items():
+        coords = GAS_NODES.get(name)
+        if not coords:
+            continue
         val   = float(last.get(name, 0) or 0)
-        delta = float(dod.get(name, 0) or 0)
-        dpct  = float(dod_pct.get(name, 0) or 0)
+        delta = float(dod.get(name, 0) if hasattr(dod, "get") else 0)
+        dpct  = float(dod_pct.get(name, 0) if hasattr(dod_pct, "get") else 0)
         sign  = "+" if val >= 0 else ""
         dsign = "+" if delta >= 0 else ""
 
@@ -286,61 +387,65 @@ def build_gas_map(pivot: pd.DataFrame) -> str:
             flow_label = "bez toku"
 
         if abs(dpct) < 1:   dod_str = "beze změny"
-        elif dpct > 0:      dod_str = f"▲ +{dpct:.1f}% vs předchozí den"
-        else:               dod_str = f"▼ {dpct:.1f}% vs předchozí den"
-
-        radius  = 6 if val == 0 else max(8, min(28, abs(val) * 0.08))
-        opacity = 0.4 if val == 0 else 0.75
-
-        popup_html = (
-            f"<div style='font-family:sans-serif;min-width:190px'>"
-            f"<b style='font-size:13px'>{cfg['flag']} {name}</b><br>"
-            f"<span style='color:#888;font-size:10px'>Fyzický tok (ENTSO-G)</span>"
-            f"<hr style='margin:4px 0'>"
-            f"<b>{flow_label}</b><br>"
-            f"<span style='color:{color}'>{dod_str}</span><br>"
-            f"<span style='color:#888;font-size:10px'>Delta: {dsign}{delta:.1f} GWh/d</span><br>"
-            f"<span style='color:#888;font-size:10px'>Datum dat: {date_label}</span>"
-            f"</div>"
-        )
+        elif dpct > 0:      dod_str = f"▲ +{dpct:.1f}%"
+        else:               dod_str = f"▼ {dpct:.1f}%"
 
         folium.CircleMarker(
-            location=[cfg["lat"], cfg["lon"]],
-            radius=radius, color=color, weight=2,
-            fill=True, fill_color=color, fill_opacity=opacity,
-            popup=folium.Popup(popup_html, max_width=240),
+            location=coords,
+            radius=7,
+            color=color, weight=2,
+            fill=True, fill_color=color, fill_opacity=0.9,
+            popup=folium.Popup(
+                f"<div style='font-family:sans-serif;min-width:190px'>"
+                f"<b style='font-size:13px'>{cfg['flag']} {name}</b><br>"
+                f"<span style='color:#888;font-size:10px'>Fyzický tok (ENTSO-G)</span>"
+                f"<hr style='margin:4px 0'>"
+                f"<b>{flow_label}</b><br>"
+                f"<span style='color:{color}'>{dod_str} vs předchozí den</span><br>"
+                f"<span style='color:#888;font-size:10px'>"
+                f"Delta: {dsign}{delta:.1f} GWh/d · Datum: {date_label}</span>"
+                f"</div>",
+                max_width=240,
+            ),
             tooltip=f"{cfg['flag']} {name}: {sign}{val:.0f} GWh/d",
         ).add_to(m)
 
         folium.Marker(
-            location=[cfg["lat"] + 0.13, cfg["lon"] + 0.05],
+            location=[coords[0] + 0.15, coords[1] + 0.05],
             icon=folium.DivIcon(
                 html=(
-                    f'<div style="font-size:11px;font-weight:bold;color:#333;'
-                    f'white-space:nowrap;text-shadow:1px 1px 2px white">{name}</div>'
-                    f'<div style="font-size:13px;font-weight:bold;color:{color};'
-                    f'white-space:nowrap;text-shadow:1px 1px 2px white">'
+                    f'<div style="font-size:11px;font-weight:bold;'
+                    f'color:#333;white-space:nowrap;'
+                    f'text-shadow:1px 1px 2px white">'
+                    f'{cfg["flag"]} {name}</div>'
+                    f'<div style="font-size:13px;font-weight:bold;'
+                    f'color:{color};white-space:nowrap;'
+                    f'text-shadow:1px 1px 2px white">'
                     f'{sign}{val:.0f} GWh/d</div>'
-                    f'<div style="font-size:10px;color:#666;white-space:nowrap">'
-                    f'{dod_str[:25]}</div>'
+                    f'<div style="font-size:10px;color:#666;'
+                    f'white-space:nowrap">{dod_str}</div>'
                 ),
-                icon_size=(200, 48), icon_anchor=(0, 0),
+                icon_size=(200, 50),
+                icon_anchor=(0, 0),
             ),
         ).add_to(m)
 
     legend_html = f"""
     <div style="position:fixed;bottom:30px;left:30px;z-index:1000;
          background:white;padding:12px 16px;border-radius:8px;
-         box-shadow:2px 2px 8px rgba(0,0,0,0.25);font-size:11px;line-height:1.8">
-      <b style="font-size:12px">Fyzické toky CZ (GWh/d)</b><br>
-      <span style="color:#1565C0">●</span> Import do CZ<br>
-      <span style="color:#C62828">●</span> Export z CZ<br>
-      <span style="color:#43A047">●</span> Zásobník — těžba<br>
-      <span style="color:#6A1B9A">●</span> Zásobník — vtláčení<br>
-      <span style="color:#9E9E9E">●</span> Bez toku (0)<br>
+         box-shadow:2px 2px 8px rgba(0,0,0,0.25);
+         font-size:11px;line-height:1.8">
+      <b style="font-size:12px">Fyzické toky plynu [GWh/d]</b><br>
+      <span style="color:#1565C0">&#9473;&#9473;&#10148;</span> Import do CZ<br>
+      <span style="color:#C62828">&#9473;&#9473;&#10148;</span> Export z CZ<br>
+      <span style="color:#43A047">&#9679;</span> Zásobník — těžba<br>
+      <span style="color:#6A1B9A">&#9679;</span> Zásobník — vtláčení<br>
+      <span style="color:#BDBDBD">&#9473;&#9473;&#10148;</span> Koridor bez dat<br>
       <hr style="margin:4px 0">
-      <span style="font-size:10px;color:#444">📅 Toky (ENTSO-G): <b>{date_label}</b></span><br>
-      <i style="font-size:9px;color:#888">Klikni na bod pro detail</i>
+      <span style="font-size:10px;color:#444">
+        &#128197; Data: <b>{date_label}</b> (ENTSO-G)</span><br>
+      <i style="font-size:9px;color:#888">
+        Tloušťka čáry = objem · Klikni pro detail</i>
     </div>
     """
     m.get_root().html.add_child(folium.Element(legend_html))
