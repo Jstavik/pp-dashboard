@@ -664,6 +664,7 @@ if show_gas:
             if df_map.empty:
                 st.warning("Data nejsou dostupná.")
             else:
+                # ── Data pro mapu ───────────────────────────────────────────
                 df_map["date"] = pd.to_datetime(df_map["date"], utc=True)
                 if "value_GWh" not in df_map.columns:
                     df_map["value_GWh"] = 0.0
@@ -671,32 +672,36 @@ if show_gas:
                     df_map["value_GWh"], errors="coerce"
                 ).fillna(0)
 
+                # 1. CZ hraniční přechody (detail)
                 from data.entsog import _short_name
-                df_map["point_short"] = df_map["pointsNames"].apply(_short_name)
-
-                entry = (
-                    df_map[df_map["directionKey"] == "entry"]
-                    .groupby(["date", "point_short"])["value_GWh"]
-                    .sum()
-                )
-                exit_ = (
-                    df_map[df_map["directionKey"] == "exit"]
-                    .groupby(["date", "point_short"])["value_GWh"]
-                    .sum()
-                )
-
-                pivot_map = (
-                    entry.unstack(fill_value=0) - exit_.unstack(fill_value=0)
+                df_cz = df_map[df_map["countryLabel"] == "Czechia"].copy()
+                df_cz["point_short"] = df_cz["pointsNames"].apply(_short_name)
+                entry_cz = df_cz[df_cz["directionKey"] == "entry"].groupby(
+                    ["date", "point_short"])["value_GWh"].sum()
+                exit_cz  = df_cz[df_cz["directionKey"] == "exit"].groupby(
+                    ["date", "point_short"])["value_GWh"].sum()
+                pivot_cz = (
+                    entry_cz.unstack(fill_value=0) - exit_cz.unstack(fill_value=0)
                 ).fillna(0)
-                pivot_map.index = pd.to_datetime(pivot_map.index, utc=True)
+                pivot_cz.index = pd.to_datetime(pivot_cz.index, utc=True)
 
-                st.write(
-                    df_map.groupby("countryLabel")["pointsNames"]
-                    .apply(lambda x: x.unique().tolist())
-                    .to_dict()
-                )
-                gas_map_html = build_gas_map(pivot_map)
-                st.components.v1.html(gas_map_html, height=520, scrolling=False)
+                # 2. Evropské toky per země (přeshraniční Transmission)
+                DOMESTIC = {"Storage", "Distribution", "Final Consumers",
+                            "Production", "LNG Terminals"}
+                df_xb = df_map[
+                    ~df_map["adjacentSystemsKey"].isin(DOMESTIC)
+                ].copy()
+                entry_eu = df_xb[df_xb["directionKey"] == "entry"].groupby(
+                    ["date", "countryLabel"])["value_GWh"].sum()
+                exit_eu  = df_xb[df_xb["directionKey"] == "exit"].groupby(
+                    ["date", "countryLabel"])["value_GWh"].sum()
+                pivot_eu = (
+                    entry_eu.unstack(fill_value=0) - exit_eu.unstack(fill_value=0)
+                ).fillna(0)
+                pivot_eu.index = pd.to_datetime(pivot_eu.index, utc=True)
+
+                gas_map_html = build_gas_map(pivot_cz, pivot_eu)
+                st.components.v1.html(gas_map_html, height=560, scrolling=False)
 
         with tab_bar:
             df_hist = load_entsog_history()
