@@ -20,10 +20,12 @@ from data.ceps import (
 )
 from data.deltagreen import fetch_deltagreen
 from data.entsog import fetch_entsog_flows, load_entsog_history
+from data.gie import load_gie_all, VARIABLES, FIXED_COUNTRIES
 from charts.gas import (
     fig_gas_flows_bar, fig_gas_point_history, fig_gas_map,
     fig_flow_timeseries, fig_flow_seasonality,
 )
+from charts.storage import fig_storage_main, fig_storage_grid
 from charts.imbalance import (
     parse_imbalance,
     fig_ceps_dashboard, fig_ceps_combined, fig_ceps_svr,
@@ -655,8 +657,9 @@ if show_gas:
     if pivot_gas.empty:
         st.warning("ENTSO-G data nejsou dostupná.")
     else:
-        tab_map, tab_bar, tab_season, tab_hist = st.tabs(
-            ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost", "📈 Historie"]
+        tab_map, tab_bar, tab_season, tab_stor, tab_hist = st.tabs(
+            ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost",
+             "🏭 Zásobníky", "📈 Historie"]
         )
 
         with tab_map:
@@ -824,6 +827,89 @@ if show_gas:
                     fig_flow_seasonality(df_s4, [], [], [], [], sel_years_s, chart_type_s),
                     use_container_width=True,
                 )
+
+        with tab_stor:
+            df_gie = load_gie_all()
+
+            if df_gie.empty:
+                st.warning(
+                    "GIE data nejsou dostupná. "
+                    "Spusť GitHub Actions: Update gas history."
+                )
+            else:
+                df_gie["gasDayStart"] = pd.to_datetime(df_gie["gasDayStart"])
+                all_years = sorted(
+                    df_gie["gasDayStart"].dt.year.unique().tolist()
+                )
+                all_countries = sorted(
+                    df_gie["country_code"].unique().tolist()
+                )
+
+                # ── Hlavní graf — filtry ──────────────────────────
+                st.markdown("#### Hlavní graf")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    sel_country_main = st.selectbox(
+                        "Země", all_countries,
+                        index=all_countries.index("CZ")
+                              if "CZ" in all_countries else 0,
+                        key="stor_country_main",
+                    )
+                with col2:
+                    sel_var_main = st.selectbox(
+                        "Proměnná",
+                        options=list(VARIABLES.keys()),
+                        format_func=lambda k: VARIABLES[k][0],
+                        key="stor_var_main",
+                    )
+                with col3:
+                    sel_years_main = st.multiselect(
+                        "Roky",
+                        options=all_years,
+                        default=all_years[-5:],
+                        key="stor_years_main",
+                    )
+
+                if sel_years_main:
+                    st.plotly_chart(
+                        fig_storage_main(
+                            df_gie,
+                            sel_country_main,
+                            sel_var_main,
+                            sel_years_main,
+                        ),
+                        use_container_width=True,
+                    )
+
+                st.markdown("---")
+
+                # ── Grid 3×2 — filtry ────────────────────────────
+                st.markdown("#### Přehled zemí")
+                col_v, col_y = st.columns(2)
+                with col_v:
+                    sel_var_grid = st.selectbox(
+                        "Proměnná",
+                        options=list(VARIABLES.keys()),
+                        format_func=lambda k: VARIABLES[k][0],
+                        key="stor_var_grid",
+                    )
+                with col_y:
+                    sel_years_grid = st.multiselect(
+                        "Roky",
+                        options=all_years,
+                        default=all_years[-5:],
+                        key="stor_years_grid",
+                    )
+
+                if sel_years_grid:
+                    st.plotly_chart(
+                        fig_storage_grid(
+                            df_gie,
+                            sel_var_grid,
+                            sel_years_grid,
+                        ),
+                        use_container_width=True,
+                    )
 
         with tab_hist:
             point_sel = st.selectbox(
