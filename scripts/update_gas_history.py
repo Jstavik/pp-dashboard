@@ -8,7 +8,10 @@ import time
 HISTORY_START  = date(2020, 1, 1)
 PARQUET_PATH   = "data/history/entsog_all_flows.parquet"
 GIE_CSV_PATH   = "data/history/gie_cz_storage.csv"
+GIE_ALL_CSV    = "data/history/gie_all_storage.csv"
 GIE_KEY        = "628043ec28b2f2395a95f5adad7ec983"
+COUNTRIES_GIE  = ["CZ", "DE", "NL", "FR", "SK", "AT"]
+EU_CODE        = "EU"
 
 KEEP_COLS = [
     "periodFrom", "countryKey", "countryLabel",
@@ -181,8 +184,97 @@ def update_gie():
     print(f"GIE uloženo {len(combined)} řádků → {GIE_CSV_PATH} ({size_kb:.0f} KB)")
 
 
+def fetch_gie_all_countries() -> pd.DataFrame:
+    """Stáhne GIE historii pro všechny země + EU agregát."""
+    import time
+    all_frames = []
+
+    targets = [(cc, f"country={cc}") for cc in COUNTRIES_GIE]
+    targets.append(("EU", "type=eu"))
+
+    for cc, param in targets:
+        print(f"  GIE {cc}...")
+        frames = []
+        for page in range(1, 50):
+            url = f"https://agsi.gie.eu/api?{param}&size=300&page={page}"
+            resp = requests.get(
+                url,
+                headers={"x-key": GIE_KEY},
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            records = data.get("data", [])
+            if not records:
+                break
+            frames.extend(records)
+            if page >= data.get("last_page", 1):
+                break
+            time.sleep(0.3)
+
+        if frames:
+            df = pd.DataFrame(frames)
+            df["country_code"] = cc
+            all_frames.append(df)
+        time.sleep(0.5)
+
+    if not all_frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(all_frames, ignore_index=True)
+    combined["gasDayStart"] = pd.to_datetime(combined["gasDayStart"])
+
+    for col in ["full", "gasInStorage", "injection", "withdrawal",
+                "netWithdrawal", "workingGasVolume", "trend",
+                "injectionCapacity", "withdrawalCapacity"]:
+        if col in combined.columns:
+            combined[col] = pd.to_numeric(
+                combined[col].astype(str).str.replace(",", "."),
+                errors="coerce",
+            )
+    return combined.sort_values(["country_code", "gasDayStart"])
+
+
+def update_gie_all():
+    os.makedirs("data/history", exist_ok=True)
+
+    if os.path.exists(GIE_ALL_CSV):
+        existing = pd.read_csv(GIE_ALL_CSV, parse_dates=["gasDayStart"])
+        last_date = existing["gasDayStart"].max().date()
+        print(f"GIE all: existující data do {last_date}")
+        cutoff = pd.Timestamp(last_date) - pd.Timedelta(days=14)
+        existing = existing[existing["gasDayStart"] < cutoff]
+    else:
+        existing = pd.DataFrame()
+        print("GIE all: nový soubor")
+
+    new_data = fetch_gie_all_countries()
+    if new_data.empty:
+        print("GIE all: žádná data")
+        return
+
+    if not existing.empty:
+        combined = pd.concat([existing, new_data], ignore_index=True)
+        combined = combined.drop_duplicates(
+            subset=["country_code", "gasDayStart"], keep="last"
+        )
+    else:
+        combined = new_data
+
+    combined = combined.sort_values(
+        ["country_code", "gasDayStart"]
+    ).reset_index(drop=True)
+    combined.to_csv(GIE_ALL_CSV, index=False)
+
+    size_kb = os.path.getsize(GIE_ALL_CSV) / 1024
+    print(f"GIE all: uloženo {len(combined)} řádků ({size_kb:.0f} KB)")
+
+
 if __name__ == "__main__":
     print("=== ENTSO-G flows (všechny země) ===")
     update_entsog()
     print("\n=== GIE storage CZ ===")
     update_gie()
+    print("\n=== GIE storage — všechny země ===")
+    update_gie_all()
