@@ -1,4 +1,5 @@
 import math
+import re
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -252,237 +253,241 @@ def fig_gas_point_history(pivot: pd.DataFrame, point: str, height: int = 260) ->
     return fig
 
 
-def fig_gas_map(df_history: pd.DataFrame, height: int = 580) -> go.Figure:
-    """Plotly Scattergeo — EU gas flows, CZ border crossing arrows."""
-    from data.entsog import _short_name
+def fig_gas_map(df_history: pd.DataFrame, height: int = 800) -> go.Figure:
+    """Scattermapbox — CEE physical gas flow map, GasConnect-style."""
 
-    COUNTRY_COORDS = {
-        "Czechia":     (49.80, 15.50),
-        "Germany":     (51.50, 10.00),
-        "Slovakia":    (48.70, 19.50),
-        "Poland":      (52.20, 20.00),
-        "Austria":     (47.80, 13.50),
-        "Hungary":     (47.20, 19.00),
-        "Netherlands": (52.20,  5.30),
-        "France":      (46.50,  2.50),
-        "Belgium":     (50.50,  4.50),
-        "Italy":       (42.50, 12.50),
-        "Denmark":     (56.00,  9.50),
-        "Norway":      (62.00,  9.00),
-        "Romania":     (45.80, 24.97),
-        "Bulgaria":    (42.73, 25.49),
-        "Ukraine":     (49.00, 32.00),
-    }
-    COUNTRY_FLAGS = {
-        "Czechia": "🇨🇿", "Germany": "🇩🇪", "Slovakia": "🇸🇰",
-        "Poland": "🇵🇱", "Austria": "🇦🇹", "Hungary": "🇭🇺",
-        "Netherlands": "🇳🇱", "France": "🇫🇷", "Belgium": "🇧🇪",
-        "Italy": "🇮🇹", "Denmark": "🇩🇰", "Norway": "🇳🇴",
-        "Romania": "🇷🇴", "Bulgaria": "🇧🇬", "Ukraine": "🇺🇦",
-    }
-    # (border_lat, border_lon)
-    CZ_BORDER_PTS = {
-        "Brandov/Waidhaus (DE)": (50.61, 13.39),
-        "Lanžhot (SK)":          (48.72, 17.04),
-        "Český Těšín (PL)":      (49.75, 18.62),
-    }
-    DOMESTIC = {"Storage", "Distribution", "Final Consumers", "Production", "LNG Terminals"}
+    DOMESTIC = {"Storage", "Distribution", "Final Consumers",
+                "Production", "LNG Terminals", "Storage|Transmission"}
 
-    CZ_LAT, CZ_LON = COUNTRY_COORDS["Czechia"]
+    CODE2C = {
+        "AT":"Austria","BE":"Belgium","BG":"Bulgaria","CH":"Switzerland",
+        "CZ":"Czechia","DE":"Germany","DK":"Denmark","EE":"Estonia",
+        "ES":"Spain","FI":"Finland","FR":"France","GR":"Greece",
+        "HR":"Croatia","HU":"Hungary","IE":"Ireland","IT":"Italy",
+        "LT":"Lithuania","LU":"Luxemburg","LV":"Latvia","NL":"Netherlands",
+        "NO":"Norway","PL":"Poland","PT":"Portugal","RO":"Romania",
+        "SI":"Slovenia","SK":"Slovakia","UA":"Ukraine","UK":"United Kingdom",
+    }
+    C2CODE = {v: k for k, v in CODE2C.items()}
+
+    # ── helpers ───────────────────────────────────────────────────
+    def _neighbor(adj):
+        if adj in DOMESTIC:
+            return None
+        codes = set(re.findall(r"Transmission([A-Z]{2})", adj))
+        return CODE2C.get(codes.pop()) if codes else None
+
+    def _bilateral(day):
+        """Returns {(a,b): net} a<b alphabetically.
+        Positive = a imports from b."""
+        sub = df[(df["date"] == day)
+                 & ~df["adjacentSystemsKey"].isin(DOMESTIC)].copy()
+        sub["nb"] = sub["adjacentSystemsKey"].apply(_neighbor)
+        sub = sub[sub["nb"].notna() & (sub["countryLabel"] != sub["nb"])]
+        pairs = {}
+        for (c, nb), g in sub.groupby(["countryLabel", "nb"]):
+            e = g[g["directionKey"] == "entry"]["value_GWh"].sum()
+            x = g[g["directionKey"] == "exit"]["value_GWh"].sum()
+            net = e - x
+            key = tuple(sorted([c, nb]))
+            if key not in pairs:
+                pairs[key] = net if c == key[0] else -net
+        return pairs
+
+    def _north_sea(day):
+        sub = df[(df["date"] == day)
+                 & (df["countryLabel"] == "Germany")
+                 & (df["directionKey"] == "entry")
+                 & df["pointsNames"].str.contains(
+                     "Emden|Dornum", na=False, regex=True)]
+        return sub["value_GWh"].sum()
+
+    # ── Crossing definitions ──────────────────────────────────────
+    # (name, lat, lon, source, key, label_offset_lat, label_offset_lon)
+    CROSSINGS = [
+        ("Emden/Dornum",    54.35,  7.50, "ns", None,                      0.0,   0.9),
+        ("Mallnow",         52.45, 14.50, "bi", ("Germany","Poland"),       0.3,   0.7),
+        ("Bunde",           53.20,  7.20, "bi", ("Germany","Netherlands"),  0.3,  -1.1),
+        ("Eynatten",        50.70,  6.08, "bi", ("Belgium","Germany"),      0.3,  -0.9),
+        ("Ellund",          54.80,  9.30, "bi", ("Denmark","Germany"),      0.3,   0.7),
+        ("Medelsheim",      49.14,  7.18, "bi", ("France","Germany"),      -0.35, -0.7),
+        ("Wallbach",        47.57,  7.88, "bi", ("Germany","Switzerland"), -0.35, -0.5),
+        ("Oberkappel",      48.50, 13.70, "bi", ("Austria","Germany"),      0.0,  -0.9),
+        ("Brandov",         50.61, 13.39, "bi", ("Czechia","Germany"),      0.3,  -0.8),
+        ("Lanžhot",         48.72, 17.04, "bi", ("Czechia","Slovakia"),    -0.35,  0.0),
+        ("Č. Těšín",        49.75, 18.62, "bi", ("Czechia","Poland"),       0.3,   0.5),
+        ("Baumgarten",      48.10, 16.90, "bi", ("Austria","Slovakia"),     0.3,   0.5),
+        ("Arnoldstein",     46.55, 13.70, "bi", ("Austria","Italy"),       -0.35, -0.8),
+        ("Murfeld",         46.70, 15.90, "bi", ("Austria","Slovenia"),    -0.35,  0.5),
+        ("Mosonmagyaróvár", 47.87, 17.27, "bi", ("Austria","Hungary"),    -0.35,  0.5),
+        ("V. Kapušany",     48.68, 22.08, "bi", ("Slovakia","Ukraine"),     0.3,   0.5),
+        ("Csanádpalota",    46.25, 20.73, "bi", ("Hungary","Romania"),     -0.35,  0.5),
+        ("Gorizia",         45.95, 13.63, "bi", ("Italy","Slovenia"),      -0.25, -0.7),
+    ]
+
+    COUNTRY_LABELS = {
+        "DE":(51.5,10.0), "CZ":(49.8,15.5), "AT":(47.3,13.5),
+        "SK":(48.8,19.8), "PL":(52.0,19.5), "HU":(47.0,19.5),
+        "IT":(44.0,11.0), "SI":(46.0,14.5), "CH":(46.8,8.0),
+        "FR":(47.0,3.0),  "BE":(50.8,4.0),  "NL":(52.5,5.0),
+        "DK":(55.5,9.5),  "UA":(49.5,26.0), "RO":(45.5,24.0),
+        "HR":(45.3,16.0),
+    }
+
+    GREEN = "#2E7D32"
+    GREY = "#9E9E9E"
+
     fig = go.Figure()
 
+    # ── empty guard ───────────────────────────────────────────────
     if df_history.empty:
-        fig.add_annotation(text="Žádná data", x=0.5, y=0.5,
-                           xref="paper", yref="paper", showarrow=False)
-        _geo_layout(fig, height, "N/A")
+        fig.add_annotation(
+            text="Žádná data", x=0.5, y=0.5,
+            xref="paper", yref="paper", showarrow=False)
+        _mapbox_layout(fig, height, "N/A")
         return fig
 
+    # ── data prep ─────────────────────────────────────────────────
     df = df_history.copy()
     df["date"] = pd.to_datetime(df["date"], utc=True)
-    df["value_GWh"] = pd.to_numeric(df.get("value_GWh", 0), errors="coerce").fillna(0)
+    df["value_GWh"] = pd.to_numeric(
+        df.get("value_GWh", 0), errors="coerce").fillna(0)
 
-    last_date = df["date"].max()
-    mask_prev = df["date"] < last_date
-    prev_date = df.loc[mask_prev, "date"].max() if mask_prev.any() else pd.NaT
-
-    def _net_eu(day):
-        sub = df[(df["date"] == day) & ~df["adjacentSystemsKey"].isin(DOMESTIC)]
-        e = sub[sub["directionKey"] == "entry"].groupby("countryLabel")["value_GWh"].sum()
-        x = sub[sub["directionKey"] == "exit"].groupby("countryLabel")["value_GWh"].sum()
-        idx = e.index.union(x.index)
-        return e.reindex(idx, fill_value=0) - x.reindex(idx, fill_value=0)
-
-    def _net_cz(day):
-        sub = df[(df["date"] == day) & (df["countryLabel"] == "Czechia")].copy()
-        sub["pt"] = sub["pointsNames"].apply(_short_name)
-        e = sub[sub["directionKey"] == "entry"].groupby("pt")["value_GWh"].sum()
-        x = sub[sub["directionKey"] == "exit"].groupby("pt")["value_GWh"].sum()
-        idx = e.index.union(x.index)
-        return e.reindex(idx, fill_value=0) - x.reindex(idx, fill_value=0)
-
-    net_eu_last = _net_eu(last_date)
-    net_cz_last = _net_cz(last_date)
-
-    if pd.notna(prev_date):
-        net_eu_prev = _net_eu(prev_date)
-        net_cz_prev = _net_cz(prev_date)
-        dod_eu = net_eu_last.subtract(net_eu_prev.reindex(net_eu_last.index, fill_value=0))
-        dod_cz = net_cz_last.subtract(net_cz_prev.reindex(net_cz_last.index, fill_value=0))
+    # Smart date: latest with CZ data (ENTSOG publishes with delay)
+    cz_dates = sorted(
+        df[df["countryLabel"] == "Czechia"]["date"].unique())
+    if cz_dates:
+        last_date = cz_dates[-1]
+        prev_date = cz_dates[-2] if len(cz_dates) > 1 else pd.NaT
     else:
-        dod_eu = pd.Series(0.0, index=net_eu_last.index)
-        dod_cz = pd.Series(0.0, index=net_cz_last.index)
+        last_date = df["date"].max()
+        prev_date = pd.NaT
 
-    date_label = last_date.strftime("%d.%m.%Y") if pd.notna(last_date) else "N/A"
+    fl = _bilateral(last_date)
+    fp = _bilateral(prev_date) if pd.notna(prev_date) else {}
+    ns_last = _north_sea(last_date)
+    ns_prev = (
+        _north_sea(prev_date) if pd.notna(prev_date) else 0.0)
+    date_label = (
+        last_date.strftime("%d.%m.%Y")
+        if pd.notna(last_date) else "N/A")
 
-    # ── CZ border crossing arrows ─────────────────────────────────
-    for pt_name, (b_lat, b_lon) in CZ_BORDER_PTS.items():
-        val  = float(net_cz_last.get(pt_name, 0.0))
-        dval = float(dod_cz.get(pt_name, 0.0))
-        cfg  = POINTS_CONFIG.get(pt_name, {})
-        flag = cfg.get("flag", "")
-        sign  = "+" if val  >= 0 else ""
-        dsign = "+" if dval >= 0 else ""
-
-        if val > 0:
-            lat1, lon1, lat2, lon2 = b_lat, b_lon, CZ_LAT, CZ_LON
-            color = "#1565C0"
-        elif val < 0:
-            lat1, lon1, lat2, lon2 = CZ_LAT, CZ_LON, b_lat, b_lon
-            color = "#C62828"
+    # ── render crossings ──────────────────────────────────────────
+    for name, lat, lon, src, key, olat, olon in CROSSINGS:
+        if src == "bi":
+            val = fl.get(key, 0.0)
+            val_prev = fp.get(key, 0.0)
+            a_code = C2CODE.get(key[0], "??")
+            b_code = C2CODE.get(key[1], "??")
+            if val >= 0:
+                fr, to = b_code, a_code
+            else:
+                fr, to = a_code, b_code
+        elif src == "ns":
+            val, val_prev = ns_last, ns_prev
+            fr, to = "NS", "DE"
         else:
-            lat1, lon1, lat2, lon2 = b_lat, b_lon, CZ_LAT, CZ_LON
-            color = "#9E9E9E"
+            continue
 
-        width = max(2, min(10, abs(val) * 0.008))
+        absval = abs(val)
 
-        fig.add_trace(go.Scattergeo(
-            lat=[lat1, lat2], lon=[lon1, lon2],
-            mode="lines",
-            line=dict(width=width, color=color),
-            opacity=0.75,
-            showlegend=False, hoverinfo="skip",
-        ))
+        # DoD %
+        if abs(val_prev) > 0.5:
+            dod_pct = (val - val_prev) / abs(val_prev) * 100
+            sym = ("▲" if dod_pct > 0.5
+                   else "▼" if dod_pct < -0.5 else "–")
+            dod_str = f"{sym}{abs(dod_pct):.0f}%"
+        else:
+            dod_str = ""
 
-        # Arrow head at 65% of line
-        a_lat = lat1 * 0.35 + lat2 * 0.65
-        a_lon = lon1 * 0.35 + lon2 * 0.65
-        angle = math.degrees(math.atan2(lon2 - lon1, lat2 - lat1))
-        fig.add_trace(go.Scattergeo(
-            lat=[a_lat], lon=[a_lon],
+        # Zero flow
+        if absval < 0.1:
+            fig.add_trace(go.Scattermapbox(
+                lat=[lat], lon=[lon],
+                mode="markers+text",
+                marker=dict(size=4, color=GREY, opacity=0.3),
+                text=[name],
+                textfont=dict(size=7, color=GREY),
+                textposition="top right",
+                showlegend=False,
+                hovertemplate=(
+                    f"<b>{name}</b><br>"
+                    f"0 GWh/d<extra></extra>")))
+            continue
+
+        sz = max(8, min(20, absval ** 0.5 * 2.5))
+
+        # Green circle
+        fig.add_trace(go.Scattermapbox(
+            lat=[lat], lon=[lon],
             mode="markers",
-            marker=dict(symbol="triangle-up", size=max(8, int(width * 2.5)),
-                        color=color, angle=angle, opacity=0.9),
+            marker=dict(size=sz, color=GREEN, opacity=0.85),
             showlegend=False,
             hovertemplate=(
-                f"<b>{flag} {pt_name}</b><br>"
-                f"Tok: <b>{sign}{val:.1f} GWh/d</b><br>"
-                f"DoD: {dsign}{dval:.1f} GWh/d<extra></extra>"
-            ),
-        ))
+                f"<b>{name}</b><br>"
+                f"{absval:.1f} GWh/d  {fr}→{to}<br>"
+                f"DoD: {dod_str if dod_str else 'N/A'}"
+                f"<extra></extra>")))
 
-        # Flow label near border point
-        fig.add_trace(go.Scattergeo(
-            lat=[b_lat + 0.25], lon=[b_lon],
+        # Annotation
+        lbl = (f"<b>{name}</b>\n{absval:.0f} {fr}→{to}  {dod_str}"
+               if dod_str
+               else f"<b>{name}</b>\n{absval:.0f} {fr}→{to}")
+        fig.add_trace(go.Scattermapbox(
+            lat=[lat + olat], lon=[lon + olon],
             mode="text",
-            text=[f"{sign}{val:.0f}"],
-            textfont=dict(size=10, color=color, family="Arial Black"),
-            showlegend=False, hoverinfo="skip",
-        ))
-
-    # Storage node
-    stor_val  = float(net_cz_last.get("Zásobníky", 0.0))
-    stor_dval = float(dod_cz.get("Zásobníky", 0.0))
-    stor_color = "#6A1B9A" if stor_val < 0 else "#43A047"
-    stor_label = "vtláčení" if stor_val < 0 else "těžba"
-    stor_sign  = "+" if stor_val >= 0 else ""
-    stor_dsign = "+" if stor_dval >= 0 else ""
-    fig.add_trace(go.Scattergeo(
-        lat=[49.75], lon=[15.80],
-        mode="markers+text",
-        marker=dict(symbol="square", size=12, color=stor_color, opacity=0.85,
-                    line=dict(width=2, color="white")),
-        text=[f"🏭{stor_sign}{stor_val:.0f}"],
-        textposition="top right",
-        textfont=dict(size=9, color=stor_color),
-        showlegend=False,
-        hovertemplate=(
-            f"<b>🏭 Zásobníky</b><br>"
-            f"{stor_label}: <b>{abs(stor_val):.1f} GWh/d</b><br>"
-            f"DoD: {stor_dsign}{stor_dval:.1f} GWh/d<extra></extra>"
-        ),
-    ))
-
-    # ── EU country bubbles ────────────────────────────────────────
-    for country, (c_lat, c_lon) in COUNTRY_COORDS.items():
-        val  = float(net_eu_last.get(country, 0.0))
-        dval = float(dod_eu.get(country, 0.0))
-        flag = COUNTRY_FLAGS.get(country, "")
-        sign  = "+" if val  >= 0 else ""
-        dsign = "+" if dval >= 0 else ""
-        is_cz = country == "Czechia"
-
-        if abs(val) < 0.5:
-            color, size = "#9E9E9E", 8
-        elif val > 0:
-            color = "#1565C0"
-            size  = max(8, min(26, val * 0.015))
-        else:
-            color = "#C62828"
-            size  = max(8, min(26, abs(val) * 0.015))
-
-        fig.add_trace(go.Scattergeo(
-            lat=[c_lat], lon=[c_lon],
-            mode="markers+text",
-            marker=dict(
-                size=size,
-                color=color,
-                opacity=0.8,
-                line=dict(width=2.5 if is_cz else 1.5,
-                          color="#FF8F00" if is_cz else "white"),
-            ),
-            text=[f"{flag} {country[:4]}<br>{sign}{val:.0f}"],
-            textposition="top center",
-            textfont=dict(size=10 if is_cz else 9, color=color),
+            text=[lbl],
+            textfont=dict(size=9, color="#1B5E20", family="Arial"),
             showlegend=False,
-            hovertemplate=(
-                f"<b>{flag} {country}</b><br>"
-                f"Net cross-border: <b>{sign}{val:.1f} GWh/d</b><br>"
-                f"DoD: {dsign}{dval:.1f} GWh/d<br>"
-                f"<i>+ = net importer, − = net exporter</i>"
-                f"<extra></extra>"
-            ),
-        ))
+            hoverinfo="skip"))
 
-    _geo_layout(fig, height, date_label)
+    # ── country labels ────────────────────────────────────────────
+    for code, (clat, clon) in COUNTRY_LABELS.items():
+        fig.add_trace(go.Scattermapbox(
+            lat=[clat], lon=[clon],
+            mode="text",
+            text=[code],
+            textfont=dict(
+                size=15,
+                color="rgba(120,120,120,0.3)",
+                family="Arial Black"),
+            showlegend=False,
+            hoverinfo="skip"))
+
+    _mapbox_layout(fig, height, date_label)
     return fig
 
 
-def _geo_layout(fig: go.Figure, height: int, date_label: str) -> None:
+def _mapbox_layout(
+    fig: go.Figure, height: int, date_label: str
+) -> None:
+    """Mapbox layout — carto-positron, no token needed."""
+    GREEN = "#2E7D32"
     fig.update_layout(
-        margin=dict(l=0, r=0, t=40, b=0),
+        mapbox=dict(
+            style="carto-positron",
+            center=dict(lat=49.0, lon=13.5),
+            zoom=4.3,
+        ),
+        height=height,
+        margin=dict(l=0, r=0, t=55, b=0),
         title=dict(
-            text=f"Fyzické toky plynu — {date_label} (ENTSO-G)",
-            font=dict(size=14),
+            text=(
+                f"<b>Fyzické toky plynu — CEE Flowchart</b>"
+                f"<br><span style='font-size:11px;color:#757575'>"
+                f"Gasday: {date_label} · 06:00–06:00 CET"
+                f" · GWh/d · ENTSO-G TP</span>"
+                f"<br><span style='font-size:10px;color:{GREEN}'>"
+                f"● hraniční přechod · hodnoty GWh/d"
+                f" · ▲▼ DoD %</span>"
+            ),
+            font=dict(size=15, color="#212121"),
             x=0.01,
         ),
         showlegend=False,
-        geo=dict(
-            scope="europe",
-            resolution=50,
-            showland=True,      landcolor="#F5F5F5",
-            showocean=True,     oceancolor="#EAF4FB",
-            showlakes=False,
-            showrivers=False,
-            showcountries=True, countrycolor="#CCCCCC",
-            countrywidth=0.8,
-            showsubunits=False,
-            showcoastlines=True, coastlinecolor="#CCCCCC",
-            center=dict(lat=49, lon=13),
-            projection_scale=3.5,
-            lonaxis=dict(range=[-10, 40]),
-            lataxis=dict(range=[35, 65]),
-        ),
-        height=800,
         autosize=True,
     )
 
+
+# backward compat alias
+_geo_layout = _mapbox_layout
