@@ -1039,9 +1039,9 @@ if show_gas:
 
                 last_date_lng = df_lng["gasDayStart"].max()
                 last_lng = df_lng[df_lng["gasDayStart"] == last_date_lng]
-                avg_full = last_lng["full"].mean()
-                total_sendout = last_lng["sendOut"].sum()
-                n_terminals = last_lng["name"].nunique()
+                avg_full = last_lng["full"].mean() if "full" in last_lng.columns else 0
+                total_sendout = last_lng["sendOut"].sum() if "sendOut" in last_lng.columns else 0
+                n_terminals = last_lng["name"].nunique() if "name" in last_lng.columns else 0
 
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Terminálů", n_terminals)
