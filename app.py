@@ -32,6 +32,11 @@ from charts.hydro import fig_hydro_main, fig_hydro_grid
 from charts.capacity import fig_capacity as fig_cap
 from data.lng import load_lng
 from charts.lng import fig_lng_overview, fig_lng_sendout
+from data.gassco import load_gassco, fetch_gassco_umm
+from charts.gassco import (
+    fig_gassco_kpi, fig_gassco_timeseries,
+    fig_gassco_seasonality, fig_gassco_umm,
+)
 from charts.imbalance import (
     parse_imbalance,
     fig_ceps_dashboard, fig_ceps_combined, fig_ceps_svr,
@@ -729,9 +734,9 @@ if show_gas:
         pivot_gas = (_entry.unstack(fill_value=0) - _exit.unstack(fill_value=0)).fillna(0)
         pivot_gas.index = pd.to_datetime(pivot_gas.index, utc=True)
 
-        tab_map, tab_bar, tab_season, tab_cap, tab_stor, tab_lng, tab_hist = st.tabs(
-            ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost",
-             "🔲 Kapacity", "🏭 Zásobníky", "🚢 LNG", "📈 Historie"]
+        tab_map, tab_bar, tab_season, tab_cap, tab_stor, tab_lng, tab_gassco, tab_hist = st.tabs(
+            ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost", "🔲 Kapacity",
+             "🏭 Zásobníky", "🚢 LNG", "🇳🇴 GASSCO", "📈 Historie"]
         )
 
         with tab_map:
@@ -1078,6 +1083,114 @@ if show_gas:
                     fig_lng_sendout(df_lng_filtered),
                     use_container_width=True,
                 )
+
+        with tab_gassco:
+            df_gassco = load_gassco()
+
+            if df_gassco.empty:
+                st.warning(
+                    "GASSCO data nejsou dostupná. "
+                    "Spusť GitHub Actions: Update gas history."
+                )
+            else:
+                df_gassco["date"] = pd.to_datetime(df_gassco["date"], utc=True)
+                all_points_g = sorted(df_gassco["point"].unique().tolist())
+                all_years_g  = sorted(df_gassco["date"].dt.year.unique().tolist())
+                max_date_g   = df_gassco["date"].max()
+
+                st.plotly_chart(
+                    fig_gassco_kpi(df_gassco),
+                    use_container_width=True,
+                )
+
+                st.markdown("---")
+
+                st.markdown("#### Časová osa")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    sel_points_g = st.multiselect(
+                        "📍 Výstupní body",
+                        options=all_points_g,
+                        default=[p for p in ["Emden", "Dornum", "Zeebrugge", "Nybro"]
+                                 if p in all_points_g],
+                        key="gassco_points",
+                    )
+                with col2:
+                    qd_cols = st.columns(5)
+                    labels  = ["Týden", "Měsíc", "3M", "Rok", "Max"]
+                    deltas  = [7, 30, 90, 365, None]
+                    for i, (lbl, delta) in enumerate(zip(labels, deltas)):
+                        if qd_cols[i].button(lbl, key=f"gassco_qd_{lbl}"):
+                            if delta:
+                                st.session_state["gassco_daterange"] = (
+                                    (max_date_g - pd.Timedelta(days=delta)).date(),
+                                    max_date_g.date(),
+                                )
+                            else:
+                                st.session_state["gassco_daterange"] = (
+                                    df_gassco["date"].min().date(),
+                                    max_date_g.date(),
+                                )
+                            st.rerun()
+                with col3:
+                    date_range_g = st.date_input(
+                        "📆 Rozsah",
+                        value=st.session_state.get(
+                            "gassco_daterange",
+                            ((max_date_g - pd.Timedelta(days=30)).date(),
+                             max_date_g.date()),
+                        ),
+                        key="gassco_daterange",
+                    )
+
+                if isinstance(date_range_g, (list, tuple)) and len(date_range_g) == 2:
+                    ts_from = pd.Timestamp(date_range_g[0], tz="UTC")
+                    ts_to   = pd.Timestamp(date_range_g[1], tz="UTC")
+                else:
+                    ts_from = max_date_g - pd.Timedelta(days=30)
+                    ts_to   = max_date_g
+
+                st.plotly_chart(
+                    fig_gassco_timeseries(df_gassco, sel_points_g, ts_from, ts_to),
+                    use_container_width=True,
+                )
+
+                st.markdown("---")
+
+                st.markdown("#### Sezonnost")
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    sel_pts_season = st.multiselect(
+                        "📍 Body pro sezonnost",
+                        options=all_points_g,
+                        default=all_points_g,
+                        key="gassco_season_pts",
+                    )
+                with col_s2:
+                    sel_years_g = st.multiselect(
+                        "📅 Roky",
+                        options=all_years_g,
+                        default=all_years_g[-5:],
+                        key="gassco_years",
+                    )
+
+                st.plotly_chart(
+                    fig_gassco_seasonality(df_gassco, sel_pts_season, sel_years_g),
+                    use_container_width=True,
+                )
+
+                st.markdown("---")
+
+                st.markdown("#### Aktivní UMM zprávy (odstávky polí)")
+                with st.spinner("Načítám UMM..."):
+                    df_umm_live = fetch_gassco_umm()
+                if not df_umm_live.empty:
+                    st.plotly_chart(
+                        fig_gassco_umm(df_umm_live),
+                        use_container_width=True,
+                    )
+                else:
+                    st.info("Žádné aktivní UMM zprávy.")
 
         with tab_hist:
             point_sel = st.selectbox(
