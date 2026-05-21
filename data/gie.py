@@ -4,18 +4,6 @@ import pandas as pd
 GIE_ALL_CSV = "data/history/gie_all_storage.csv"
 GIE_KEY     = "628043ec28b2f2395a95f5adad7ec983"
 
-YEAR_COLORS = {
-    2018: "#BDBDBD",
-    2019: "#90A4AE",
-    2020: "#42A5F5",
-    2021: "#1565C0",
-    2022: "#FF8F00",
-    2023: "#C62828",
-    2024: "#AD1457",
-    2025: "#6A1B9A",
-    2026: "#2E7D32",
-}
-
 VARIABLES = {
     "full":             ("% plnosti",          "%"),
     "gasInStorage":     ("Plyn v zásobníku",   "TWh"),
