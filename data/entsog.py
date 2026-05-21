@@ -1,7 +1,6 @@
 import os
 import requests
 import pandas as pd
-import streamlit as st
 from datetime import date, timedelta
 
 POINTS_CONFIG = {
@@ -22,32 +21,38 @@ def _short_name(s: str) -> str:
     if "Final" in s:                        return "Koneční spotřebitelé"
     return s[:35]
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_entsog_flows(days: int = 90) -> pd.DataFrame:
-    end   = date.today()
-    start = end - timedelta(days=days)
-    url = (
-        "https://transparency.entsog.eu/api/v1/aggregateddata"
-        f"?from={start}&to={end}"
-        "&indicator=Physical%20Flow&periodType=day"
-        "&timezone=CET&limit=10000&format=json&countryKey=CZ"
-    )
+    def _impl(d: int) -> pd.DataFrame:
+        end   = date.today()
+        start = end - timedelta(days=d)
+        url = (
+            "https://transparency.entsog.eu/api/v1/aggregateddata"
+            f"?from={start}&to={end}"
+            "&indicator=Physical%20Flow&periodType=day"
+            "&timezone=CET&limit=10000&format=json&countryKey=CZ"
+        )
+        try:
+            resp = requests.get(url, timeout=30)
+            df   = pd.DataFrame(resp.json()["aggregateddata"])
+            df["value_GWh"] = pd.to_numeric(df["value"], errors="coerce") / 1_000_000
+            df["date"]      = pd.to_datetime(df["periodFrom"], utc=True).dt.tz_convert("Europe/Prague").dt.date
+            df["point"]     = df["pointsNames"].apply(_short_name)
+            entry = df[df["directionKey"]=="entry"].groupby(["date","point"])["value_GWh"].sum()
+            exit_ = df[df["directionKey"]=="exit" ].groupby(["date","point"])["value_GWh"].sum()
+            pivot = (entry.unstack(fill_value=0) - exit_.unstack(fill_value=0)).fillna(0)
+            pivot.index = pd.to_datetime(pivot.index)
+            for pt in POINTS_CONFIG:
+                if pt not in pivot.columns:
+                    pivot[pt] = 0.0
+            return pivot
+        except Exception:
+            return pd.DataFrame()
+
     try:
-        resp = requests.get(url, timeout=30)
-        df   = pd.DataFrame(resp.json()["aggregateddata"])
-        df["value_GWh"] = pd.to_numeric(df["value"], errors="coerce") / 1_000_000
-        df["date"]      = pd.to_datetime(df["periodFrom"], utc=True).dt.tz_convert("Europe/Prague").dt.date
-        df["point"]     = df["pointsNames"].apply(_short_name)
-        entry = df[df["directionKey"]=="entry"].groupby(["date","point"])["value_GWh"].sum()
-        exit_ = df[df["directionKey"]=="exit" ].groupby(["date","point"])["value_GWh"].sum()
-        pivot = (entry.unstack(fill_value=0) - exit_.unstack(fill_value=0)).fillna(0)
-        pivot.index = pd.to_datetime(pivot.index)
-        for pt in POINTS_CONFIG:
-            if pt not in pivot.columns:
-                pivot[pt] = 0.0
-        return pivot
-    except Exception:
-        return pd.DataFrame()
+        import streamlit as st
+        return st.cache_data(ttl=3600, show_spinner=False)(_impl)(days)
+    except ImportError:
+        return _impl(days)
 
 
 def load_entsog_history() -> pd.DataFrame:

@@ -1,6 +1,5 @@
 import requests, time, os
 import pandas as pd
-import streamlit as st
 
 CAPACITY_PARQUET = "data/history/entsog_capacity.parquet"
 
@@ -117,11 +116,19 @@ def update_capacity():
     print(f"Kapacity: {len(df)} řádků → {CAPACITY_PARQUET}")
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def load_capacity() -> pd.DataFrame:
-    if os.path.exists(CAPACITY_PARQUET):
-        return pd.read_parquet(CAPACITY_PARQUET)
-    return pd.DataFrame()
+    try:
+        import streamlit as st
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _load():
+            if os.path.exists(CAPACITY_PARQUET):
+                return pd.read_parquet(CAPACITY_PARQUET)
+            return pd.DataFrame()
+        return _load()
+    except ImportError:
+        if os.path.exists(CAPACITY_PARQUET):
+            return pd.read_parquet(CAPACITY_PARQUET)
+        return pd.DataFrame()
 
 
 def expand_capacity(df_raw: pd.DataFrame, target_dates: list) -> pd.DataFrame:
