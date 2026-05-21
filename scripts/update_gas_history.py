@@ -13,6 +13,12 @@ GIE_KEY        = "628043ec28b2f2395a95f5adad7ec983"
 COUNTRIES_GIE  = ["CZ", "DE", "NL", "FR", "SK", "AT"]
 EU_CODE        = "EU"
 
+HYDRO_CSV      = "data/history/hydro_reservoirs.csv"
+HYDRO_COUNTRIES = [
+    "FR", "AT", "CH", "ES", "PT", "IT", "NO", "SE", "FI",
+    "RO", "BG", "GR", "HR", "SI", "RS", "ME", "MK", "AL", "LT", "LV",
+]
+
 KEEP_COLS = [
     "periodFrom", "countryKey", "countryLabel",
     "directionKey", "adjacentSystemsKey", "adjacentSystemsLabel",
@@ -271,6 +277,69 @@ def update_gie_all():
     print(f"GIE all: uloženo {len(combined)} řádků ({size_kb:.0f} KB)")
 
 
+def update_hydro():
+    import sys
+    sys.path.insert(0, "/workspaces/pp-dashboard")
+    from entsoe import EntsoePandasClient
+
+    os.makedirs("data/history", exist_ok=True)
+    client = EntsoePandasClient(
+        api_key="95fa8cc7-1438-455b-9060-795d7c44d389"
+    )
+
+    if os.path.exists(HYDRO_CSV):
+        existing  = pd.read_csv(HYDRO_CSV, parse_dates=["date"])
+        last_date = existing["date"].max()
+        start     = last_date - timedelta(days=30)
+        print(f"Hydro: existující data do {last_date.date()}")
+    else:
+        existing = pd.DataFrame()
+        start    = date(2020, 1, 1)
+        print("Hydro: nový soubor")
+
+    start_ts = pd.Timestamp(start, tz="UTC")
+    end_ts   = pd.Timestamp.now(tz="UTC")
+
+    frames = []
+    for cc in HYDRO_COUNTRIES:
+        try:
+            raw = client.query_aggregate_water_reservoirs_and_hydro_storage(
+                country_code=cc, start=start_ts, end=end_ts
+            )
+            if raw is None or len(raw) == 0:
+                continue
+            df = raw.reset_index()
+            df.columns = ["date", "value_MWh"]
+            df["country"]   = cc
+            df["value_GWh"] = df["value_MWh"] / 1000
+            df["date"]      = pd.to_datetime(df["date"], utc=True)
+            frames.append(df[["date", "country", "value_GWh"]])
+            print(f"  ✓ {cc}: {len(df)} týdnů")
+        except Exception as e:
+            print(f"  ✗ {cc}: {str(e)[:60]}")
+
+    if not frames:
+        print("Hydro: žádná data")
+        return
+
+    new_data = pd.concat(frames, ignore_index=True)
+
+    if not existing.empty:
+        combined = pd.concat([existing, new_data], ignore_index=True)
+        combined = combined.drop_duplicates(
+            subset=["date", "country"], keep="last"
+        )
+    else:
+        combined = new_data
+
+    combined = combined.sort_values(
+        ["country", "date"]
+    ).reset_index(drop=True)
+    combined.to_csv(HYDRO_CSV, index=False)
+    size_kb = os.path.getsize(HYDRO_CSV) / 1024
+    print(f"Hydro: uloženo {len(combined)} řádků ({size_kb:.0f} KB)")
+
+
 if __name__ == "__main__":
     print("=== ENTSO-G flows (všechny země) ===")
     update_entsog()
@@ -278,3 +347,5 @@ if __name__ == "__main__":
     update_gie()
     print("\n=== GIE storage — všechny země ===")
     update_gie_all()
+    print("\n=== Hydro reservoirs (ENTSO-E 16.1.D) ===")
+    update_hydro()
