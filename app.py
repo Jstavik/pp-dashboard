@@ -22,12 +22,14 @@ from data.deltagreen import fetch_deltagreen
 from data.entsog import fetch_entsog_flows, load_entsog_history
 from data.gie import load_gie_all, VARIABLES, FIXED_COUNTRIES
 from data.hydro import load_hydro, HYDRO_COUNTRY_NAMES
+from data.entsog_capacity import load_capacity, GAS_KEY_POINTS
 from charts.gas import (
     fig_gas_flows_bar, fig_gas_point_history, fig_gas_map,
     fig_flow_timeseries, fig_flow_seasonality,
 )
 from charts.storage import fig_storage_main, fig_storage_grid
 from charts.hydro import fig_hydro_main, fig_hydro_grid
+from charts.capacity import fig_capacity as fig_cap
 from charts.imbalance import (
     parse_imbalance,
     fig_ceps_dashboard, fig_ceps_combined, fig_ceps_svr,
@@ -716,9 +718,9 @@ if show_gas:
     if pivot_gas.empty:
         st.warning("ENTSO-G data nejsou dostupná.")
     else:
-        tab_map, tab_bar, tab_season, tab_stor, tab_hist = st.tabs(
+        tab_map, tab_bar, tab_season, tab_cap, tab_stor, tab_hist = st.tabs(
             ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost",
-             "🏭 Zásobníky", "📈 Historie"]
+             "🔲 Kapacity", "🏭 Zásobníky", "📈 Historie"]
         )
 
         with tab_map:
@@ -884,6 +886,56 @@ if show_gas:
                 st.markdown("---")
                 st.plotly_chart(
                     fig_flow_seasonality(df_s4, [], [], [], [], sel_years_s, chart_type_s),
+                    use_container_width=True,
+                )
+
+        with tab_cap:
+            df_cap_data   = load_capacity()
+            df_flows_data = load_entsog_history()
+
+            if df_cap_data.empty:
+                st.warning(
+                    "Kapacitní data nejsou dostupná. "
+                    "Spusť GitHub Actions: Update gas history."
+                )
+            else:
+                all_points = sorted(
+                    df_cap_data["pointLabel"].dropna().unique()
+                )
+                all_directions = ["entry", "exit"]
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    sel_point = st.selectbox(
+                        "📍 Hraniční bod",
+                        options=all_points,
+                        index=all_points.index("VIP Waidhaus")
+                              if "VIP Waidhaus" in all_points else 0,
+                        key="cap_point",
+                    )
+                with col2:
+                    sel_dir = st.radio(
+                        "↕ Směr",
+                        options=all_directions,
+                        horizontal=True,
+                        key="cap_dir",
+                    )
+                with col3:
+                    sel_cap_type = st.radio(
+                        "📊 Typ kapacity",
+                        options=["Firm", "Interruptible", "Both"],
+                        horizontal=True,
+                        key="cap_type",
+                    )
+
+                st.plotly_chart(
+                    fig_cap(
+                        df_cap_data,
+                        df_flows_data,
+                        sel_point,
+                        sel_dir,
+                        sel_cap_type,
+                    ),
                     use_container_width=True,
                 )
 
