@@ -1,6 +1,5 @@
 import os
 import pandas as pd
-import streamlit as st
 
 HYDRO_CSV = "data/history/hydro_reservoirs.csv"
 
@@ -34,10 +33,20 @@ def year_width(year: int) -> float:
     return 2.5 if year == pd.Timestamp.now().year else 1.5
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def load_hydro() -> pd.DataFrame:
-    if os.path.exists(HYDRO_CSV):
-        df = pd.read_csv(HYDRO_CSV, parse_dates=["date"])
-        df["date"] = pd.to_datetime(df["date"], utc=True)
-        return df
-    return pd.DataFrame()
+    try:
+        import streamlit as st
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _load():
+            if os.path.exists(HYDRO_CSV):
+                df = pd.read_csv(HYDRO_CSV, parse_dates=["date"])
+                df["date"] = pd.to_datetime(df["date"], utc=True)
+                return df
+            return pd.DataFrame()
+        return _load()
+    except ImportError:
+        if os.path.exists(HYDRO_CSV):
+            df = pd.read_csv(HYDRO_CSV, parse_dates=["date"])
+            df["date"] = pd.to_datetime(df["date"], utc=True)
+            return df
+        return pd.DataFrame()
