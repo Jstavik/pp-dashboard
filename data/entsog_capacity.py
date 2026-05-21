@@ -100,6 +100,11 @@ def update_capacity():
         return
 
     df = pd.DataFrame(all_records)
+    df["value"] = (
+        df["value"].astype(str)
+          .str.strip()
+          .replace({"": None, "nan": None, "None": None})
+    )
     df["value_GWh"]     = pd.to_numeric(df["value"], errors="coerce") / 1_000_000
     df["periodFrom_dt"] = pd.to_datetime(df["periodFrom"], utc=True).dt.date
     df["periodTo_dt"]   = pd.to_datetime(df["periodTo"],   utc=True).dt.date
