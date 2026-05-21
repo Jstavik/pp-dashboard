@@ -253,7 +253,7 @@ def fig_gas_point_history(pivot: pd.DataFrame, point: str, height: int = 260) ->
     return fig
 
 
-def fig_gas_map(df_history: pd.DataFrame, height: int = 800) -> go.Figure:
+def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.Figure:
     """Scattermapbox — CEE physical gas flow map, GasConnect-style."""
 
     DOMESTIC = {"Storage", "Distribution", "Final Consumers",
@@ -332,6 +332,17 @@ def fig_gas_map(df_history: pd.DataFrame, height: int = 800) -> go.Figure:
         "FR":(47.0,3.0),  "BE":(50.8,4.0),  "NL":(52.5,5.0),
         "DK":(55.5,9.5),  "UA":(49.5,26.0), "RO":(45.5,24.0),
         "HR":(45.3,16.0),
+    }
+
+    STORAGE_NODES = {
+        "DE": (51.5, 10.5, "🇩🇪"),
+        "AT": (47.5, 14.0, "🇦🇹"),
+        "CZ": (49.8, 16.5, "🇨🇿"),
+        "SK": (48.5, 18.5, "🇸🇰"),
+        "HU": (47.0, 18.5, "🇭🇺"),
+        "IT": (44.5, 11.0, "🇮🇹"),
+        "FR": (46.5,  2.5, "🇫🇷"),
+        "NL": (52.3,  5.5, "🇳🇱"),
     }
 
     GREEN = "#2E7D32"
@@ -453,6 +464,60 @@ def fig_gas_map(df_history: pd.DataFrame, height: int = 800) -> go.Figure:
                 family="Arial Black"),
             showlegend=False,
             hoverinfo="skip"))
+
+    # ── storage circles ───────────────────────────────────────────
+    if df_gie is not None and not df_gie.empty:
+        df_gie = df_gie.copy()
+        df_gie["gasDayStart"] = pd.to_datetime(df_gie["gasDayStart"], utc=True)
+        last_gie = (df_gie.sort_values("gasDayStart")
+                         .groupby("country_code").last().reset_index())
+
+        for _, row in last_gie.iterrows():
+            cc = row["country_code"]
+            if cc not in STORAGE_NODES:
+                continue
+            lat, lon, flag = STORAGE_NODES[cc]
+            full = float(row.get("full", 0) or 0)
+            gas  = float(row.get("gasInStorage", 0) or 0)
+            date_str = row["gasDayStart"].strftime("%d.%m.%Y")
+
+            fig.add_trace(go.Scattermapbox(
+                lat=[lat], lon=[lon],
+                mode="markers",
+                marker=dict(
+                    size=28, color="#E0E0E0", opacity=0.9,
+                    sizemode="diameter",
+                ),
+                hoverinfo="skip",
+                showlegend=False,
+            ))
+
+            color = (
+                "#C62828" if full < 25 else
+                "#FF8F00" if full < 50 else
+                "#1565C0" if full < 75 else
+                "#2E7D32"
+            )
+            fig.add_trace(go.Scattermapbox(
+                lat=[lat], lon=[lon],
+                mode="markers+text",
+                marker=dict(
+                    size=28, color=color,
+                    opacity=max(0.3, full / 100),
+                    sizemode="diameter",
+                ),
+                text=[f"{full:.0f}%"],
+                textfont=dict(size=9, color="white", family="Arial Black"),
+                textposition="middle center",
+                hovertemplate=(
+                    f"<b>{flag} {cc} Zásobníky</b><br>"
+                    f"Plnost: <b>{full:.1f}%</b><br>"
+                    f"Objem: {gas:.1f} TWh<br>"
+                    f"Datum: {date_str}"
+                    "<extra></extra>"
+                ),
+                showlegend=False,
+            ))
 
     _mapbox_layout(fig, height, date_label)
     return fig

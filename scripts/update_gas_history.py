@@ -7,6 +7,7 @@ from dateutil.relativedelta import relativedelta
 import os
 import time
 from data.entsog_capacity import update_capacity
+from data.lng import update_lng
 
 HISTORY_START  = date(2020, 1, 1)
 PARQUET_PATH   = "data/history/entsog_all_flows.parquet"
@@ -75,7 +76,7 @@ def update_entsog():
     os.makedirs("data/history", exist_ok=True)
 
     if os.path.exists(PARQUET_PATH):
-        existing  = pd.read_parquet(PARQUET_PATH)
+        existing  = pd.read_parquet(PARQUET_PATH, columns=["date"])
         last_date = pd.to_datetime(existing["date"]).max().date()
         start     = last_date - timedelta(days=7)
         print(f"Existující data do {last_date}, stahuji od {start}")
@@ -117,80 +118,6 @@ def update_entsog():
     size_mb  = os.path.getsize(PARQUET_PATH) / 1024 / 1024
     print(f"Uloženo {len(combined)} řádků → {PARQUET_PATH} ({size_mb:.1f} MB)")
 
-
-def fetch_gie_month(start: date, end: date) -> pd.DataFrame:
-    url     = f"https://agsi.gie.eu/api?country=CZ&size=300&from={start}&to={end}"
-    headers = {"x-key": GIE_KEY}
-    try:
-        resp = requests.get(url, headers=headers, timeout=30)
-        if resp.status_code != 200:
-            return pd.DataFrame()
-        data = resp.json().get("data", [])
-        if not data:
-            return pd.DataFrame()
-        df = pd.DataFrame(data)
-        df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
-        for col in ["gasInStorage","injection","withdrawal","workingGasVolume","full"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(
-                    df[col].astype(str).str.replace(",", "."),
-                    errors="coerce"
-                )
-        keep = [c for c in
-                ["gasInStorage","injection","withdrawal",
-                 "workingGasVolume","full","status"]
-                if c in df.columns]
-        return df.set_index("gasDayStart")[keep]
-    except Exception as e:
-        print(f"GIE chyba: {e}")
-        return pd.DataFrame()
-
-
-def update_gie():
-    os.makedirs("data/history", exist_ok=True)
-
-    if os.path.exists(GIE_CSV_PATH):
-        existing  = pd.read_csv(GIE_CSV_PATH, index_col=0, parse_dates=True)
-        last_date = existing.index[-1].date()
-        start     = last_date - timedelta(days=7)
-        print(f"GIE existující data do {last_date}, stahuji od {start}")
-    else:
-        existing = pd.DataFrame()
-        start    = HISTORY_START
-        print(f"GIE nový soubor, stahuji od {start}")
-
-    frames  = []
-    current = start
-    today   = date.today()
-
-    while current <= today:
-        end = min(
-            date(current.year, current.month, 1)
-            + relativedelta(months=1) - timedelta(days=1),
-            today
-        )
-        print(f"  GIE {current} → {end} ...")
-        df_m = fetch_gie_month(current, end)
-        if not df_m.empty:
-            frames.append(df_m)
-        current = end + timedelta(days=1)
-
-    if not frames:
-        print("GIE: žádná nová data.")
-        return
-
-    new_data = pd.concat(frames)
-    new_data = new_data[~new_data.index.duplicated(keep="last")]
-
-    if not existing.empty:
-        combined = pd.concat([existing, new_data])
-        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
-    else:
-        combined = new_data.sort_index()
-
-    combined.to_csv(GIE_CSV_PATH)
-    size_kb = os.path.getsize(GIE_CSV_PATH) / 1024
-    print(f"GIE uloženo {len(combined)} řádků → {GIE_CSV_PATH} ({size_kb:.0f} KB)")
 
 
 def fetch_gie_all_countries() -> pd.DataFrame:
@@ -286,7 +213,7 @@ def update_gie_all():
 
 def update_hydro():
     import sys
-    sys.path.insert(0, "/workspaces/pp-dashboard")
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from entsoe import EntsoePandasClient
 
     os.makedirs("data/history", exist_ok=True)
@@ -350,10 +277,10 @@ def update_hydro():
 if __name__ == "__main__":
     for label, fn in [
         ("ENTSO-G flows (všechny země)",      update_entsog),
-        ("GIE storage CZ",                    update_gie),
         ("GIE storage — všechny země",        update_gie_all),
         ("Hydro reservoirs (ENTSO-E 16.1.D)", update_hydro),
         ("Kapacity ENTSO-G",                  update_capacity),
+        ("LNG terminály (GIE ALSI)",          update_lng),
     ]:
         print(f"\n=== {label} ===")
         try:

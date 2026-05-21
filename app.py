@@ -30,6 +30,8 @@ from charts.gas import (
 from charts.storage import fig_storage_main, fig_storage_grid
 from charts.hydro import fig_hydro_main, fig_hydro_grid
 from charts.capacity import fig_capacity as fig_cap
+from data.lng import load_lng
+from charts.lng import fig_lng_overview, fig_lng_sendout
 from charts.imbalance import (
     parse_imbalance,
     fig_ceps_dashboard, fig_ceps_combined, fig_ceps_svr,
@@ -727,17 +729,18 @@ if show_gas:
         pivot_gas = (_entry.unstack(fill_value=0) - _exit.unstack(fill_value=0)).fillna(0)
         pivot_gas.index = pd.to_datetime(pivot_gas.index, utc=True)
 
-        tab_map, tab_bar, tab_season, tab_cap, tab_stor, tab_hist = st.tabs(
+        tab_map, tab_bar, tab_season, tab_cap, tab_stor, tab_lng, tab_hist = st.tabs(
             ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost",
-             "🔲 Kapacity", "🏭 Zásobníky", "📈 Historie"]
+             "🔲 Kapacity", "🏭 Zásobníky", "🚢 LNG", "📈 Historie"]
         )
 
         with tab_map:
             if df_hist.empty:
                 st.warning("Data nejsou dostupná.")
             else:
+                df_gie_map = load_gie_all()
                 st.plotly_chart(
-                    fig_gas_map(df_hist),
+                    fig_gas_map(df_hist, df_gie_map),
                     use_container_width=True,
                     config={"displayModeBar": False},
                 )
@@ -1023,6 +1026,58 @@ if show_gas:
                         ),
                         use_container_width=True,
                     )
+
+        with tab_lng:
+            df_lng = load_lng()
+            if df_lng.empty:
+                st.warning(
+                    "LNG data nejsou dostupná. "
+                    "Spusť GitHub Actions: Update gas history."
+                )
+            else:
+                df_lng["gasDayStart"] = pd.to_datetime(df_lng["gasDayStart"])
+
+                last_date_lng = df_lng["gasDayStart"].max()
+                last_lng = df_lng[df_lng["gasDayStart"] == last_date_lng]
+                avg_full = last_lng["full"].mean()
+                total_sendout = last_lng["sendOut"].sum()
+                n_terminals = last_lng["name"].nunique()
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Terminálů", n_terminals)
+                c2.metric("Průměrná plnost", f"{avg_full:.1f}%")
+                c3.metric("Send-out EU", f"{total_sendout:.0f} GWh/d")
+
+                st.plotly_chart(
+                    fig_lng_overview(df_lng, height=max(400, n_terminals * 22)),
+                    use_container_width=True,
+                )
+
+                st.markdown("---")
+
+                all_countries_lng = (
+                    sorted(df_lng["country"].dropna().unique())
+                    if "country" in df_lng.columns else []
+                )
+                if all_countries_lng:
+                    sel_country_lng = st.multiselect(
+                        "Filtr podle země",
+                        options=all_countries_lng,
+                        default=[],
+                        key="lng_country",
+                        help="Prázdný = celá EU",
+                    )
+                    df_lng_filtered = (
+                        df_lng[df_lng["country"].isin(sel_country_lng)]
+                        if sel_country_lng else df_lng
+                    )
+                else:
+                    df_lng_filtered = df_lng
+
+                st.plotly_chart(
+                    fig_lng_sendout(df_lng_filtered),
+                    use_container_width=True,
+                )
 
         with tab_hist:
             point_sel = st.selectbox(

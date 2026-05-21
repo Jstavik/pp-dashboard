@@ -49,6 +49,12 @@ GAS_KEY_POINTS = {
     "Eynatten":          ["Eynatten 1 (BE) // Lichtenbusch / Raeren (DE)"],
     "Blaregnies":        ["Blaregnies (BE) / Taisnières (H) (FR) (Segeo)"],
     "Obergailbach":      ["Obergailbach (FR) / Medelsheim (DE)"],
+    "Greifswald":        ["Greifswald / GUD"],
+    "Isaccea":           ["Isaccea (RO) - Orlovka (UA) I"],
+    "Negru Voda":        ["Negru Voda I (RO) / Kardam (BG)"],
+    "Kulata":            ["Kulata (BG) / Sidirokastron (GR)"],
+    "Kipi":              ["Kipi (TR) / Kipi (GR)"],
+    "Imatra":            ["Imatra"],
 }
 
 TSO_COUNTRY = {
