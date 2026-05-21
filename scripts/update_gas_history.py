@@ -203,11 +203,15 @@ def fetch_gie_all_countries() -> pd.DataFrame:
         frames = []
         for page in range(1, 50):
             url = f"https://agsi.gie.eu/api?{param}&size=300&page={page}"
-            resp = requests.get(
-                url,
-                headers={"x-key": GIE_KEY},
-                timeout=30,
-            )
+            try:
+                resp = requests.get(
+                    url,
+                    headers={"x-key": GIE_KEY},
+                    timeout=30,
+                )
+            except Exception as e:
+                print(f"    timeout/chyba str. {page}: {e}")
+                break
             if resp.status_code != 200:
                 break
             data = resp.json()
@@ -341,11 +345,14 @@ def update_hydro():
 
 
 if __name__ == "__main__":
-    print("=== ENTSO-G flows (všechny země) ===")
-    update_entsog()
-    print("\n=== GIE storage CZ ===")
-    update_gie()
-    print("\n=== GIE storage — všechny země ===")
-    update_gie_all()
-    print("\n=== Hydro reservoirs (ENTSO-E 16.1.D) ===")
-    update_hydro()
+    for label, fn in [
+        ("ENTSO-G flows (všechny země)", update_entsog),
+        ("GIE storage CZ",              update_gie),
+        ("GIE storage — všechny země",  update_gie_all),
+        ("Hydro reservoirs (ENTSO-E 16.1.D)", update_hydro),
+    ]:
+        print(f"\n=== {label} ===")
+        try:
+            fn()
+        except Exception as e:
+            print(f"  CHYBA: {e}")
