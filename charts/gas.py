@@ -272,10 +272,12 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
 
     # ── helpers ───────────────────────────────────────────────────
     def _neighbor(adj):
-        if adj in DOMESTIC:
+        if not adj or not isinstance(adj, str):
             return None
         codes = set(re.findall(r"Transmission([A-Z]{2})", adj))
-        return CODE2C.get(codes.pop()) if codes else None
+        if len(codes) == 1:
+            return codes.pop()
+        return None
 
     def _bilateral(day):
         """Returns {(a,b): net} a<b alphabetically.
