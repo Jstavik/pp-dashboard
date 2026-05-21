@@ -20,6 +20,9 @@ def fig_lng_overview(df: pd.DataFrame, height: int = 400) -> go.Figure:
 
     last_date = df["gasDayStart"].max()
     last = df[df["gasDayStart"] == last_date].copy()
+    if "full" not in last.columns:
+        return go.Figure()
+    last = last.dropna(subset=["full"])
     last = last.sort_values("full", ascending=True)
 
     colors = [

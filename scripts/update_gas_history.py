@@ -8,6 +8,7 @@ import os
 import time
 from data.entsog_capacity import update_capacity
 from data.lng import update_lng
+from data.gassco import update_gassco
 
 HISTORY_START  = date(2020, 1, 1)
 PARQUET_PATH   = "data/history/entsog_all_flows.parquet"
@@ -281,6 +282,7 @@ if __name__ == "__main__":
         ("Hydro reservoirs (ENTSO-E 16.1.D)", update_hydro),
         ("Kapacity ENTSO-G",                  update_capacity),
         ("LNG terminály (GIE ALSI)",          update_lng),
+        ("GASSCO nominace",                   update_gassco),
     ]:
         print(f"\n=== {label} ===")
         try:
