@@ -1,9 +1,12 @@
+import sys
+sys.path.insert(0, ".")
 import requests
 import pandas as pd
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 import os
 import time
+from data.entsog_capacity import update_capacity
 
 HISTORY_START  = date(2020, 1, 1)
 PARQUET_PATH   = "data/history/entsog_all_flows.parquet"
@@ -346,10 +349,11 @@ def update_hydro():
 
 if __name__ == "__main__":
     for label, fn in [
-        ("ENTSO-G flows (všechny země)", update_entsog),
-        ("GIE storage CZ",              update_gie),
-        ("GIE storage — všechny země",  update_gie_all),
+        ("ENTSO-G flows (všechny země)",      update_entsog),
+        ("GIE storage CZ",                    update_gie),
+        ("GIE storage — všechny země",        update_gie_all),
         ("Hydro reservoirs (ENTSO-E 16.1.D)", update_hydro),
+        ("Kapacity ENTSO-G",                  update_capacity),
     ]:
         print(f"\n=== {label} ===")
         try:
