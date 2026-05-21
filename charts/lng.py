@@ -20,7 +20,7 @@ def fig_lng_overview(df: pd.DataFrame, height: int = 400) -> go.Figure:
 
     last_date = df["gasDayStart"].max()
     last = df[df["gasDayStart"] == last_date].copy()
-    if "full" not in last.columns:
+    if "full" not in last.columns or last["full"].isna().all():
         return go.Figure()
     last = last.dropna(subset=["full"])
     last = last.sort_values("full", ascending=True)
@@ -61,6 +61,8 @@ def fig_lng_overview(df: pd.DataFrame, height: int = 400) -> go.Figure:
 def fig_lng_sendout(df: pd.DataFrame, height: int = 380) -> go.Figure:
     """Send-out (regasifikace) — sezonnost po letech."""
     if df.empty:
+        return go.Figure()
+    if "sendOut" not in df.columns:
         return go.Figure()
 
     df = df.copy()

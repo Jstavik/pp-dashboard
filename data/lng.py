@@ -51,11 +51,30 @@ def fetch_lng_all() -> pd.DataFrame:
 
     df = pd.DataFrame(all_frames)
     df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
-    for col in ["lngInventory", "sendOut", "dtmi", "dtrs", "ttm", "full"]:
+
+    if "inventory" in df.columns:
+        df["inventory_gwh"] = df["inventory"].apply(
+            lambda x: float(x.get("gwh", 0)) if isinstance(x, dict) else 0
+        )
+        df["inventory_lng"] = df["inventory"].apply(
+            lambda x: float(x.get("lng", 0)) if isinstance(x, dict) else 0
+        )
+    if "dtmi" in df.columns:
+        df["dtmi_gwh"] = df["dtmi"].apply(
+            lambda x: float(x.get("gwh", 0)) if isinstance(x, dict) else 0
+        )
+
+    if "inventory_gwh" in df.columns and "dtmi_gwh" in df.columns:
+        df["full"] = (
+            df["inventory_gwh"] / df["dtmi_gwh"].replace(0, float("nan")) * 100
+        ).round(2)
+
+    for col in ["sendOut", "dtrs", "contractedCapacity", "availableCapacity"]:
         if col in df.columns:
             df[col] = pd.to_numeric(
                 df[col].astype(str).str.replace(",", "."),
                 errors="coerce")
+
     return df.sort_values("gasDayStart")
 
 
