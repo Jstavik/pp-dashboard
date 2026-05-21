@@ -23,7 +23,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests pandas python-dateutil pyarrow
+        run: pip install requests pandas python-dateutil pyarrow entsoe-py
 
       - name: Run update script
         run: python scripts/update_gas_history.py

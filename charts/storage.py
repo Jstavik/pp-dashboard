@@ -1,7 +1,24 @@
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from data.gie import YEAR_COLORS, VARIABLES, FIXED_COUNTRIES
+from data.gie import VARIABLES, FIXED_COUNTRIES
+
+
+def year_color(year: int) -> str:
+    """Dynamická barva roku — aktuální rok vždy zelený."""
+    PALETTE = [
+        "#BDBDBD", "#90A4AE", "#42A5F5", "#1565C0",
+        "#FF8F00", "#C62828", "#AD1457", "#6A1B9A",
+    ]
+    current = pd.Timestamp.now().year
+    if year == current:
+        return "#2E7D32"
+    idx = (current - year - 1) % len(PALETTE)
+    return PALETTE[idx]
+
+
+def year_width(year: int) -> float:
+    return 2.5 if year == pd.Timestamp.now().year else 1.5
 
 
 def _prep(df: pd.DataFrame, cc: str) -> pd.DataFrame:
@@ -26,12 +43,10 @@ def fig_storage_main(
         grp = sub[sub["year"] == yr].sort_values("day_of_year")
         if grp.empty:
             continue
-        color = YEAR_COLORS.get(yr, "#9E9E9E")
-        width = 2.5 if yr == pd.Timestamp.now().year else 1.5
         fig.add_trace(go.Scatter(
             x=grp["day_of_year"], y=grp[variable],
             mode="lines", name=str(yr),
-            line=dict(color=color, width=width),
+            line=dict(color=year_color(yr), width=year_width(yr)),
             hovertemplate=(
                 f"{yr} · den %{{x}}: "
                 f"<b>%{{y:.2f}} {unit}</b><extra></extra>"
@@ -84,13 +99,10 @@ def fig_storage_grid(
             grp = sub[sub["year"] == yr].sort_values("day_of_year")
             if grp.empty:
                 continue
-            color = YEAR_COLORS.get(yr, "#9E9E9E")
-            width = 2.5 if yr == pd.Timestamp.now().year else 1.5
-
             fig.add_trace(go.Scatter(
                 x=grp["day_of_year"], y=grp[variable],
                 mode="lines", name=str(yr),
-                line=dict(color=color, width=width),
+                line=dict(color=year_color(yr), width=year_width(yr)),
                 legendgroup=str(yr),
                 showlegend=(i == 0),
                 hovertemplate=(
@@ -117,10 +129,7 @@ def fig_storage_grid(
         template="plotly_white",
         hovermode="x unified",
         title=f"Zásobníky — {label} | sezonnost",
-        legend=dict(
-            orientation="h", y=-0.06,
-            xanchor="center", x=0.5,
-        ),
+        legend=dict(orientation="h", y=-0.06, xanchor="center", x=0.5),
         margin=dict(l=50, r=20, t=60, b=80),
     )
     return fig
