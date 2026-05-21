@@ -19,7 +19,7 @@ from data.ceps import (
     fetch_ceps_imbalance, fetch_ceps_svr, fetch_ceps_imbalance_price, fetch_ceps_all,
 )
 from data.deltagreen import fetch_deltagreen
-from data.entsog import fetch_entsog_flows, load_entsog_history
+from data.entsog import fetch_entsog_flows, load_entsog_history, _short_name
 from data.gie import load_gie_all, VARIABLES, FIXED_COUNTRIES
 from data.hydro import load_hydro, HYDRO_COUNTRY_NAMES
 from data.entsog_capacity import load_capacity, GAS_KEY_POINTS
@@ -713,31 +713,36 @@ if show_gas:
     st.markdown("## 🔵 Fyzické toky plynu — CZ")
 
     with st.spinner("Načítám data ENTSO-G..."):
-        pivot_gas = fetch_entsog_flows(days=90)
+        df_hist = load_entsog_history()
 
-    if pivot_gas.empty:
+    if df_hist.empty:
         st.warning("ENTSO-G data nejsou dostupná.")
     else:
+        df_cz = df_hist[df_hist["countryLabel"] == "Czechia"].copy()
+        df_cz["point_short"] = df_cz["pointsNames"].apply(_short_name)
+        _entry = df_cz[df_cz["directionKey"] == "entry"].groupby(
+            ["date", "point_short"])["value_GWh"].sum()
+        _exit = df_cz[df_cz["directionKey"] == "exit"].groupby(
+            ["date", "point_short"])["value_GWh"].sum()
+        pivot_gas = (_entry.unstack(fill_value=0) - _exit.unstack(fill_value=0)).fillna(0)
+        pivot_gas.index = pd.to_datetime(pivot_gas.index, utc=True)
+
         tab_map, tab_bar, tab_season, tab_cap, tab_stor, tab_hist = st.tabs(
             ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost",
              "🔲 Kapacity", "🏭 Zásobníky", "📈 Historie"]
         )
 
         with tab_map:
-            with st.spinner("Načítám historická data..."):
-                df_hist_map = load_entsog_history()
-            if df_hist_map.empty:
+            if df_hist.empty:
                 st.warning("Data nejsou dostupná.")
             else:
                 st.plotly_chart(
-                    fig_gas_map(df_hist_map),
+                    fig_gas_map(df_hist),
                     use_container_width=True,
                     config={"displayModeBar": False},
                 )
 
         with tab_bar:
-            df_hist = load_entsog_history()
-
             if df_hist.empty:
                 st.warning("Historická data ENTSO-G nejsou dostupná.")
             else:
@@ -843,17 +848,14 @@ if show_gas:
                 )
 
         with tab_season:
-            df_hist_s = load_entsog_history()
-            if df_hist_s.empty:
+            if df_hist.empty:
                 st.warning("Data nejsou dostupná.")
             else:
-                df_hist_s["date"] = pd.to_datetime(df_hist_s["date"], utc=True)
-
-                all_countries_s = sorted(df_hist_s["countryLabel"].dropna().unique())
+                all_countries_s = sorted(df_hist["countryLabel"].dropna().unique())
                 sel_countries_s = st.multiselect(
                     "🌍 Země", all_countries_s, default=["Czechia"], key="seas_countries")
-                df_s1 = df_hist_s[df_hist_s["countryLabel"].isin(sel_countries_s)] \
-                        if sel_countries_s else df_hist_s
+                df_s1 = df_hist[df_hist["countryLabel"].isin(sel_countries_s)] \
+                        if sel_countries_s else df_hist
 
                 all_dir_s = sorted(df_s1["directionKey"].dropna().unique())
                 sel_dir_s = st.multiselect(
@@ -875,7 +877,7 @@ if show_gas:
                 df_s4 = df_s3[df_s3["pointsNames"].isin(sel_pts_s)] \
                         if sel_pts_s else df_s3
 
-                all_years_s = sorted(df_hist_s["date"].dt.year.unique())
+                all_years_s = sorted(df_hist["date"].dt.year.unique())
                 sel_years_s = st.multiselect(
                     "📅 Roky", all_years_s, default=all_years_s[-5:], key="seas_years")
 
@@ -891,7 +893,7 @@ if show_gas:
 
         with tab_cap:
             df_cap_data   = load_capacity()
-            df_flows_data = load_entsog_history()
+            df_flows_data = df_hist
 
             if df_cap_data.empty:
                 st.warning(

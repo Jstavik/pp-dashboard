@@ -56,17 +56,18 @@ def fetch_entsog_flows(days: int = 90) -> pd.DataFrame:
 
 
 def load_entsog_history() -> pd.DataFrame:
-    """
-    Načte historická data ze souboru Parquet.
-    Fallback na live API (posledních 90 dní, jen CZ) pokud soubor neexistuje.
-    """
     parquet_path = "data/history/entsog_all_flows.parquet"
-    if os.path.exists(parquet_path):
-        df = pd.read_parquet(parquet_path)
-        df["date"] = pd.to_datetime(df["date"], utc=True)
-        return df
-    # Fallback — jen CZ, 90 dní
-    return fetch_entsog_flows(days=90)
+    def _load():
+        if os.path.exists(parquet_path):
+            df = pd.read_parquet(parquet_path)
+            df["date"] = pd.to_datetime(df["date"], utc=True)
+            return df
+        return fetch_entsog_flows(days=90)
+    try:
+        import streamlit as st
+        return st.cache_data(ttl=3600, show_spinner=False)(_load)()
+    except ImportError:
+        return _load()
 
 
 def load_gie_history() -> pd.DataFrame:
