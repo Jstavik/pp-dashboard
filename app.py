@@ -819,13 +819,14 @@ if show_gas:
         st.warning("ENTSO-G data nejsou dostupná.")
     else:
         df_cz = df_hist[df_hist["countryLabel"] == "Czechia"].copy()
+        df_cz["date_prague"] = df_cz["date"].dt.tz_convert("Europe/Prague").dt.normalize()
         df_cz["point_short"] = df_cz["pointsNames"].apply(_short_name)
         _entry = df_cz[df_cz["directionKey"] == "entry"].groupby(
-            ["date", "point_short"])["value_GWh"].sum()
-        _exit = df_cz[df_cz["directionKey"] == "exit"].groupby(
-            ["date", "point_short"])["value_GWh"].sum()
+            ["date_prague", "point_short"])["value_GWh"].sum()
+        _exit  = df_cz[df_cz["directionKey"] == "exit"].groupby(
+            ["date_prague", "point_short"])["value_GWh"].sum()
         pivot_gas = (_entry.unstack(fill_value=0) - _exit.unstack(fill_value=0)).fillna(0)
-        pivot_gas.index = pd.to_datetime(pivot_gas.index, utc=True)
+        pivot_gas.index = pd.to_datetime(pivot_gas.index)
 
         tab_map, tab_bar, tab_season, tab_cap, tab_stor, tab_lng, tab_gassco, tab_hist = st.tabs(
             ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost", "🔲 Kapacity",

@@ -49,6 +49,8 @@ def fig_flow_timeseries(
         )
         return fig
 
+    filtered["date"] = filtered["date"].dt.tz_convert("Europe/Prague").dt.normalize()
+
     group_cols = ["countryLabel", "pointsNames"]
     groups = filtered.groupby(group_cols)
 
@@ -139,7 +141,7 @@ def fig_flow_seasonality(
         )
         return fig
 
-    filtered["date"]        = pd.to_datetime(filtered["date"])
+    filtered["date"]        = filtered["date"].dt.tz_convert("Europe/Prague")
     filtered["year"]        = filtered["date"].dt.year
     filtered["day_of_year"] = filtered["date"].dt.day_of_year
 
