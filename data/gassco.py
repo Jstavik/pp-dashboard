@@ -111,6 +111,51 @@ def fetch_gassco_umm() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def fetch_realtime_nominations() -> pd.DataFrame:
+    """Aktuální nominace z realTimeAtom.xml — bez session."""
+    import xml.etree.ElementTree as ET
+    try:
+        resp = requests.get(
+            "https://umm.gassco.no/realTimeAtom.xml",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return pd.DataFrame()
+
+        root = ET.fromstring(resp.text)
+        ns   = {"atom": "http://www.w3.org/2005/Atom"}
+
+        updated_str = root.findtext("atom:updated", "", ns)
+        updated = pd.to_datetime(updated_str, utc=True)
+        today   = updated.normalize()
+
+        records = []
+        for entry in root.findall("atom:entry", ns):
+            title   = entry.findtext("atom:title", "", ns)
+            content = entry.findtext("atom:content", "0", ns)
+            name = (title
+                    .replace("Exit Nomination ", "")
+                    .replace(" (MSm3)", "")
+                    .strip())
+            try:
+                val_msm3 = float(content)
+            except ValueError:
+                val_msm3 = 0.0
+            records.append({
+                "date":       today,
+                "point":      name,
+                "value_MSm3": val_msm3,
+                "value_GWh":  val_msm3 * MSMM3_TO_GWH,
+                "realtime":   True,
+            })
+
+        return pd.DataFrame(records)
+    except Exception as e:
+        print(f"realTimeAtom chyba: {e}")
+        return pd.DataFrame()
+
+
 def update_gassco():
     os.makedirs("data/history", exist_ok=True)
     print("  GASSCO nominace...")
@@ -126,17 +171,35 @@ def update_gassco():
 def load_gassco() -> pd.DataFrame:
     try:
         import streamlit as st
-        @st.cache_data(ttl=1800, show_spinner=False)
+        @st.cache_data(ttl=300, show_spinner=False)
         def _load():
             if os.path.exists(GASSCO_CSV):
-                df = pd.read_csv(GASSCO_CSV, parse_dates=["date"])
-                df["date"] = pd.to_datetime(df["date"], utc=True)
-                return df
-            return pd.DataFrame()
+                df_hist = pd.read_csv(GASSCO_CSV, parse_dates=["date"])
+                df_hist["date"] = pd.to_datetime(df_hist["date"], utc=True)
+            else:
+                df_hist = pd.DataFrame()
+
+            df_live = fetch_realtime_nominations()
+
+            if df_live.empty:
+                return df_hist
+            if df_hist.empty:
+                return df_live
+
+            live_date = df_live["date"].iloc[0]
+            df_hist = df_hist[df_hist["date"].dt.date != live_date.date()]
+            df_combined = pd.concat([df_hist, df_live], ignore_index=True)
+            return df_combined.sort_values(["point", "date"]).reset_index(drop=True)
+
         return _load()
     except ImportError:
         if os.path.exists(GASSCO_CSV):
             df = pd.read_csv(GASSCO_CSV, parse_dates=["date"])
             df["date"] = pd.to_datetime(df["date"], utc=True)
+            df_live = fetch_realtime_nominations()
+            if not df_live.empty:
+                live_date = df_live["date"].iloc[0]
+                df = df[df["date"].dt.date != live_date.date()]
+                df = pd.concat([df, df_live], ignore_index=True)
             return df
         return pd.DataFrame()
