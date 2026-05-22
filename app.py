@@ -35,6 +35,7 @@ from charts.lng import (
     fig_lng_sendout_timeseries,
     fig_lng_seasonality,
     fig_lng_inventory,
+    fig_lng_monthly_bars,
 )
 from data.gassco import load_gassco, fetch_gassco_umm
 from charts.gassco import (
@@ -1213,7 +1214,7 @@ if show_gas:
                     value=st.session_state.get(
                         "lng_daterange_default",
                         ((pd.Timestamp(max_date_lng) -
-                          pd.Timedelta(days=90)).date(),
+                          pd.Timedelta(days=730)).date(),
                          max_date_lng),
                     ),
                     key="lng_daterange",
@@ -1228,7 +1229,15 @@ if show_gas:
 
             st.markdown("---")
 
-            # ── Graf 1 — časová osa ──────────────────────────
+            # ── Graf 1 — měsíční Power BI styl ──────────────
+            if not df_lng_flows.empty:
+                st.plotly_chart(
+                    fig_lng_monthly_bars(df_lng_flows, sel_countries_lng),
+                    use_container_width=True,
+                )
+                st.markdown("---")
+
+            # ── Graf 2 — časová osa ──────────────────────────
             if not df_lng_flows.empty:
                 st.plotly_chart(
                     fig_lng_sendout_timeseries(
