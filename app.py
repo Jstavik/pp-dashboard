@@ -57,6 +57,35 @@ from charts.reserves import (
     fig_dap, calc_dap_stats, simulate_battery_dap, fig_battery_strategy,
 )
 
+def data_status_row(sources: list) -> None:
+    """Zobrazí řádek se stavem datových zdrojů."""
+    parts = []
+    for s in sources:
+        name  = s["name"]
+        dt    = s.get("date")
+        max_h = s.get("freshness_hours", 48)
+
+        if dt is None:
+            icon     = "⚠️"
+            date_str = "N/A"
+        else:
+            if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
+                age_h = (pd.Timestamp.now(tz="UTC") - dt).total_seconds() / 3600
+            else:
+                age_h = (pd.Timestamp.now() - dt).total_seconds() / 3600
+            icon     = "✅" if age_h <= max_h else "⚠️"
+            date_str = dt.strftime("%d.%m.%Y %H:%M") if hasattr(dt, "strftime") else str(dt)
+
+        parts.append(f"{icon} **{name}**: {date_str}")
+
+    st.markdown(
+        '<div style="font-size:11px;color:#666;padding:4px 0 8px 0">' +
+        "  &nbsp;|&nbsp;  ".join(parts) +
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 # ── PAGE CONFIG ─────────────────────────────────────────────────
 st.set_page_config(
     page_title="PP Dashboard",
@@ -122,12 +151,12 @@ with st.sidebar:
     if not show_gas:
         st.caption(
             "**ENTSO-E Transparency Platform**  \n"
-            "Odchylka · DAP ceny · Generace · Zatížení · Odstávky · Rezervy"
+            "DAP ceny · Generace · Odstávky · Rezervy"
         )
         st.caption(
             "**ČEPS API (SOAP)**  \n"
-            "Odchylka real-time · Zatížení · SVR aktivace · Cena odchylky · "
-            "Generace · Přeshraniční toky · Frekvence"
+            "Odchylka · Zatížení · SVR aktivace · "
+            "Cena odchylky · Generace · Přeshraniční toky · Frekvence"
         )
         st.caption(
             "**Delta Green API**  \n"
@@ -136,12 +165,23 @@ with st.sidebar:
     else:
         st.caption(
             "**ENTSO-G Transparency Platform**  \n"
-            "Fyzické toky · Hraniční přechody CZ · Denní data"
+            "Fyzické toky · Hraniční přechody · Kapacity · Denní data"
         )
         st.caption(
             "**GIE AGSI+**  \n"
             "Zásobníky plynu · CZ + EU · Injekce · Těžba · Plnost %"
-            "\n*(připraveno, bude přidáno)*"
+        )
+        st.caption(
+            "**GIE ALSI**  \n"
+            "LNG terminály EU · Send-out · Inventory"
+        )
+        st.caption(
+            "**GASSCO UMM**  \n"
+            "Norské nominace · Výstupní body · UMM odstávky polí"
+        )
+        st.caption(
+            "**ENTSO-E 16.1.D**  \n"
+            "Vodní zásobníky · 20 zemí · Týdenní data"
         )
 
 if auto_refresh:
@@ -176,6 +216,7 @@ df_act  = fetch_activation_prices()
 ws_raw  = fetch_wind_solar_forecast()
 
 last_imbal = float(df_imbal["odchylka_MWh"].iloc[-1]) if not df_imbal.empty else 0.0
+ceps_d = None
 
 if not show_gas:
     # ── BANNER ───────────────────────────────────────────────────────
@@ -261,6 +302,19 @@ if not show_gas:
             parts.append(f"⚡ <strong>{n_chmw} změn MW</strong>")
         st.markdown(f'<div class="alert-box">{"  ·  ".join(parts)}</div>',
                     unsafe_allow_html=True)
+
+    # Status panel elektřina
+    data_status_row([
+        {"name": "ČEPS",
+         "date": ceps_d["now"] if ceps_d and "now" in ceps_d else None,
+         "freshness_hours": 1, "source": "ČEPS SOAP"},
+        {"name": "ENTSO-E",
+         "date": now,
+         "freshness_hours": 48, "source": "ENTSO-E"},
+        {"name": "DAP",
+         "date": now,
+         "freshness_hours": 48, "source": "ENTSO-E"},
+    ])
 
 else:
     st.markdown(
@@ -721,6 +775,29 @@ if show_gas:
 
     with st.spinner("Načítám data ENTSO-G..."):
         df_hist = load_entsog_history()
+
+    # Status panel plyn
+    _last_entsog = df_hist["date"].max() if not df_hist.empty else None
+    _last_gie    = (load_gie_all()["gasDayStart"].max()
+                   if not load_gie_all().empty else None)
+    _last_hydro  = (load_hydro()["date"].max()
+                   if not load_hydro().empty else None)
+    _last_gassco = (load_gassco()["date"].max()
+                   if not load_gassco().empty else None)
+    data_status_row([
+        {"name": "ENTSO-G",
+         "date": _last_entsog,
+         "freshness_hours": 36, "source": "ENTSO-G"},
+        {"name": "GIE zásobníky",
+         "date": _last_gie,
+         "freshness_hours": 72, "source": "GIE AGSI+"},
+        {"name": "GASSCO",
+         "date": _last_gassco,
+         "freshness_hours": 12, "source": "GASSCO"},
+        {"name": "Hydro",
+         "date": _last_hydro,
+         "freshness_hours": 168, "source": "ENTSO-E"},
+    ])
 
     if df_hist.empty:
         st.warning("ENTSO-G data nejsou dostupná.")
