@@ -1,11 +1,12 @@
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 def year_color(year: int) -> str:
     PALETTE = [
-        "#BDBDBD", "#90A4AE", "#42A5F5", "#1565C0",
-        "#FF8F00", "#C62828", "#AD1457", "#6A1B9A",
+        "#BDBDBD","#90A4AE","#42A5F5","#1565C0",
+        "#FF8F00","#C62828","#AD1457","#6A1B9A",
     ]
     current = pd.Timestamp.now().year
     if year == current:
@@ -13,69 +14,154 @@ def year_color(year: int) -> str:
     return PALETTE[(current - year - 1) % len(PALETTE)]
 
 
-def fig_lng_overview(df: pd.DataFrame, height: int = 400) -> go.Figure:
-    """Aktuální stav LNG terminálů — plnost %."""
-    if df.empty:
+def _add_trace(fig, x, y, name, color, chart_type):
+    if chart_type == "Sloupcový":
+        fig.add_trace(go.Bar(
+            x=x, y=y, name=name,
+            marker_color=color, opacity=0.85,
+            hovertemplate=(
+                f"<b>{name}</b><br>"
+                f"%{{x|%d.%m.%Y}}: <b>%{{y:.0f}} GWh/d</b>"
+                f"<extra></extra>"
+            ),
+        ))
+    elif chart_type == "Plocha":
+        r = int(color[1:3], 16)
+        g = int(color[3:5], 16)
+        b = int(color[5:7], 16)
+        fig.add_trace(go.Scatter(
+            x=x, y=y, mode="lines", name=name,
+            line=dict(color=color, width=1.5),
+            fill="tozeroy",
+            fillcolor=f"rgba({r},{g},{b},0.2)",
+            hovertemplate=(
+                f"<b>{name}</b><br>"
+                f"%{{x|%d.%m.%Y}}: <b>%{{y:.0f}} GWh/d</b>"
+                f"<extra></extra>"
+            ),
+        ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=x, y=y, mode="lines", name=name,
+            line=dict(color=color, width=2),
+            hovertemplate=(
+                f"<b>{name}</b><br>"
+                f"%{{x|%d.%m.%Y}}: <b>%{{y:.0f}} GWh/d</b>"
+                f"<extra></extra>"
+            ),
+        ))
+
+
+def fig_lng_sendout_timeseries(
+    df_flows: pd.DataFrame,
+    countries: list,
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    aggregation: str = "Denní",
+    chart_type: str = "Linie",
+) -> go.Figure:
+    """Časová osa LNG send-out z ENTSO-G."""
+    lng = df_flows[
+        (df_flows["adjacentSystemsKey"] == "LNG Terminals") &
+        (df_flows["directionKey"] == "entry")
+    ].copy()
+
+    if lng.empty:
         return go.Figure()
 
-    last_date = df["gasDayStart"].max()
-    last = df[df["gasDayStart"] == last_date].copy()
-    if "full" not in last.columns or last["full"].isna().all():
-        return go.Figure()
-    last = last.dropna(subset=["full"])
-    last = last.sort_values("full", ascending=True)
+    lng["date_prague"] = (lng["date"]
+                          .dt.tz_convert("Europe/Prague")
+                          .dt.normalize())
 
-    colors = [
-        "#C62828" if f < 25 else
-        "#FF8F00" if f < 50 else
-        "#1565C0" if f < 75 else
-        "#2E7D32"
-        for f in last["full"].fillna(0)
+    if countries:
+        lng = lng[lng["countryLabel"].isin(countries)]
+
+    lng = lng[
+        (lng["date_prague"] >= pd.Timestamp(date_from, tz="Europe/Prague")) &
+        (lng["date_prague"] <= pd.Timestamp(date_to,   tz="Europe/Prague"))
     ]
 
-    fig = go.Figure(go.Bar(
-        x=last["full"],
-        y=last["name"],
-        orientation="h",
-        marker_color=colors,
-        text=[f"{f:.1f}%" for f in last["full"].fillna(0)],
-        textposition="outside",
-        hovertemplate=(
-            "<b>%{y}</b><br>"
-            "Plnost: <b>%{x:.1f}%</b><br>"
-            "<extra></extra>"
-        ),
-    ))
+    if lng.empty:
+        return go.Figure()
+
+    if aggregation == "Týdenní":
+        lng["period"] = lng["date_prague"].dt.to_period("W").dt.start_time
+    elif aggregation == "Měsíční":
+        lng["period"] = lng["date_prague"].dt.to_period("M").dt.start_time
+    else:
+        lng["period"] = lng["date_prague"]
+
+    COUNTRY_COLORS = {
+        "Spain": "#C62828", "France": "#1565C0",
+        "Netherlands": "#FF8F00", "Italy": "#2E7D32",
+        "Germany": "#7B1FA2", "Belgium": "#00838F",
+        "Poland": "#AD1457", "Portugal": "#E65100",
+        "United Kingdom": "#546E7A", "Croatia": "#558B2F",
+        "Finland": "#4527A0", "Greece": "#F57F17",
+        "Lithuania": "#6D4C41",
+    }
+
+    fig = go.Figure()
+    if countries:
+        grouped = (lng.groupby(["period", "countryLabel"])["value_GWh"]
+                   .sum().reset_index())
+        for country in sorted(grouped["countryLabel"].unique()):
+            sub = grouped[grouped["countryLabel"] == country]
+            _add_trace(fig, sub["period"], sub["value_GWh"],
+                       country, COUNTRY_COLORS.get(country, "#9E9E9E"), chart_type)
+    else:
+        grouped = lng.groupby("period")["value_GWh"].sum().reset_index()
+        _add_trace(fig, grouped["period"], grouped["value_GWh"],
+                   "EU celkem", "#1565C0", chart_type)
 
     fig.update_layout(
-        title=f"LNG terminály EU — plnost %  |  {last_date.strftime('%d.%m.%Y')}",
-        height=height,
+        title=f"LNG send-out — {aggregation.lower()} [GWh/d]",
+        height=400,
         template="plotly_white",
-        xaxis=dict(title="Plnost (%)", range=[0, 110]),
-        yaxis=dict(title=""),
-        margin=dict(l=200, r=80, t=50, b=40),
+        hovermode="x unified",
+        barmode="stack" if chart_type == "Sloupcový" else None,
+        xaxis=dict(tickformat="%d.%m.%Y", gridcolor="#f0f0f0", title="Datum"),
+        yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),
+        legend=dict(orientation="h", y=-0.2),
+        margin=dict(l=60, r=20, t=50, b=80),
     )
     return fig
 
 
-def fig_lng_sendout(df: pd.DataFrame, height: int = 380) -> go.Figure:
-    """Send-out (regasifikace) — sezonnost po letech."""
-    if df.empty:
-        return go.Figure()
-    if "sendOut" not in df.columns:
+def fig_lng_seasonality(
+    df_flows: pd.DataFrame,
+    countries: list,
+    years: list,
+) -> go.Figure:
+    """Sezonnost LNG send-out — každý rok = křivka."""
+    lng = df_flows[
+        (df_flows["adjacentSystemsKey"] == "LNG Terminals") &
+        (df_flows["directionKey"] == "entry")
+    ].copy()
+
+    if lng.empty:
         return go.Figure()
 
-    df = df.copy()
-    eu_agg = (df.groupby("gasDayStart")["sendOut"]
-               .sum().reset_index())
-    eu_agg["year"]        = eu_agg["gasDayStart"].dt.year
-    eu_agg["day_of_year"] = eu_agg["gasDayStart"].dt.day_of_year
+    lng["date_prague"] = (lng["date"]
+                          .dt.tz_convert("Europe/Prague")
+                          .dt.normalize())
+    if countries:
+        lng = lng[lng["countryLabel"].isin(countries)]
+
+    lng["year"]        = lng["date_prague"].dt.year
+    lng["day_of_year"] = lng["date_prague"].dt.day_of_year
+
+    agg = lng.groupby(["year", "day_of_year"])["value_GWh"].sum().reset_index()
+
+    sel_years = years if years else sorted(agg["year"].unique())[-6:]
 
     fig = go.Figure()
-    for yr in sorted(eu_agg["year"].unique())[-6:]:
-        grp = eu_agg[eu_agg["year"] == yr].sort_values("day_of_year")
+    for yr in sorted(sel_years):
+        grp = agg[agg["year"] == yr].sort_values("day_of_year")
+        if grp.empty:
+            continue
         fig.add_trace(go.Scatter(
-            x=grp["day_of_year"], y=grp["sendOut"],
+            x=grp["day_of_year"], y=grp["value_GWh"],
             mode="lines", name=str(yr),
             line=dict(
                 color=year_color(yr),
@@ -88,8 +174,8 @@ def fig_lng_sendout(df: pd.DataFrame, height: int = 380) -> go.Figure:
         ))
 
     fig.update_layout(
-        title="LNG send-out EU — sezonnost [GWh/d]",
-        height=height,
+        title="LNG send-out — sezonnost [GWh/d]",
+        height=380,
         template="plotly_white",
         hovermode="x unified",
         xaxis=dict(
@@ -102,5 +188,57 @@ def fig_lng_sendout(df: pd.DataFrame, height: int = 380) -> go.Figure:
         yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),
         legend=dict(orientation="h", y=-0.2),
         margin=dict(l=60, r=20, t=50, b=80),
+    )
+    return fig
+
+
+def fig_lng_inventory(df_alsi: pd.DataFrame) -> go.Figure:
+    """Aktuální stav zásobníků LNG terminálů z ALSI — plnost %."""
+    if df_alsi.empty or "full" not in df_alsi.columns:
+        return go.Figure()
+
+    df_alsi = df_alsi.copy()
+    df_alsi["gasDayStart"] = pd.to_datetime(df_alsi["gasDayStart"])
+    last_date = df_alsi["gasDayStart"].max()
+    last = df_alsi[df_alsi["gasDayStart"] == last_date].copy()
+    last = last.dropna(subset=["full"])
+    last = last[last["full"] > 0]
+
+    if last.empty:
+        return go.Figure()
+
+    last = last.sort_values("full", ascending=True)
+    name_col = "name" if "name" in last.columns else last.columns[0]
+
+    colors = [
+        "#C62828" if f < 25 else
+        "#FF8F00" if f < 50 else
+        "#1565C0" if f < 75 else
+        "#2E7D32"
+        for f in last["full"]
+    ]
+
+    fig = go.Figure(go.Bar(
+        x=last["full"],
+        y=last[name_col],
+        orientation="h",
+        marker_color=colors,
+        text=[f"{f:.1f}%" for f in last["full"]],
+        textposition="outside",
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Plnost: <b>%{x:.1f}%</b><br>"
+            "<extra></extra>"
+        ),
+    ))
+
+    fig.update_layout(
+        title=(f"LNG terminály — plnost %  |  "
+               f"{last_date.strftime('%d.%m.%Y')}"),
+        height=max(300, len(last) * 25 + 80),
+        template="plotly_white",
+        xaxis=dict(title="Plnost (%)", range=[0, 115], gridcolor="#f0f0f0"),
+        yaxis=dict(title=""),
+        margin=dict(l=200, r=80, t=50, b=40),
     )
     return fig

@@ -31,7 +31,11 @@ from charts.storage import fig_storage_main, fig_storage_grid
 from charts.hydro import fig_hydro_main, fig_hydro_grid
 from charts.capacity import fig_capacity as fig_cap
 from data.lng import load_lng
-from charts.lng import fig_lng_overview, fig_lng_sendout
+from charts.lng import (
+    fig_lng_sendout_timeseries,
+    fig_lng_seasonality,
+    fig_lng_inventory,
+)
 from data.gassco import load_gassco, fetch_gassco_umm
 from charts.gassco import (
     fig_gassco_kpi, fig_gassco_timeseries,
@@ -1139,55 +1143,135 @@ if show_gas:
                     )
 
         with tab_lng:
-            df_lng = load_lng()
-            if df_lng.empty:
-                st.warning(
-                    "LNG data nejsou dostupná. "
-                    "Spusť GitHub Actions: Update gas history."
+            df_lng_alsi = load_lng()
+
+            df_lng_flows = df_hist[
+                (df_hist["adjacentSystemsKey"] == "LNG Terminals") &
+                (df_hist["directionKey"] == "entry")
+            ].copy() if not df_hist.empty else pd.DataFrame()
+
+            all_countries_lng = sorted(
+                df_lng_flows["countryLabel"].dropna().unique().tolist()
+            ) if not df_lng_flows.empty else []
+
+            max_date_lng = (
+                df_lng_flows["date"]
+                .dt.tz_convert("Europe/Prague").dt.date.max()
+                if not df_lng_flows.empty else pd.Timestamp.now().date()
+            )
+            all_years_lng = sorted(
+                df_lng_flows["date"].dt.tz_convert("Europe/Prague")
+                .dt.year.unique().tolist()
+            ) if not df_lng_flows.empty else []
+
+            # ── Filtry ──────────────────────────────────────
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                sel_countries_lng = st.multiselect(
+                    "🌍 Země (prázdné = EU součet)",
+                    options=all_countries_lng,
+                    default=[],
+                    key="lng_countries",
+                )
+            with col2:
+                sel_agg_lng = st.radio(
+                    "📊 Agregace",
+                    options=["Denní", "Týdenní", "Měsíční"],
+                    horizontal=True,
+                    key="lng_agg",
+                )
+                sel_chart_lng = st.radio(
+                    "📈 Typ grafu",
+                    options=["Linie", "Plocha", "Sloupcový"],
+                    horizontal=True,
+                    key="lng_chart",
+                )
+            with col3:
+                qd_cols_lng = st.columns(5)
+                for i, (lbl, delta) in enumerate(zip(
+                    ["Týden", "Měsíc", "3M", "Rok", "Max"],
+                    [7, 30, 90, 365, None]
+                )):
+                    if qd_cols_lng[i].button(lbl, key=f"lng_qd_{lbl}"):
+                        if delta:
+                            st.session_state["lng_daterange_default"] = (
+                                (pd.Timestamp(max_date_lng) -
+                                 pd.Timedelta(days=delta)).date(),
+                                max_date_lng,
+                            )
+                        else:
+                            st.session_state["lng_daterange_default"] = (
+                                df_lng_flows["date"]
+                                .dt.tz_convert("Europe/Prague")
+                                .dt.date.min(),
+                                max_date_lng,
+                            )
+                        st.rerun()
+
+                date_range_lng = st.date_input(
+                    "📆 Rozsah",
+                    value=st.session_state.get(
+                        "lng_daterange_default",
+                        ((pd.Timestamp(max_date_lng) -
+                          pd.Timedelta(days=90)).date(),
+                         max_date_lng),
+                    ),
+                    key="lng_daterange",
+                )
+
+            if isinstance(date_range_lng, (list, tuple)) and len(date_range_lng) == 2:
+                lng_from = pd.Timestamp(date_range_lng[0])
+                lng_to   = pd.Timestamp(date_range_lng[1])
+            else:
+                lng_from = pd.Timestamp(max_date_lng) - pd.Timedelta(days=90)
+                lng_to   = pd.Timestamp(max_date_lng)
+
+            st.markdown("---")
+
+            # ── Graf 1 — časová osa ──────────────────────────
+            if not df_lng_flows.empty:
+                st.plotly_chart(
+                    fig_lng_sendout_timeseries(
+                        df_lng_flows,
+                        sel_countries_lng,
+                        lng_from, lng_to,
+                        sel_agg_lng,
+                        sel_chart_lng,
+                    ),
+                    use_container_width=True,
+                )
+
+                # ── Graf 2 — sezonnost ───────────────────────
+                st.markdown("---")
+                sel_years_lng = st.multiselect(
+                    "📅 Roky (sezonnost)",
+                    options=all_years_lng,
+                    default=all_years_lng[-5:] if all_years_lng else [],
+                    key="lng_years",
+                )
+                st.plotly_chart(
+                    fig_lng_seasonality(
+                        df_lng_flows,
+                        sel_countries_lng,
+                        sel_years_lng,
+                    ),
+                    use_container_width=True,
                 )
             else:
-                df_lng["gasDayStart"] = pd.to_datetime(df_lng["gasDayStart"])
+                st.warning("ENTSO-G LNG data nejsou dostupná.")
 
-                last_date_lng = df_lng["gasDayStart"].max()
-                last_lng = df_lng[df_lng["gasDayStart"] == last_date_lng]
-                avg_full = last_lng["full"].mean() if "full" in last_lng.columns else 0
-                total_sendout = last_lng["sendOut"].sum() if "sendOut" in last_lng.columns else 0
-                n_terminals = last_lng["name"].nunique() if "name" in last_lng.columns else 0
-
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Terminálů", n_terminals)
-                c2.metric("Průměrná plnost", f"{avg_full:.1f}%")
-                c3.metric("Send-out EU", f"{total_sendout:.0f} GWh/d")
-
+            # ── Graf 3 — ALSI zásoby ─────────────────────────
+            st.markdown("---")
+            st.markdown("#### Zásoby LNG terminálů (GIE ALSI)")
+            if not df_lng_alsi.empty:
                 st.plotly_chart(
-                    fig_lng_overview(df_lng, height=max(400, n_terminals * 22)),
+                    fig_lng_inventory(df_lng_alsi),
                     use_container_width=True,
                 )
-
-                st.markdown("---")
-
-                all_countries_lng = (
-                    sorted(df_lng["country"].dropna().unique())
-                    if "country" in df_lng.columns else []
-                )
-                if all_countries_lng:
-                    sel_country_lng = st.multiselect(
-                        "Filtr podle země",
-                        options=all_countries_lng,
-                        default=[],
-                        key="lng_country",
-                        help="Prázdný = celá EU",
-                    )
-                    df_lng_filtered = (
-                        df_lng[df_lng["country"].isin(sel_country_lng)]
-                        if sel_country_lng else df_lng
-                    )
-                else:
-                    df_lng_filtered = df_lng
-
-                st.plotly_chart(
-                    fig_lng_sendout(df_lng_filtered),
-                    use_container_width=True,
+            else:
+                st.info(
+                    "ALSI data nejsou dostupná. "
+                    "Spusť GitHub Actions."
                 )
 
         with tab_gassco:
