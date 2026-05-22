@@ -69,10 +69,10 @@ def data_status_row(sources: list) -> None:
             icon     = "⚠️"
             date_str = "N/A"
         else:
-            dt_naive = (dt.tz_localize(None)
-                        if hasattr(dt, "tz_localize") and dt.tzinfo is not None
-                        else dt)
-            age_h    = (pd.Timestamp.now() - dt_naive).total_seconds() / 3600
+            dt_naive = pd.Timestamp(dt) if not isinstance(dt, pd.Timestamp) else dt
+            if dt_naive.tzinfo is not None:
+                dt_naive = dt_naive.tz_localize(None)
+            age_h = (pd.Timestamp.now() - dt_naive).total_seconds() / 3600
             icon     = "✅" if age_h <= max_h else "⚠️"
             date_str = dt_naive.strftime("%d.%m.%Y %H:%M") if hasattr(dt_naive, "strftime") else str(dt_naive)
 
@@ -780,14 +780,14 @@ if show_gas:
         df_hist = load_entsog_history()
 
     # Status panel plyn
-    _last_entsog = (pd.Timestamp(df_hist["date"].max()).tz_localize(None)
+    _last_entsog = (pd.Timestamp(df_hist["date"].dt.date.max())
                     if not df_hist.empty and df_hist["date"].notna().any()
                     else None)
-    _last_gie    = (pd.Timestamp(load_gie_all()["gasDayStart"].max()).tz_localize(None)
+    _last_gie    = (pd.Timestamp(load_gie_all()["gasDayStart"].dt.date.max())
                     if not load_gie_all().empty else None)
-    _last_hydro  = (pd.Timestamp(load_hydro()["date"].max()).tz_localize(None)
+    _last_hydro  = (pd.Timestamp(load_hydro()["date"].dt.date.max())
                     if not load_hydro().empty else None)
-    _last_gassco = (pd.Timestamp(load_gassco()["date"].max()).tz_localize(None)
+    _last_gassco = (pd.Timestamp(load_gassco()["date"].dt.date.max())
                     if not load_gassco().empty else None)
     data_status_row([
         {"name": "ENTSO-G",
