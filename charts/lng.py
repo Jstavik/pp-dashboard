@@ -85,9 +85,11 @@ def fig_lng_sendout_timeseries(
         return go.Figure()
 
     if aggregation == "Týdenní":
-        lng["period"] = lng["date_prague"].dt.to_period("W").dt.start_time
+        lng["period"] = pd.to_datetime(
+            lng["date_prague"].dt.to_period("W").astype(str))
     elif aggregation == "Měsíční":
-        lng["period"] = lng["date_prague"].dt.to_period("M").dt.start_time
+        lng["period"] = pd.to_datetime(
+            lng["date_prague"].dt.to_period("M").astype(str))
     else:
         lng["period"] = lng["date_prague"]
 
@@ -240,5 +242,65 @@ def fig_lng_inventory(df_alsi: pd.DataFrame) -> go.Figure:
         xaxis=dict(title="Plnost (%)", range=[0, 115], gridcolor="#f0f0f0"),
         yaxis=dict(title=""),
         margin=dict(l=200, r=80, t=50, b=40),
+    )
+    return fig
+
+
+def fig_lng_monthly_bars(
+    df_flows: pd.DataFrame,
+    countries: list,
+) -> go.Figure:
+    """Měsíční sloupcový graf per rok — Power BI styl."""
+    lng = df_flows[
+        (df_flows["adjacentSystemsKey"] == "LNG Terminals") &
+        (df_flows["directionKey"] == "entry")
+    ].copy()
+
+    if lng.empty:
+        return go.Figure()
+
+    lng["date_prague"] = (lng["date"]
+                          .dt.tz_convert("Europe/Prague")
+                          .dt.normalize())
+    if countries:
+        lng = lng[lng["countryLabel"].isin(countries)]
+
+    lng["year"]  = lng["date_prague"].dt.year
+    lng["month"] = lng["date_prague"].dt.month
+
+    agg = (lng.groupby(["year", "month"])["value_GWh"]
+           .sum().reset_index())
+
+    MONTH_NAMES = ["Led","Úno","Bře","Dub","Kvě","Čvn",
+                   "Čvc","Srp","Zář","Říj","Lis","Pro"]
+
+    fig = go.Figure()
+    for yr in sorted(agg["year"].unique()):
+        grp = agg[agg["year"] == yr].sort_values("month")
+        fig.add_trace(go.Bar(
+            x=grp["month"],
+            y=grp["value_GWh"],
+            name=str(yr),
+            marker_color=year_color(yr),
+            hovertemplate=(
+                f"{yr} %{{x}}. měsíc: "
+                f"<b>%{{y:.0f}} GWh/d</b><extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        title="LNG send-out — měsíční průměr per rok [GWh/d]",
+        height=400,
+        template="plotly_white",
+        barmode="group",
+        hovermode="x unified",
+        xaxis=dict(
+            tickvals=list(range(1, 13)),
+            ticktext=MONTH_NAMES,
+            gridcolor="#f0f0f0",
+        ),
+        yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),
+        legend=dict(orientation="h", y=-0.15),
+        margin=dict(l=60, r=20, t=50, b=80),
     )
     return fig
