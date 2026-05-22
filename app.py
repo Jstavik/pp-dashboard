@@ -904,12 +904,13 @@ if show_gas:
                         "Typ grafu", ["Linie", "Plocha", "Sloupcový"],
                         horizontal=True, key="gas_chart_type")
                 with col_qd:
+                    max_date = df_hist["date"].dt.tz_localize(None).max()
                     date_range = st.date_input(
                         "📆 Rozsah (časová osa)",
-                        value=(
-                            df_hist["date"].dt.tz_localize(None).max()
-                            - pd.Timedelta(days=365),
-                            df_hist["date"].dt.tz_localize(None).max(),
+                        value=st.session_state.get(
+                            "gas_daterange_default",
+                            ((max_date - pd.Timedelta(days=365)).date(),
+                             max_date.date()),
                         ),
                         key="gas_daterange",
                     )
@@ -917,17 +918,16 @@ if show_gas:
                     qd_cols = st.columns(6)
                     labels  = ["Týden","Měsíc","Kvartál","Půlrok","Rok","Maximum"]
                     deltas  = [7, 30, 90, 182, 365, None]
-                    max_date = df_hist["date"].dt.tz_localize(None).max()
                     for i, (lbl, delta) in enumerate(zip(labels, deltas)):
                         if qd_cols[i].button(lbl, key=f"qd_{lbl}"):
                             if delta:
-                                st.session_state["gas_daterange"] = (
+                                st.session_state["gas_daterange_default"] = (
                                     (max_date - pd.Timedelta(days=delta)).date(),
                                     max_date.date(),
                                 )
                             else:
                                 min_date = df_hist["date"].dt.tz_localize(None).min()
-                                st.session_state["gas_daterange"] = (
+                                st.session_state["gas_daterange_default"] = (
                                     min_date.date(), max_date.date(),
                                 )
                             st.rerun()
@@ -947,6 +947,11 @@ if show_gas:
                 st.plotly_chart(
                     fig_flow_timeseries(df_range, [], [], [], [], chart_type),
                     use_container_width=True,
+                )
+                st.caption(
+                    f"ℹ️ Data ENTSO-G — různé hraniční body mohou mít různé zpoždění "
+                    f"publikace (D-1 až D-2). Poslední dostupný den: "
+                    f"{df_hist['date'].dt.tz_convert('Europe/Prague').dt.date.max().strftime('%d.%m.%Y')}"
                 )
 
         with tab_season:
@@ -1216,12 +1221,12 @@ if show_gas:
                     for i, (lbl, delta) in enumerate(zip(labels, deltas)):
                         if qd_cols[i].button(lbl, key=f"gassco_qd_{lbl}"):
                             if delta:
-                                st.session_state["gassco_daterange"] = (
+                                st.session_state["gassco_daterange_default"] = (
                                     (max_date_g - pd.Timedelta(days=delta)).date(),
                                     max_date_g.date(),
                                 )
                             else:
-                                st.session_state["gassco_daterange"] = (
+                                st.session_state["gassco_daterange_default"] = (
                                     df_gassco["date"].min().date(),
                                     max_date_g.date(),
                                 )
@@ -1230,7 +1235,7 @@ if show_gas:
                     date_range_g = st.date_input(
                         "📆 Rozsah",
                         value=st.session_state.get(
-                            "gassco_daterange",
+                            "gassco_daterange_default",
                             ((max_date_g - pd.Timedelta(days=30)).date(),
                              max_date_g.date()),
                         ),
