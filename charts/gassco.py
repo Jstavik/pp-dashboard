@@ -38,7 +38,11 @@ def fig_gassco_kpi(df: pd.DataFrame) -> go.Figure:
     kpi["vs7d"]    = kpi["Dnes"] - kpi["Avg7d"]
     kpi["DoD_pct"] = kpi["DoD"]  / kpi["Včera"].replace(0, float("nan")) * 100
     kpi["v7d_pct"] = kpi["vs7d"] / kpi["Avg7d"].replace(0, float("nan")) * 100
-    kpi = kpi.sort_values("Dnes", ascending=True)
+    # Odděl sumární řádek
+    summary = kpi[kpi.index == "Sum Exit Nominations NCS"]
+    detail  = kpi[kpi.index != "Sum Exit Nominations NCS"]
+    detail  = detail.sort_values("Dnes", ascending=True)
+    kpi     = pd.concat([summary, detail])
 
     fig = make_subplots(
         rows=1, cols=3,
