@@ -335,14 +335,15 @@ if not show_gas:
         df_ceps_imbal, now_ceps = fetch_ceps_imbalance()
         df_ceps_price = fetch_ceps_imbalance_price()
         ceps_d = fetch_ceps_all()
-        _ceps_now = ceps_d.get("now") if isinstance(ceps_d, dict) else None
-        _ceps_now_naive = (_ceps_now.tz_localize(None)
-                           if _ceps_now is not None and _ceps_now.tzinfo is not None
-                           else _ceps_now)
+        _last_ceps = (
+            pd.Timestamp(ceps_d["now"].tz_convert("Europe/Prague").date())
+            if isinstance(ceps_d, dict) and ceps_d.get("now") is not None
+            else None
+        )
         _now_naive = now.tz_localize(None) if now.tzinfo is not None else now
         data_status_row([
             {"name": "ČEPS",
-             "date": _ceps_now_naive,
+             "date": _last_ceps,
              "freshness_hours": 1, "source": "ČEPS SOAP"},
             {"name": "ENTSO-E",
              "date": _now_naive,
@@ -780,15 +781,25 @@ if show_gas:
         df_hist = load_entsog_history()
 
     # Status panel plyn
-    _last_entsog = (pd.Timestamp(df_hist["date"].dt.date.max())
-                    if not df_hist.empty and df_hist["date"].notna().any()
-                    else None)
-    _last_gie    = (pd.Timestamp(load_gie_all()["gasDayStart"].dt.date.max())
-                    if not load_gie_all().empty else None)
-    _last_hydro  = (pd.Timestamp(load_hydro()["date"].dt.date.max())
-                    if not load_hydro().empty else None)
-    _last_gassco = (pd.Timestamp(load_gassco()["date"].dt.date.max())
-                    if not load_gassco().empty else None)
+    def _safe_max_date(df, col):
+        """Bezpečně vrátí max datum v Prague timezone."""
+        try:
+            if df.empty or col not in df.columns:
+                return None
+            s = pd.to_datetime(df[col], utc=True)
+            return pd.Timestamp(
+                s.dt.tz_convert("Europe/Prague").dt.date.max()
+            )
+        except Exception:
+            return None
+
+    _last_entsog   = _safe_max_date(df_hist, "date")
+    _df_gie_tmp    = load_gie_all()
+    _last_gie      = _safe_max_date(_df_gie_tmp, "gasDayStart")
+    _df_hydro_tmp  = load_hydro()
+    _last_hydro    = _safe_max_date(_df_hydro_tmp, "date")
+    _df_gassco_tmp = load_gassco()
+    _last_gassco   = _safe_max_date(_df_gassco_tmp, "date")
     data_status_row([
         {"name": "ENTSO-G",
          "date": _last_entsog,
