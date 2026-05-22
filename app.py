@@ -74,7 +74,7 @@ def data_status_row(sources: list) -> None:
                 dt_naive = dt_naive.tz_localize(None)
             age_h = (pd.Timestamp.now() - dt_naive).total_seconds() / 3600
             icon     = "✅" if age_h <= max_h else "⚠️"
-            date_str = dt_naive.strftime("%d.%m.%Y %H:%M") if hasattr(dt_naive, "strftime") else str(dt_naive)
+            date_str = dt_naive.strftime("%d.%m.%Y") if hasattr(dt_naive, "strftime") else str(dt_naive)
 
         parts.append(f"{icon} **{name}**: {date_str}")
 
@@ -795,7 +795,14 @@ if show_gas:
 
     _last_entsog   = _safe_max_date(df_hist, "date")
     _df_gie_tmp    = load_gie_all()
-    _last_gie      = _safe_max_date(_df_gie_tmp, "gasDayStart")
+    _last_gie      = (
+        pd.Timestamp(_df_gie_tmp["gasDayStart"]
+                     .pipe(lambda s: pd.to_datetime(s, utc=True)
+                           if s.dt.tz is None else s)
+                     .dt.tz_convert("Europe/Prague")
+                     .dt.date.max())
+        if not _df_gie_tmp.empty else None
+    )
     _df_hydro_tmp  = load_hydro()
     _last_hydro    = _safe_max_date(_df_hydro_tmp, "date")
     _df_gassco_tmp = load_gassco()
