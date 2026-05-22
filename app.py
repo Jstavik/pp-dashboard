@@ -69,12 +69,12 @@ def data_status_row(sources: list) -> None:
             icon     = "⚠️"
             date_str = "N/A"
         else:
-            if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
-                age_h = (pd.Timestamp.now(tz="UTC") - dt).total_seconds() / 3600
-            else:
-                age_h = (pd.Timestamp.now() - dt).total_seconds() / 3600
+            dt_naive = (dt.tz_localize(None)
+                        if hasattr(dt, "tz_localize") and dt.tzinfo is not None
+                        else dt)
+            age_h    = (pd.Timestamp.now() - dt_naive).total_seconds() / 3600
             icon     = "✅" if age_h <= max_h else "⚠️"
-            date_str = dt.strftime("%d.%m.%Y %H:%M") if hasattr(dt, "strftime") else str(dt)
+            date_str = dt_naive.strftime("%d.%m.%Y %H:%M") if hasattr(dt_naive, "strftime") else str(dt_naive)
 
         parts.append(f"{icon} **{name}**: {date_str}")
 
@@ -303,19 +303,6 @@ if not show_gas:
         st.markdown(f'<div class="alert-box">{"  ·  ".join(parts)}</div>',
                     unsafe_allow_html=True)
 
-    # Status panel elektřina
-    data_status_row([
-        {"name": "ČEPS",
-         "date": ceps_d["now"] if ceps_d and "now" in ceps_d else None,
-         "freshness_hours": 1, "source": "ČEPS SOAP"},
-        {"name": "ENTSO-E",
-         "date": now,
-         "freshness_hours": 48, "source": "ENTSO-E"},
-        {"name": "DAP",
-         "date": now,
-         "freshness_hours": 48, "source": "ENTSO-E"},
-    ])
-
 else:
     st.markdown(
         '<div class="banner banner-ok">'
@@ -348,6 +335,22 @@ if not show_gas:
         df_ceps_imbal, now_ceps = fetch_ceps_imbalance()
         df_ceps_price = fetch_ceps_imbalance_price()
         ceps_d = fetch_ceps_all()
+        _ceps_now = ceps_d.get("now") if isinstance(ceps_d, dict) else None
+        _ceps_now_naive = (_ceps_now.tz_localize(None)
+                           if _ceps_now is not None and _ceps_now.tzinfo is not None
+                           else _ceps_now)
+        _now_naive = now.tz_localize(None) if now.tzinfo is not None else now
+        data_status_row([
+            {"name": "ČEPS",
+             "date": _ceps_now_naive,
+             "freshness_hours": 1, "source": "ČEPS SOAP"},
+            {"name": "ENTSO-E",
+             "date": _now_naive,
+             "freshness_hours": 48, "source": "ENTSO-E"},
+            {"name": "DAP",
+             "date": _now_naive,
+             "freshness_hours": 48, "source": "ENTSO-E"},
+        ])
         _load_col = ("Load including pumping [MW]"
                      if "Load including pumping [MW]" in ceps_d["load"].columns
                      else "Load [MW]"
@@ -777,26 +780,28 @@ if show_gas:
         df_hist = load_entsog_history()
 
     # Status panel plyn
-    _last_entsog = df_hist["date"].max() if not df_hist.empty else None
-    _last_gie    = (load_gie_all()["gasDayStart"].max()
-                   if not load_gie_all().empty else None)
-    _last_hydro  = (load_hydro()["date"].max()
-                   if not load_hydro().empty else None)
-    _last_gassco = (load_gassco()["date"].max()
-                   if not load_gassco().empty else None)
+    _last_entsog = (pd.Timestamp(df_hist["date"].max()).tz_localize(None)
+                    if not df_hist.empty and df_hist["date"].notna().any()
+                    else None)
+    _last_gie    = (pd.Timestamp(load_gie_all()["gasDayStart"].max()).tz_localize(None)
+                    if not load_gie_all().empty else None)
+    _last_hydro  = (pd.Timestamp(load_hydro()["date"].max()).tz_localize(None)
+                    if not load_hydro().empty else None)
+    _last_gassco = (pd.Timestamp(load_gassco()["date"].max()).tz_localize(None)
+                    if not load_gassco().empty else None)
     data_status_row([
         {"name": "ENTSO-G",
          "date": _last_entsog,
-         "freshness_hours": 36, "source": "ENTSO-G"},
+         "freshness_hours": 48, "source": "ENTSO-G"},
         {"name": "GIE zásobníky",
          "date": _last_gie,
          "freshness_hours": 72, "source": "GIE AGSI+"},
         {"name": "GASSCO",
          "date": _last_gassco,
-         "freshness_hours": 12, "source": "GASSCO"},
+         "freshness_hours": 24, "source": "GASSCO"},
         {"name": "Hydro",
          "date": _last_hydro,
-         "freshness_hours": 168, "source": "ENTSO-E"},
+         "freshness_hours": 200, "source": "ENTSO-E"},
     ])
 
     if df_hist.empty:
