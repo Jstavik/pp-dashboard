@@ -281,10 +281,15 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
             return codes.pop()
         return None
 
+    def _day_mask(series, day):
+        """Porovnej UTC timestamp series s date objektem v Prague tz."""
+        prague = series.dt.tz_convert("Europe/Prague").dt.date
+        return prague == day
+
     def _bilateral(day):
         """Returns {(a,b): net} a<b alphabetically.
         Positive = a imports from b."""
-        sub = df[(df["date"] == day)
+        sub = df[_day_mask(df["date"], day)
                  & ~df["adjacentSystemsKey"].isin(DOMESTIC)].copy()
         sub["nb"] = sub["adjacentSystemsKey"].apply(_neighbor)
         sub = sub[sub["nb"].notna() & (sub["countryLabel"] != sub["nb"])]
@@ -299,7 +304,7 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
         return pairs
 
     def _north_sea(day):
-        sub = df[(df["date"] == day)
+        sub = df[_day_mask(df["date"], day)
                  & (df["countryLabel"] == "Germany")
                  & (df["directionKey"] == "entry")
                  & df["pointsNames"].str.contains(
@@ -369,20 +374,20 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
         df.get("value_GWh", 0), errors="coerce").fillna(0)
 
     # Smart date: latest with CZ data (ENTSOG publishes with delay)
-    cz_dates = sorted(
-        df[df["countryLabel"] == "Czechia"]["date"].unique())
+    cz_prague = (df[df["countryLabel"] == "Czechia"]["date"]
+                 .dt.tz_convert("Europe/Prague").dt.date)
+    cz_dates = sorted(cz_prague.unique())
     if cz_dates:
         last_date = cz_dates[-1]
-        prev_date = cz_dates[-2] if len(cz_dates) > 1 else pd.NaT
+        prev_date = cz_dates[-2] if len(cz_dates) > 1 else None
     else:
-        last_date = df["date"].max()
-        prev_date = pd.NaT
+        last_date = df["date"].dt.tz_convert("Europe/Prague").dt.date.max()
+        prev_date = None
 
     fl = _bilateral(last_date)
-    fp = _bilateral(prev_date) if pd.notna(prev_date) else {}
+    fp = _bilateral(prev_date) if prev_date is not None else {}
     ns_last = _north_sea(last_date)
-    ns_prev = (
-        _north_sea(prev_date) if pd.notna(prev_date) else 0.0)
+    ns_prev = _north_sea(prev_date) if prev_date is not None else 0.0
     date_label = (
         last_date.strftime("%d.%m.%Y")
         if pd.notna(last_date) else "N/A")
