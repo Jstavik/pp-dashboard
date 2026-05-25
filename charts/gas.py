@@ -392,6 +392,12 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
         last_date.strftime("%d.%m.%Y")
         if pd.notna(last_date) else "N/A")
 
+    # DEBUG — dočasné
+    import streamlit as st
+    st.write("last_date:", last_date)
+    st.write("_bilateral výsledek:", _bilateral(last_date))
+    st.write("_north_sea výsledek:", _north_sea(last_date))
+
     # ── render crossings ──────────────────────────────────────────
     for name, lat, lon, src, key, olat, olon in CROSSINGS:
         if src == "bi":
