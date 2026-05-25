@@ -261,15 +261,22 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
     DOMESTIC = {"Storage", "Distribution", "Final Consumers",
                 "Production", "LNG Terminals", "Storage|Transmission"}
 
-    CODE2C = {
-        "AT":"Austria","BE":"Belgium","BG":"Bulgaria","CH":"Switzerland",
-        "CZ":"Czechia","DE":"Germany","DK":"Denmark","EE":"Estonia",
-        "ES":"Spain","FI":"Finland","FR":"France","GR":"Greece",
-        "HR":"Croatia","HU":"Hungary","IE":"Ireland","IT":"Italy",
-        "LT":"Lithuania","LU":"Luxemburg","LV":"Latvia","NL":"Netherlands",
-        "NO":"Norway","PL":"Poland","PT":"Portugal","RO":"Romania",
-        "SI":"Slovenia","SK":"Slovakia","UA":"Ukraine","UK":"United Kingdom",
+    COUNTRY_CODES = {
+        "AT": "Austria",      "BE": "Belgium",       "BG": "Bulgaria",
+        "HR": "Croatia",      "CZ": "Czechia",       "DK": "Denmark",
+        "EE": "Estonia",      "FI": "Finland",       "FR": "France",
+        "DE": "Germany",      "GR": "Greece",        "HU": "Hungary",
+        "IE": "Ireland",      "IT": "Italy",         "LV": "Latvia",
+        "LT": "Lithuania",    "LU": "Luxemburg",     "NL": "Netherlands",
+        "PL": "Poland",       "PT": "Portugal",      "RO": "Romania",
+        "SK": "Slovakia",     "SI": "Slovenia",      "ES": "Spain",
+        "CH": "Switzerland",  "GB": "United Kingdom","NO": "Norway",
+        "RS": "Serbia",       "UA": "Ukraine",       "TR": "Turkey",
+        "BA": "Bosnia",       "MK": "North Macedonia","ME": "Montenegro",
+        "AL": "Albania",
     }
+
+    CODE2C = COUNTRY_CODES
     C2CODE = {v: k for k, v in CODE2C.items()}
 
     # ── helpers ───────────────────────────────────────────────────
@@ -278,7 +285,8 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
             return None
         codes = set(re.findall(r"Transmission([A-Z]{2})", adj))
         if len(codes) == 1:
-            return codes.pop()
+            code = codes.pop()
+            return COUNTRY_CODES.get(code, code)
         return None
 
     def _day_mask(series, day):
@@ -410,20 +418,6 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
     date_label = (
         last_date.strftime("%d.%m.%Y")
         if pd.notna(last_date) else "N/A")
-
-    # DEBUG — dočasné
-    import streamlit as st
-    from datetime import timedelta
-    bil = _bilateral(last_date)
-    st.write(f"last_date: {last_date}")
-    st.write(f"_bilateral počet párů: {len(bil)}")
-    if bil:
-        st.write("První 3 páry:", {str(k): v for k, v in list(bil.items())[:3]})
-    else:
-        for days_back in range(1, 5):
-            test_day = last_date - timedelta(days=days_back)
-            test_bil = _bilateral(test_day)
-            st.write(f"  day -{days_back} ({test_day}): {len(test_bil)} párů")
 
     # ── render crossings ──────────────────────────────────────────
     for name, lat, lon, src, key, olat, olon in CROSSINGS:
