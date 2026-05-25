@@ -685,7 +685,7 @@ def fig_gas_map(
 
             net     = inj - with_
             net_str = f"+{net:.0f}" if net >= 0 else f"{net:.0f}"
-            color   = _storage_color(full)
+            color = "#C62828"  # vždy červená, čitelná na mapě
             bar     = _make_bar(full)
 
             fig.add_trace(go.Scattermapbox(
