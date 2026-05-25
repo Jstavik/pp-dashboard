@@ -4,6 +4,7 @@ import pandas as pd
 ALSI_KEY = "628043ec28b2f2395a95f5adad7ec983"
 LNG_CSV  = "data/history/lng_storage.csv"
 
+# Přidej nové země sem pokud ALSI přidá nové
 COUNTRIES_ALSI = [
     "BE","FR","NL","ES","IT","DE",
     "PT","GR","HR","FI","LT","PL"

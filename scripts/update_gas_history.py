@@ -10,6 +10,7 @@ from data.entsog_capacity import update_capacity
 from data.lng import update_lng
 from data.gassco import update_gassco
 
+# ENTSO-G aggregateddata API sahá do 2020, dříve není dostupné
 HISTORY_START  = date(2020, 1, 1)
 PARQUET_PATH   = "data/history/entsog_all_flows.parquet"
 GIE_CSV_PATH   = "data/history/gie_cz_storage.csv"

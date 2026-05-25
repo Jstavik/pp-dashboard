@@ -3,6 +3,7 @@ import pandas as pd
 
 CAPACITY_PARQUET = "data/history/entsog_capacity.parquet"
 
+# Přidej nové hraniční body sem — pointLabel musí přesně odpovídat ENTSO-G transparency platformě
 GAS_KEY_POINTS = {
     "VIP Brandov":       ["VIP Brandov", "VIP Brandov-GASPOOL"],
     "Brandov STEGAL":    ["Brandov STEGAL (CZ) / Stegal (DE)"],
@@ -57,6 +58,7 @@ GAS_KEY_POINTS = {
     "Imatra":            ["Imatra"],
 }
 
+# Přidej nové TSO pokud se objeví na nových hraničních bodech
 TSO_COUNTRY = {
     "NET4GAS":              "CZ",
     "GASCADE Gastransport": "DE",

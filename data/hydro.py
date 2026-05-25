@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+from config import year_color
 
 HYDRO_CSV = "data/history/hydro_reservoirs.csv"
 
@@ -14,19 +15,6 @@ HYDRO_COUNTRY_NAMES = {
     "ME": "Černá Hora", "MK": "Severní Makedonie",
     "AL": "Albánie",    "LT": "Litva",               "LV": "Lotyšsko",
 }
-
-
-def year_color(year: int) -> str:
-    """Dynamická barva roku — aktuální rok vždy zelený."""
-    PALETTE = [
-        "#BDBDBD", "#90A4AE", "#42A5F5", "#1565C0",
-        "#FF8F00", "#C62828", "#AD1457", "#6A1B9A",
-    ]
-    current = pd.Timestamp.now().year
-    if year == current:
-        return "#2E7D32"
-    idx = (current - year - 1) % len(PALETTE)
-    return PALETTE[idx]
 
 
 def year_width(year: int) -> float:
