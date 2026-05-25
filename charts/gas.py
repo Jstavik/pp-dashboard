@@ -291,6 +291,17 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
         Positive = a imports from b."""
         sub = df[_day_mask(df["date"], day)
                  & ~df["adjacentSystemsKey"].isin(DOMESTIC)].copy()
+
+        # DEBUG
+        import streamlit as st
+        st.write(f"_bilateral: day={day}, sub řádků={len(sub)}")
+        if not sub.empty:
+            st.write("adjacentSystemsKey sample:",
+                     sub["adjacentSystemsKey"].value_counts().head(5).to_dict())
+            sub["nb"] = sub["adjacentSystemsKey"].apply(_neighbor)
+            st.write("nb sample:", sub["nb"].value_counts().head(5).to_dict())
+            st.write("nb notna:", sub["nb"].notna().sum())
+
         sub["nb"] = sub["adjacentSystemsKey"].apply(_neighbor)
         sub = sub[sub["nb"].notna() & (sub["countryLabel"] != sub["nb"])]
         pairs = {}
