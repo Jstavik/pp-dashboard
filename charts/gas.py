@@ -428,6 +428,14 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
         last_date.strftime("%d.%m.%Y")
         if pd.notna(last_date) else "N/A")
 
+    # DEBUG — crossings
+    import streamlit as st
+    st.write("=== CROSSINGS DEBUG ===")
+    st.write("last_date:", last_date)
+    bil = _bilateral(last_date)
+    st.write("bilateral párů:", len(bil))
+    st.write("bilateral klíče:", [str(k) for k in list(bil.keys())[:5]])
+
     # ── render crossings ──────────────────────────────────────────
     for name, lat, lon, src, key, olat, olon in CROSSINGS:
         if src == "bi":
@@ -509,6 +517,24 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
                 family="Arial Black"),
             showlegend=False,
             hoverinfo="skip"))
+
+    # DEBUG — storage
+    st.write("=== STORAGE DEBUG ===")
+    st.write("df_gie is None:", df_gie is None)
+    if df_gie is not None:
+        st.write("df_gie řádků:", len(df_gie))
+        st.write("country_code unique:", df_gie["country_code"].unique().tolist())
+        df_gie2_test = df_gie.copy()
+        df_gie2_test["gasDayStart"] = pd.to_datetime(
+            df_gie2_test["gasDayStart"], utc=True, errors="coerce")
+        last_test = (df_gie2_test
+                     .dropna(subset=["gasDayStart"])
+                     .sort_values("gasDayStart")
+                     .groupby("country_code")
+                     .last()
+                     .reset_index())
+        st.write("last_gie země:", last_test["country_code"].tolist())
+        st.write("AT full:", last_test[last_test["country_code"] == "AT"]["full"].values)
 
     # ── storage circles ───────────────────────────────────────────
     if df_gie is not None and not df_gie.empty:
