@@ -16,7 +16,7 @@ PARQUET_PATH   = "data/history/entsog_all_flows.parquet"
 GIE_CSV_PATH   = "data/history/gie_cz_storage.csv"
 GIE_ALL_CSV    = "data/history/gie_all_storage.csv"
 GIE_KEY        = "628043ec28b2f2395a95f5adad7ec983"
-COUNTRIES_GIE  = ["CZ", "DE", "NL", "FR", "SK", "AT"]
+COUNTRIES_GIE  = ["AT", "BE", "CZ", "DE", "EU", "FR", "HR", "HU", "IT", "LV", "NL", "PL", "PT", "RO", "RS", "SK", "ES", "UA"]
 EU_CODE        = "EU"
 
 HYDRO_CSV      = "data/history/hydro_reservoirs.csv"
