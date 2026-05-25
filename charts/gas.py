@@ -688,24 +688,11 @@ def fig_gas_map(
             color   = _storage_color(full)
             bar     = _make_bar(full)
 
-            # Větší bílý podklad
-            fig.add_trace(go.Scattermapbox(
-                lat=[lat], lon=[lon], mode="markers",
-                marker=dict(size=80, color="white", opacity=0.92),
-                hoverinfo="skip", showlegend=False,
-            ))
-            # Šedý rámeček
-            fig.add_trace(go.Scattermapbox(
-                lat=[lat], lon=[lon], mode="markers",
-                marker=dict(size=82, color="#BDBDBD", opacity=0.4),
-                hoverinfo="skip", showlegend=False,
-            ))
-            # Text — tučný, větší
             fig.add_trace(go.Scattermapbox(
                 lat=[lat], lon=[lon], mode="text",
-                text=[f"{cc}  {full:.0f}%\n{bar}\n{twh:.1f} TWh  {net_str}"],
+                text=[f"{cc} {full:.0f}%\n{bar}\n{twh:.1f}TWh {net_str}"],
                 textfont=dict(
-                    size=11,
+                    size=12,
                     color=color,
                     family="Arial Black",
                 ),
