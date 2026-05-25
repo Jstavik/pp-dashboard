@@ -689,7 +689,8 @@ def fig_gas_map(
             bar     = _make_bar(full)
 
             fig.add_trace(go.Scattermapbox(
-                lat=[lat], lon=[lon], mode="text",
+                lat=[lat], lon=[lon], mode="markers+text",
+                marker=dict(size=1, opacity=0),
                 text=[f"{cc} {full:.0f}%\n{bar}\n{twh:.1f}TWh {net_str}"],
                 textfont=dict(
                     size=12,
