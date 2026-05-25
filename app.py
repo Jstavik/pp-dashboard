@@ -5,6 +5,7 @@
 
 import pandas as pd
 import streamlit as st
+from datetime import date, timedelta
 
 from config import (
     CSS_STYLES, THRESHOLD,
@@ -850,11 +851,23 @@ if show_gas:
             if df_hist.empty:
                 st.warning("Data nejsou dostupná.")
             else:
-                df_gie_map = load_gie_all()
+                show_storage_map = st.checkbox(
+                    "Zobrazit zásobníky", value=True, key="map_storage"
+                )
                 st.plotly_chart(
-                    fig_gas_map(df_hist, df_gie_map),
+                    fig_gas_map(
+                        df_hist,
+                        df_gie=load_gie_all(),
+                        df_gassco=load_gassco(),
+                        show_storage=show_storage_map,
+                    ),
                     use_container_width=True,
-                    config={"displayModeBar": False},
+                    config={"displayModeBar": True, "scrollZoom": True},
+                )
+                st.caption(
+                    f"Data ENTSO-G: D-2 ({date.today() - timedelta(days=2)}) | "
+                    f"GIE zásobníky: D-3 | "
+                    f"Norské nominace: live (realTimeAtom.xml)"
                 )
 
         with tab_bar:
