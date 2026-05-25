@@ -502,55 +502,84 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
             hoverinfo="skip"))
 
     # ── storage circles ───────────────────────────────────────────
+    # DEBUG — dočasné
+    import streamlit as st
     if df_gie is not None and not df_gie.empty:
-        df_gie = df_gie.copy()
-        df_gie["gasDayStart"] = pd.to_datetime(df_gie["gasDayStart"], utc=True)
-        last_gie = (df_gie.sort_values("gasDayStart")
-                         .groupby("country_code").last().reset_index())
+        st.write("GIE sloupce:", df_gie.columns.tolist())
+        st.write("GIE první řádek:", df_gie.iloc[0].to_dict())
+
+    if df_gie is not None and not df_gie.empty:
+        df_gie2 = df_gie.copy()
+        df_gie2["gasDayStart"] = pd.to_datetime(
+            df_gie2["gasDayStart"], utc=True, errors="coerce")
+        last_gie = (df_gie2
+                    .sort_values("gasDayStart")
+                    .groupby("country_code")
+                    .last()
+                    .reset_index())
 
         for _, row in last_gie.iterrows():
             cc = row["country_code"]
-            if cc not in STORAGE_NODES:
+            if cc not in STORAGE_NODES or cc == "EU":
                 continue
             lat, lon, flag = STORAGE_NODES[cc]
-            full = float(row.get("full", 0) or 0)
-            gas  = float(row.get("gasInStorage", 0) or 0)
-            date_str = row["gasDayStart"].strftime("%d.%m.%Y")
 
-            fig.add_trace(go.Scattermapbox(
-                lat=[lat], lon=[lon],
-                mode="markers",
-                marker=dict(
-                    size=28, color="#E0E0E0", opacity=0.9,
-                    sizemode="diameter",
-                ),
-                hoverinfo="skip",
-                showlegend=False,
-            ))
+            full = 0.0
+            for col in ["full_pct", "full", "gasFull"]:
+                if col in row.index and pd.notna(row[col]):
+                    try:
+                        full = float(row[col])
+                        break
+                    except Exception:
+                        pass
 
+            gas = 0.0
+            for col in ["gasInStorage", "gas_in_storage", "gasSto", "full_gwh"]:
+                if col in row.index and pd.notna(row[col]):
+                    try:
+                        gas = float(row[col])
+                        break
+                    except Exception:
+                        pass
+
+            date_str = ""
+            for col in ["gasDayStart", "date", "gasDay"]:
+                if col in row.index and pd.notna(row[col]):
+                    try:
+                        date_str = pd.Timestamp(row[col]).strftime("%d.%m.%Y")
+                        break
+                    except Exception:
+                        pass
+
+            SIZE = 30
             color = (
                 "#C62828" if full < 25 else
                 "#FF8F00" if full < 50 else
                 "#1565C0" if full < 75 else
                 "#2E7D32"
             )
+            fill_size = max(6, SIZE * full / 100)
+
+            fig.add_trace(go.Scattermapbox(
+                lat=[lat], lon=[lon],
+                mode="markers",
+                marker=dict(size=SIZE, color="#E0E0E0", opacity=0.9),
+                hoverinfo="skip",
+                showlegend=False,
+            ))
             fig.add_trace(go.Scattermapbox(
                 lat=[lat], lon=[lon],
                 mode="markers+text",
-                marker=dict(
-                    size=28, color=color,
-                    opacity=max(0.3, full / 100),
-                    sizemode="diameter",
-                ),
+                marker=dict(size=fill_size, color=color, opacity=0.9),
                 text=[f"{full:.0f}%"],
-                textfont=dict(size=9, color="white", family="Arial Black"),
+                textfont=dict(size=8, color="white"),
                 textposition="middle center",
                 hovertemplate=(
                     f"<b>{flag} {cc} Zásobníky</b><br>"
                     f"Plnost: <b>{full:.1f}%</b><br>"
                     f"Objem: {gas:.1f} TWh<br>"
                     f"Datum: {date_str}"
-                    "<extra></extra>"
+                    f"<extra></extra>"
                 ),
                 showlegend=False,
             ))
