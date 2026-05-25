@@ -2,19 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from data.gie import VARIABLES, FIXED_COUNTRIES
-
-
-def year_color(year: int) -> str:
-    """Dynamická barva roku — aktuální rok vždy zelený."""
-    PALETTE = [
-        "#BDBDBD", "#90A4AE", "#42A5F5", "#1565C0",
-        "#FF8F00", "#C62828", "#AD1457", "#6A1B9A",
-    ]
-    current = pd.Timestamp.now().year
-    if year == current:
-        return "#2E7D32"
-    idx = (current - year - 1) % len(PALETTE)
-    return PALETTE[idx]
+from config import year_color
 
 
 def year_width(year: int) -> float:

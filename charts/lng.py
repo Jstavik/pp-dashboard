@@ -1,17 +1,7 @@
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-
-def year_color(year: int) -> str:
-    PALETTE = [
-        "#BDBDBD","#90A4AE","#42A5F5","#1565C0",
-        "#FF8F00","#C62828","#AD1457","#6A1B9A",
-    ]
-    current = pd.Timestamp.now().year
-    if year == current:
-        return "#2E7D32"
-    return PALETTE[(current - year - 1) % len(PALETTE)]
+from config import year_color
 
 
 def _add_trace(fig, x, y, name, color, chart_type):
@@ -196,20 +186,20 @@ def fig_lng_seasonality(
 
 def fig_lng_inventory(df_alsi: pd.DataFrame) -> go.Figure:
     """Aktuální stav zásobníků LNG terminálů z ALSI — plnost %."""
-    if df_alsi.empty or "full" not in df_alsi.columns:
+    if df_alsi.empty or "full_pct" not in df_alsi.columns:
         return go.Figure()
 
     df_alsi = df_alsi.copy()
     df_alsi["gasDayStart"] = pd.to_datetime(df_alsi["gasDayStart"])
     last_date = df_alsi["gasDayStart"].max()
     last = df_alsi[df_alsi["gasDayStart"] == last_date].copy()
-    last = last.dropna(subset=["full"])
-    last = last[last["full"] > 0]
+    last = last.dropna(subset=["full_pct"])
+    last = last[last["full_pct"] > 0]
 
     if last.empty:
         return go.Figure()
 
-    last = last.sort_values("full", ascending=True)
+    last = last.sort_values("full_pct", ascending=True)
     name_col = "name" if "name" in last.columns else last.columns[0]
 
     colors = [
@@ -217,15 +207,15 @@ def fig_lng_inventory(df_alsi: pd.DataFrame) -> go.Figure:
         "#FF8F00" if f < 50 else
         "#1565C0" if f < 75 else
         "#2E7D32"
-        for f in last["full"]
+        for f in last["full_pct"]
     ]
 
     fig = go.Figure(go.Bar(
-        x=last["full"],
+        x=last["full_pct"],
         y=last[name_col],
         orientation="h",
         marker_color=colors,
-        text=[f"{f:.1f}%" for f in last["full"]],
+        text=[f"{f:.1f}%" for f in last["full_pct"]],
         textposition="outside",
         hovertemplate=(
             "<b>%{y}</b><br>"

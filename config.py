@@ -149,6 +149,21 @@ h1,h2,h3,h4 { color: #1A237E; }
 </style>
 """
 
+# ── SEZONNOST — BARVY ROKŮ ───────────────────────────────────────
+YEAR_PALETTE = [
+    "#BDBDBD","#90A4AE","#42A5F5","#1565C0",
+    "#FF8F00","#C62828","#AD1457","#6A1B9A",
+]
+
+
+def year_color(year: int) -> str:
+    """Barva pro daný rok — aktuální rok = zelená, starší = YEAR_PALETTE."""
+    current = pd.Timestamp.now().year
+    if year == current:
+        return "#2E7D32"
+    return YEAR_PALETTE[(current - year - 1) % len(YEAR_PALETTE)]
+
+
 # ── SDÍLENÉ CHART HELPERY ────────────────────────────────────────
 
 def _base_layout(fig, height=300, margin_l=55):

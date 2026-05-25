@@ -2,17 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import timedelta
-
-
-def year_color(year: int) -> str:
-    PALETTE = [
-        "#BDBDBD", "#90A4AE", "#42A5F5", "#1565C0",
-        "#FF8F00", "#C62828", "#AD1457", "#6A1B9A",
-    ]
-    current = pd.Timestamp.now().year
-    if year == current:
-        return "#2E7D32"
-    return PALETTE[(current - year - 1) % len(PALETTE)]
+from config import year_color
 
 
 def fig_gassco_kpi(df: pd.DataFrame) -> go.Figure:
