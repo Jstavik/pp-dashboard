@@ -411,6 +411,20 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
         last_date.strftime("%d.%m.%Y")
         if pd.notna(last_date) else "N/A")
 
+    # DEBUG — dočasné
+    import streamlit as st
+    from datetime import timedelta
+    bil = _bilateral(last_date)
+    st.write(f"last_date: {last_date}")
+    st.write(f"_bilateral počet párů: {len(bil)}")
+    if bil:
+        st.write("První 3 páry:", {str(k): v for k, v in list(bil.items())[:3]})
+    else:
+        for days_back in range(1, 5):
+            test_day = last_date - timedelta(days=days_back)
+            test_bil = _bilateral(test_day)
+            st.write(f"  day -{days_back} ({test_day}): {len(test_bil)} párů")
+
     # ── render crossings ──────────────────────────────────────────
     for name, lat, lon, src, key, olat, olon in CROSSINGS:
         if src == "bi":
