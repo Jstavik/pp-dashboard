@@ -36,6 +36,7 @@ from charts.lng import (
     fig_lng_seasonality,
     fig_lng_inventory,
     fig_lng_monthly_bars,
+    fig_lng_storage_seasonality,
 )
 from data.gassco import load_gassco, fetch_gassco_umm
 from charts.gassco import (
@@ -1272,15 +1273,55 @@ if show_gas:
             # ── Graf 3 — ALSI zásoby ─────────────────────────
             st.markdown("---")
             st.markdown("#### Zásoby LNG terminálů (GIE ALSI)")
-            if not df_lng_alsi.empty:
+
+            df_lng_alsi = load_lng()
+
+            if df_lng_alsi.empty:
+                st.info("ALSI data nejsou dostupná.")
+            else:
+                df_lng_alsi["gasDayStart"] = pd.to_datetime(
+                    df_lng_alsi["gasDayStart"])
+
+                all_countries_alsi = sorted(
+                    df_lng_alsi["country_code"].dropna().unique().tolist()
+                )
+                all_years_alsi = sorted(
+                    df_lng_alsi["gasDayStart"].dt.year.unique().tolist()
+                )
+
+                col_a1, col_a2 = st.columns(2)
+                with col_a1:
+                    sel_countries_alsi = st.multiselect(
+                        "🌍 Země (zásobníky)",
+                        options=all_countries_alsi,
+                        default=[],
+                        key="alsi_countries",
+                        help="Prázdné = všechny země",
+                    )
+                with col_a2:
+                    sel_years_alsi = st.multiselect(
+                        "📅 Roky (sezonnost plnosti)",
+                        options=all_years_alsi,
+                        default=all_years_alsi[-5:],
+                        key="alsi_years",
+                    )
+
+                df_alsi_filtered = (
+                    df_lng_alsi[
+                        df_lng_alsi["country_code"].isin(sel_countries_alsi)
+                    ] if sel_countries_alsi else df_lng_alsi
+                )
+
                 st.plotly_chart(
-                    fig_lng_inventory(df_lng_alsi),
+                    fig_lng_inventory(df_alsi_filtered),
                     use_container_width=True,
                 )
-            else:
-                st.info(
-                    "ALSI data nejsou dostupná. "
-                    "Spusť GitHub Actions."
+
+                st.plotly_chart(
+                    fig_lng_storage_seasonality(
+                        df_alsi_filtered, sel_years_alsi
+                    ),
+                    use_container_width=True,
                 )
 
         with tab_gassco:

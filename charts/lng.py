@@ -294,3 +294,65 @@ def fig_lng_monthly_bars(
         margin=dict(l=60, r=20, t=50, b=80),
     )
     return fig
+
+
+def fig_lng_storage_seasonality(
+    df: pd.DataFrame,
+    years: list,
+) -> go.Figure:
+    """Sezonnost plnosti LNG zásobníků % — každý rok = křivka."""
+    if df.empty or "full_pct" not in df.columns:
+        return go.Figure()
+
+    df = df.copy()
+    df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
+
+    agg = (df.groupby("gasDayStart")
+             .agg(
+                 inventory_gwh=("inventory_gwh", "sum"),
+                 dtmi_gwh=("dtmi_gwh", "sum"),
+             )
+             .reset_index())
+    agg["full_pct"] = (
+        agg["inventory_gwh"] / agg["dtmi_gwh"] * 100
+    ).round(1)
+    agg["year"]        = agg["gasDayStart"].dt.year
+    agg["day_of_year"] = agg["gasDayStart"].dt.day_of_year
+
+    sel_years = years if years else sorted(agg["year"].unique())[-5:]
+
+    fig = go.Figure()
+    for yr in sorted(sel_years):
+        grp = agg[agg["year"] == yr].sort_values("day_of_year")
+        if grp.empty:
+            continue
+        fig.add_trace(go.Scatter(
+            x=grp["day_of_year"], y=grp["full_pct"],
+            mode="lines", name=str(yr),
+            line=dict(
+                color=year_color(yr),
+                width=2.5 if yr == pd.Timestamp.now().year else 1.5,
+            ),
+            hovertemplate=(
+                f"{yr} · den %{{x}}: "
+                f"<b>%{{y:.1f}}%</b><extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        title="LNG zásobníky — plnost % (sezonnost)",
+        height=360,
+        template="plotly_white",
+        hovermode="x unified",
+        xaxis=dict(
+            title="Den v roce",
+            tickvals=[1,32,60,91,121,152,182,213,244,274,305,335],
+            ticktext=["Led","Úno","Bře","Dub","Kvě","Čvn",
+                      "Čvc","Srp","Zář","Říj","Lis","Pro"],
+            gridcolor="#f0f0f0",
+        ),
+        yaxis=dict(title="%", gridcolor="#f0f0f0", range=[0, 105]),
+        legend=dict(orientation="h", y=-0.2),
+        margin=dict(l=60, r=20, t=50, b=80),
+    )
+    return fig
