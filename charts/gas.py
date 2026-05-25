@@ -371,14 +371,23 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
     }
 
     STORAGE_NODES = {
-        "DE": (51.5, 10.5, "🇩🇪"),
-        "AT": (47.5, 14.0, "🇦🇹"),
-        "CZ": (49.8, 16.5, "🇨🇿"),
-        "SK": (48.5, 18.5, "🇸🇰"),
-        "HU": (47.0, 18.5, "🇭🇺"),
-        "IT": (44.5, 11.0, "🇮🇹"),
-        "FR": (46.5,  2.5, "🇫🇷"),
-        "NL": (52.3,  5.5, "🇳🇱"),
+        "AT": (47.5,  14.0, "🇦🇹"),
+        "BE": (50.5,   4.5, "🇧🇪"),
+        "CZ": (49.8,  16.5, "🇨🇿"),
+        "DE": (51.5,  10.5, "🇩🇪"),
+        "FR": (46.5,   2.5, "🇫🇷"),
+        "HR": (45.5,  16.0, "🇭🇷"),
+        "HU": (47.0,  18.5, "🇭🇺"),
+        "IT": (44.5,  11.0, "🇮🇹"),
+        "LV": (56.8,  24.5, "🇱🇻"),
+        "NL": (52.3,   5.5, "🇳🇱"),
+        "PL": (52.0,  19.5, "🇵🇱"),
+        "PT": (39.5,  -8.0, "🇵🇹"),
+        "RO": (45.5,  25.0, "🇷🇴"),
+        "SK": (48.5,  18.5, "🇸🇰"),
+        "ES": (40.0,  -3.5, "🇪🇸"),
+        "UA": (49.0,  32.0, "🇺🇦"),
+        "RS": (44.0,  21.0, "🇷🇸"),
     }
 
     GREEN = "#2E7D32"
@@ -502,17 +511,12 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
             hoverinfo="skip"))
 
     # ── storage circles ───────────────────────────────────────────
-    # DEBUG — dočasné
-    import streamlit as st
-    if df_gie is not None and not df_gie.empty:
-        st.write("GIE sloupce:", df_gie.columns.tolist())
-        st.write("GIE první řádek:", df_gie.iloc[0].to_dict())
-
     if df_gie is not None and not df_gie.empty:
         df_gie2 = df_gie.copy()
         df_gie2["gasDayStart"] = pd.to_datetime(
             df_gie2["gasDayStart"], utc=True, errors="coerce")
         last_gie = (df_gie2
+                    .dropna(subset=["gasDayStart"])
                     .sort_values("gasDayStart")
                     .groupby("country_code")
                     .last()
@@ -524,23 +528,9 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
                 continue
             lat, lon, flag = STORAGE_NODES[cc]
 
-            full = 0.0
-            for col in ["full_pct", "full", "gasFull"]:
-                if col in row.index and pd.notna(row[col]):
-                    try:
-                        full = float(row[col])
-                        break
-                    except Exception:
-                        pass
-
-            gas = 0.0
-            for col in ["gasInStorage", "gas_in_storage", "gasSto", "full_gwh"]:
-                if col in row.index and pd.notna(row[col]):
-                    try:
-                        gas = float(row[col])
-                        break
-                    except Exception:
-                        pass
+            full = float(row["full"]) if pd.notna(row.get("full")) else 0.0
+            gas  = float(row["gasInStorage"]) if pd.notna(
+                row.get("gasInStorage")) else 0.0
 
             date_str = ""
             for col in ["gasDayStart", "date", "gasDay"]:
