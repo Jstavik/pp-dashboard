@@ -409,16 +409,30 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
     df["value_GWh"] = pd.to_numeric(
         df.get("value_GWh", 0), errors="coerce").fillna(0)
 
-    # Smart date: latest with CZ data (ENTSOG publishes with delay)
-    cz_prague = (df[df["countryLabel"] == "Czechia"]["date"]
-                 .dt.tz_convert("Europe/Prague").dt.date)
-    cz_dates = sorted(cz_prague.unique())
-    if cz_dates:
-        last_date = cz_dates[-1]
-        prev_date = cz_dates[-2] if len(cz_dates) > 1 else None
-    else:
-        last_date = df["date"].dt.tz_convert("Europe/Prague").dt.date.max()
-        prev_date = None
+    # Smart date: latest with CZ data, fallback na den s bilateral daty
+    from datetime import timedelta
+    cz_dates = sorted(
+        df[df["countryLabel"] == "Czechia"]["date"]
+        .dt.tz_convert("Europe/Prague").dt.date.unique(),
+        reverse=True,
+    )
+    last_date = cz_dates[0] if cz_dates else None
+
+    if last_date is None:
+        return go.Figure()
+
+    # Ověř že máme bilateral data pro tento den
+    for candidate in cz_dates[:7]:
+        test_bil = _bilateral(candidate)
+        if len(test_bil) > 0:
+            last_date = candidate
+            break
+
+    prev_date = None
+    for d in cz_dates:
+        if d < last_date:
+            prev_date = d
+            break
 
     fl = _bilateral(last_date)
     fp = _bilateral(prev_date) if prev_date is not None else {}
@@ -427,14 +441,6 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
     date_label = (
         last_date.strftime("%d.%m.%Y")
         if pd.notna(last_date) else "N/A")
-
-    # DEBUG — crossings
-    import streamlit as st
-    st.write("=== CROSSINGS DEBUG ===")
-    st.write("last_date:", last_date)
-    bil = _bilateral(last_date)
-    st.write("bilateral párů:", len(bil))
-    st.write("bilateral klíče:", [str(k) for k in list(bil.keys())[:5]])
 
     # ── render crossings ──────────────────────────────────────────
     for name, lat, lon, src, key, olat, olon in CROSSINGS:
@@ -518,24 +524,6 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
             showlegend=False,
             hoverinfo="skip"))
 
-    # DEBUG — storage
-    st.write("=== STORAGE DEBUG ===")
-    st.write("df_gie is None:", df_gie is None)
-    if df_gie is not None:
-        st.write("df_gie řádků:", len(df_gie))
-        st.write("country_code unique:", df_gie["country_code"].unique().tolist())
-        df_gie2_test = df_gie.copy()
-        df_gie2_test["gasDayStart"] = pd.to_datetime(
-            df_gie2_test["gasDayStart"], utc=True, errors="coerce")
-        last_test = (df_gie2_test
-                     .dropna(subset=["gasDayStart"])
-                     .sort_values("gasDayStart")
-                     .groupby("country_code")
-                     .last()
-                     .reset_index())
-        st.write("last_gie země:", last_test["country_code"].tolist())
-        st.write("AT full:", last_test[last_test["country_code"] == "AT"]["full"].values)
-
     # ── storage circles ───────────────────────────────────────────
     if df_gie is not None and not df_gie.empty:
         df_gie2 = df_gie.copy()
@@ -554,8 +542,12 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
                 continue
             lat, lon, flag = STORAGE_NODES[cc]
 
-            full = float(row["full"]) if pd.notna(row.get("full")) else 0.0
-            gas  = float(row["gasInStorage"]) if pd.notna(
+            full_raw = row.get("full", 0)
+            try:
+                full = float(str(full_raw).replace(",", ".")) if pd.notna(full_raw) else 0.0
+            except Exception:
+                full = 0.0
+            gas = float(row["gasInStorage"]) if pd.notna(
                 row.get("gasInStorage")) else 0.0
 
             date_str = ""
