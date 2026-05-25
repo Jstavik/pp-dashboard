@@ -77,14 +77,14 @@ def fetch_all_pages(from_date: date, to_date: date) -> pd.DataFrame:
 def update_entsog():
     os.makedirs("data/history", exist_ok=True)
 
+    last_date = None
     if os.path.exists(PARQUET_PATH):
-        existing  = pd.read_parquet(PARQUET_PATH, columns=["date"])
-        last_date = pd.to_datetime(existing["date"]).max().date()
+        _dates    = pd.read_parquet(PARQUET_PATH, columns=["date"])
+        last_date = pd.to_datetime(_dates["date"]).max().date()
         start     = last_date - timedelta(days=7)
         print(f"Existující data do {last_date}, stahuji od {start}")
     else:
-        existing = pd.DataFrame()
-        start    = HISTORY_START
+        start = HISTORY_START
         print(f"Nový soubor, stahuji od {start}")
 
     frames  = []
@@ -106,19 +106,23 @@ def update_entsog():
 
     new_data = pd.concat(frames, ignore_index=True)
 
-    if not existing.empty:
-        combined = pd.concat([existing, new_data], ignore_index=True)
+    if last_date is not None and os.path.exists(PARQUET_PATH):
+        existing = pd.read_parquet(PARQUET_PATH)
+        cutoff   = pd.Timestamp(last_date) - pd.Timedelta(days=8)
+        cutoff   = cutoff.tz_localize("UTC") if cutoff.tzinfo is None else cutoff
+        existing = existing[pd.to_datetime(existing["date"], utc=True) < cutoff]
+        df_final = pd.concat([existing, new_data], ignore_index=True)
         key_cols = ["date", "countryKey", "directionKey",
                     "adjacentSystemsKey", "pointsNames"]
-        key_cols = [c for c in key_cols if c in combined.columns]
-        combined = combined.drop_duplicates(subset=key_cols, keep="last")
+        key_cols = [c for c in key_cols if c in df_final.columns]
+        df_final = df_final.drop_duplicates(subset=key_cols, keep="last")
     else:
-        combined = new_data
+        df_final = new_data
 
-    combined = combined.sort_values("date").reset_index(drop=True)
-    combined.to_parquet(PARQUET_PATH, index=False)
+    df_final = df_final.sort_values("date").reset_index(drop=True)
+    df_final.to_parquet(PARQUET_PATH, index=False)
     size_mb  = os.path.getsize(PARQUET_PATH) / 1024 / 1024
-    print(f"Uloženo {len(combined)} řádků → {PARQUET_PATH} ({size_mb:.1f} MB)")
+    print(f"Uloženo {len(df_final)} řádků → {PARQUET_PATH} ({size_mb:.1f} MB)")
 
 
 
@@ -233,8 +237,11 @@ def update_hydro():
         start    = date(2020, 1, 1)
         print("Hydro: nový soubor")
 
-    start_ts = pd.Timestamp(start, tz="UTC")
-    end_ts   = pd.Timestamp.now(tz="UTC")
+    start_raw = pd.Timestamp(start)
+    start_ts  = (start_raw.tz_localize("UTC")
+                 if start_raw.tzinfo is None
+                 else start_raw.tz_convert("UTC"))
+    end_ts    = pd.Timestamp.now(tz="UTC")
 
     frames = []
     for cc in HYDRO_COUNTRIES:
