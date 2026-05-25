@@ -479,9 +479,7 @@ def _fetch_no_flows():
 
 def fig_gas_map(
     df_history: pd.DataFrame,
-    df_gie: pd.DataFrame = None,
     df_gassco: pd.DataFrame = None,
-    show_storage: bool = True,
 ) -> go.Figure:
     """Mapa fyzických toků plynu — Evropa. D-2 ENTSO-G + live NO + GIE zásobníky."""
     fig = go.Figure()
@@ -660,57 +658,7 @@ def fig_gas_map(
             hoverinfo="skip", showlegend=False,
         ))
 
-    # 8. Zásobníky GIE
-    if show_storage and df_gie is not None and not df_gie.empty:
-        df_gie2 = df_gie.copy()
-        df_gie2["gasDayStart"] = pd.to_datetime(
-            df_gie2["gasDayStart"], errors="coerce")
-        last_gie = (df_gie2.dropna(subset=["gasDayStart"])
-                    .sort_values("gasDayStart")
-                    .groupby("country_code").last()
-                    .reset_index())
-
-        for _, row in last_gie.iterrows():
-            cc = row["country_code"]
-            if cc not in STORAGE_COORDS_MAP or cc == "EU":
-                continue
-            lat, lon = STORAGE_COORDS_MAP[cc]
-            try:
-                full  = float(str(row.get("full", "0")).replace(",", "."))
-                twh   = float(row.get("gasInStorage", 0))
-                inj   = float(row.get("injection", 0))
-                with_ = float(row.get("withdrawal", 0))
-            except Exception:
-                full = twh = inj = with_ = 0.0
-
-            net     = inj - with_
-            net_str = f"+{net:.0f}" if net >= 0 else f"{net:.0f}"
-            color = "#C62828"  # vždy červená, čitelná na mapě
-            bar     = _make_bar(full)
-
-            fig.add_trace(go.Scattermapbox(
-                lat=[lat], lon=[lon], mode="markers+text",
-                marker=dict(size=1, opacity=0),
-                text=[f"{cc} {full:.0f}%\n{bar}\n{twh:.1f}TWh {net_str}"],
-                textfont=dict(
-                    size=12,
-                    color=color,
-                    family="Arial Black",
-                ),
-                textposition="middle center",
-                hovertemplate=(
-                    f"<b>{cc} Zásobníky</b><br>"
-                    f"Plnost: <b>{full:.1f}%</b><br>"
-                    f"Objem: {twh:.1f} TWh<br>"
-                    f"Vtláčení: +{inj:.0f} GWh/d<br>"
-                    f"Těžba: -{with_:.0f} GWh/d<br>"
-                    f"Net: <b>{net_str} GWh/d</b>"
-                    f"<extra></extra>"
-                ),
-                showlegend=False,
-            ))
-
-    # 9. Legenda
+    # 8. Legenda
     legend_items = [
         ("#2E7D32", "Import do CZ"),
         ("#C62828", "Export z CZ"),
