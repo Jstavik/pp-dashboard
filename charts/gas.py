@@ -291,27 +291,35 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
         Positive = a imports from b."""
         sub = df[_day_mask(df["date"], day)
                  & ~df["adjacentSystemsKey"].isin(DOMESTIC)].copy()
-
-        # DEBUG
-        import streamlit as st
-        st.write(f"_bilateral: day={day}, sub řádků={len(sub)}")
-        if not sub.empty:
-            st.write("adjacentSystemsKey sample:",
-                     sub["adjacentSystemsKey"].value_counts().head(5).to_dict())
-            sub["nb"] = sub["adjacentSystemsKey"].apply(_neighbor)
-            st.write("nb sample:", sub["nb"].value_counts().head(5).to_dict())
-            st.write("nb notna:", sub["nb"].notna().sum())
+        if sub.empty:
+            return {}
 
         sub["nb"] = sub["adjacentSystemsKey"].apply(_neighbor)
         sub = sub[sub["nb"].notna() & (sub["countryLabel"] != sub["nb"])]
+        if sub.empty:
+            return {}
+
         pairs = {}
-        for (c, nb), g in sub.groupby(["countryLabel", "nb"]):
-            e = g[g["directionKey"] == "entry"]["value_GWh"].sum()
-            x = g[g["directionKey"] == "exit"]["value_GWh"].sum()
-            net = e - x
-            key = tuple(sorted([c, nb]))
-            if key not in pairs:
-                pairs[key] = net if c == key[0] else -net
+        for country in sub["countryLabel"].unique():
+            for nb in sub[sub["countryLabel"] == country]["nb"].unique():
+                key = tuple(sorted([country, nb]))
+                if key in pairs:
+                    continue
+                g = sub[
+                    (sub["countryLabel"].isin([country, nb])) &
+                    (sub["nb"].isin([country, nb]))
+                ]
+                e = g[
+                    (g["countryLabel"] == country) &
+                    (g["directionKey"] == "entry")
+                ]["value_GWh"].sum()
+                x = g[
+                    (g["countryLabel"] == country) &
+                    (g["directionKey"] == "exit")
+                ]["value_GWh"].sum()
+                net = e - x
+                pairs[key] = net if country == key[0] else -net
+
         return pairs
 
     def _north_sea(day):
@@ -402,12 +410,6 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
     date_label = (
         last_date.strftime("%d.%m.%Y")
         if pd.notna(last_date) else "N/A")
-
-    # DEBUG — dočasné
-    import streamlit as st
-    st.write("last_date:", last_date)
-    st.write("_bilateral výsledek:", _bilateral(last_date))
-    st.write("_north_sea výsledek:", _north_sea(last_date))
 
     # ── render crossings ──────────────────────────────────────────
     for name, lat, lon, src, key, olat, olon in CROSSINGS:
