@@ -669,34 +669,46 @@ def fig_gas_map(
                     .sort_values("gasDayStart")
                     .groupby("country_code").last()
                     .reset_index())
+
         for _, row in last_gie.iterrows():
             cc = row["country_code"]
             if cc not in STORAGE_COORDS_MAP or cc == "EU":
                 continue
             lat, lon = STORAGE_COORDS_MAP[cc]
             try:
-                full = float(str(row.get("full", 0)).replace(",", "."))
-            except Exception:
-                full = 0.0
-            try:
+                full  = float(str(row.get("full", "0")).replace(",", "."))
                 twh   = float(row.get("gasInStorage", 0))
                 inj   = float(row.get("injection", 0))
                 with_ = float(row.get("withdrawal", 0))
             except Exception:
-                twh = inj = with_ = 0.0
+                full = twh = inj = with_ = 0.0
+
             net     = inj - with_
             net_str = f"+{net:.0f}" if net >= 0 else f"{net:.0f}"
             color   = _storage_color(full)
             bar     = _make_bar(full)
+
+            # Větší bílý podklad
             fig.add_trace(go.Scattermapbox(
                 lat=[lat], lon=[lon], mode="markers",
-                marker=dict(size=55, color="white", opacity=0.85),
+                marker=dict(size=80, color="white", opacity=0.92),
                 hoverinfo="skip", showlegend=False,
             ))
+            # Šedý rámeček
+            fig.add_trace(go.Scattermapbox(
+                lat=[lat], lon=[lon], mode="markers",
+                marker=dict(size=82, color="#BDBDBD", opacity=0.4),
+                hoverinfo="skip", showlegend=False,
+            ))
+            # Text — tučný, větší
             fig.add_trace(go.Scattermapbox(
                 lat=[lat], lon=[lon], mode="text",
-                text=[f"{cc} {full:.0f}%\n{bar}\n{twh:.1f} TWh  {net_str} GWh/d"],
-                textfont=dict(size=9, color=color, family="Arial Black"),
+                text=[f"{cc}  {full:.0f}%\n{bar}\n{twh:.1f} TWh  {net_str}"],
+                textfont=dict(
+                    size=11,
+                    color=color,
+                    family="Arial Black",
+                ),
                 textposition="middle center",
                 hovertemplate=(
                     f"<b>{cc} Zásobníky</b><br>"
