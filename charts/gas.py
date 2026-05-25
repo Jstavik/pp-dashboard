@@ -443,6 +443,7 @@ def fig_gas_map(df_history: pd.DataFrame, df_gie=None, height: int = 800) -> go.
         if pd.notna(last_date) else "N/A")
 
     # ── render crossings ──────────────────────────────────────────
+    import streamlit as _st; _st.write(f"Mapa: last_date={last_date}, bilateral párů={len(fl)}")
     for name, lat, lon, src, key, olat, olon in CROSSINGS:
         if src == "bi":
             val = fl.get(key, 0.0)
