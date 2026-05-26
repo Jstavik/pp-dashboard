@@ -956,13 +956,13 @@ if show_gas:
                         horizontal=True, key="gas_chart_type")
                 with col_qd:
                     max_date = df_hist["date"].dt.tz_localize(None).max()
+                    if "gas_daterange" not in st.session_state:
+                        st.session_state["gas_daterange"] = (
+                            (max_date - pd.Timedelta(days=365)).date(),
+                            max_date.date(),
+                        )
                     date_range = st.date_input(
                         "📆 Rozsah (časová osa)",
-                        value=st.session_state.get(
-                            "gas_daterange_default",
-                            ((max_date - pd.Timedelta(days=365)).date(),
-                             max_date.date()),
-                        ),
                         key="gas_daterange",
                     )
                     st.markdown("**Rychlý výběr období:**")
@@ -972,14 +972,15 @@ if show_gas:
                     for i, (lbl, delta) in enumerate(zip(labels, deltas)):
                         if qd_cols[i].button(lbl, key=f"qd_{lbl}"):
                             if delta:
-                                st.session_state["gas_daterange_default"] = (
+                                st.session_state["gas_daterange"] = (
                                     (max_date - pd.Timedelta(days=delta)).date(),
                                     max_date.date(),
                                 )
                             else:
-                                min_date = df_hist["date"].dt.tz_localize(None).min()
-                                st.session_state["gas_daterange_default"] = (
-                                    min_date.date(), max_date.date(),
+                                st.session_state["gas_daterange"] = (
+                                    df_hist["date"].dt.tz_convert("Europe/Prague")
+                                    .dt.date.min(),
+                                    max_date.date(),
                                 )
                             st.rerun()
 
@@ -1227,6 +1228,12 @@ if show_gas:
                     key="lng_chart",
                 )
             with col3:
+                if "lng_daterange" not in st.session_state:
+                    st.session_state["lng_daterange"] = (
+                        (pd.Timestamp(max_date_lng) -
+                         pd.Timedelta(days=730)).date(),
+                        max_date_lng,
+                    )
                 qd_cols_lng = st.columns(5)
                 for i, (lbl, delta) in enumerate(zip(
                     ["Týden", "Měsíc", "3M", "Rok", "Max"],
@@ -1234,13 +1241,13 @@ if show_gas:
                 )):
                     if qd_cols_lng[i].button(lbl, key=f"lng_qd_{lbl}"):
                         if delta:
-                            st.session_state["lng_daterange_default"] = (
+                            st.session_state["lng_daterange"] = (
                                 (pd.Timestamp(max_date_lng) -
                                  pd.Timedelta(days=delta)).date(),
                                 max_date_lng,
                             )
                         else:
-                            st.session_state["lng_daterange_default"] = (
+                            st.session_state["lng_daterange"] = (
                                 df_lng_flows["date"]
                                 .dt.tz_convert("Europe/Prague")
                                 .dt.date.min(),
@@ -1250,12 +1257,6 @@ if show_gas:
 
                 date_range_lng = st.date_input(
                     "📆 Rozsah",
-                    value=st.session_state.get(
-                        "lng_daterange_default",
-                        ((pd.Timestamp(max_date_lng) -
-                          pd.Timedelta(days=730)).date(),
-                         max_date_lng),
-                    ),
                     key="lng_daterange",
                 )
 
@@ -1394,18 +1395,23 @@ if show_gas:
                         key="gassco_points",
                     )
                 with col2:
+                    if "gassco_daterange" not in st.session_state:
+                        st.session_state["gassco_daterange"] = (
+                            (max_date_g - pd.Timedelta(days=30)).date(),
+                            max_date_g.date(),
+                        )
                     qd_cols = st.columns(5)
                     labels  = ["Týden", "Měsíc", "3M", "Rok", "Max"]
                     deltas  = [7, 30, 90, 365, None]
                     for i, (lbl, delta) in enumerate(zip(labels, deltas)):
                         if qd_cols[i].button(lbl, key=f"gassco_qd_{lbl}"):
                             if delta:
-                                st.session_state["gassco_daterange_default"] = (
+                                st.session_state["gassco_daterange"] = (
                                     (max_date_g - pd.Timedelta(days=delta)).date(),
                                     max_date_g.date(),
                                 )
                             else:
-                                st.session_state["gassco_daterange_default"] = (
+                                st.session_state["gassco_daterange"] = (
                                     df_gassco["date"].min().date(),
                                     max_date_g.date(),
                                 )
@@ -1413,11 +1419,6 @@ if show_gas:
                 with col3:
                     date_range_g = st.date_input(
                         "📆 Rozsah",
-                        value=st.session_state.get(
-                            "gassco_daterange_default",
-                            ((max_date_g - pd.Timedelta(days=30)).date(),
-                             max_date_g.date()),
-                        ),
                         key="gassco_daterange",
                     )
 
