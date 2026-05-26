@@ -2,8 +2,8 @@ name: Update gas history
 
 on:
   schedule:
-    - cron: "15 5 * * *"   # každý den v 5:15 UTC
-    - cron: "15 17 * * *"  # každý den v 17:15 UTC
+    - cron: "0 4 * * *"   # 6:00 CEST (4:00 UTC)
+    - cron: "0 15 * * *"  # 17:00 CEST (15:00 UTC)
   workflow_dispatch:        # možnost spustit ručně
 
 jobs:
