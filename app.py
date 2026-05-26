@@ -956,33 +956,37 @@ if show_gas:
                         horizontal=True, key="gas_chart_type")
                 with col_qd:
                     max_date = df_hist["date"].dt.tz_localize(None).max()
-                    if "gas_daterange" not in st.session_state:
-                        st.session_state["gas_daterange"] = (
+                    if "gas_dr" not in st.session_state:
+                        st.session_state["gas_dr"] = (
                             (max_date - pd.Timedelta(days=365)).date(),
                             max_date.date(),
                         )
-                    date_range = st.date_input(
-                        "📆 Rozsah (časová osa)",
-                        key="gas_daterange",
-                    )
                     st.markdown("**Rychlý výběr období:**")
                     qd_cols = st.columns(6)
                     labels  = ["Týden","Měsíc","Kvartál","Půlrok","Rok","Maximum"]
                     deltas  = [7, 30, 90, 182, 365, None]
                     for i, (lbl, delta) in enumerate(zip(labels, deltas)):
-                        if qd_cols[i].button(lbl, key=f"qd_{lbl}"):
+                        if qd_cols[i].button(lbl, key=f"gas_qd_{lbl}"):
                             if delta:
-                                st.session_state["gas_daterange"] = (
+                                st.session_state["gas_dr"] = (
                                     (max_date - pd.Timedelta(days=delta)).date(),
                                     max_date.date(),
                                 )
                             else:
-                                st.session_state["gas_daterange"] = (
+                                st.session_state["gas_dr"] = (
                                     df_hist["date"].dt.tz_convert("Europe/Prague")
                                     .dt.date.min(),
                                     max_date.date(),
                                 )
                             st.rerun()
+                    date_range = st.date_input(
+                        "📆 Rozsah (časová osa)",
+                        value=st.session_state["gas_dr"],
+                        key="gas_daterange",
+                    )
+                    st.session_state["gas_dr"] = date_range \
+                        if isinstance(date_range, tuple) \
+                        else st.session_state["gas_dr"]
 
                 st.markdown("---")
 
@@ -1228,8 +1232,8 @@ if show_gas:
                     key="lng_chart",
                 )
             with col3:
-                if "lng_daterange" not in st.session_state:
-                    st.session_state["lng_daterange"] = (
+                if "lng_dr" not in st.session_state:
+                    st.session_state["lng_dr"] = (
                         (pd.Timestamp(max_date_lng) -
                          pd.Timedelta(days=730)).date(),
                         max_date_lng,
@@ -1241,13 +1245,13 @@ if show_gas:
                 )):
                     if qd_cols_lng[i].button(lbl, key=f"lng_qd_{lbl}"):
                         if delta:
-                            st.session_state["lng_daterange"] = (
+                            st.session_state["lng_dr"] = (
                                 (pd.Timestamp(max_date_lng) -
                                  pd.Timedelta(days=delta)).date(),
                                 max_date_lng,
                             )
                         else:
-                            st.session_state["lng_daterange"] = (
+                            st.session_state["lng_dr"] = (
                                 df_lng_flows["date"]
                                 .dt.tz_convert("Europe/Prague")
                                 .dt.date.min(),
@@ -1257,8 +1261,12 @@ if show_gas:
 
                 date_range_lng = st.date_input(
                     "📆 Rozsah",
+                    value=st.session_state["lng_dr"],
                     key="lng_daterange",
                 )
+                st.session_state["lng_dr"] = date_range_lng \
+                    if isinstance(date_range_lng, tuple) \
+                    else st.session_state["lng_dr"]
 
             if isinstance(date_range_lng, (list, tuple)) and len(date_range_lng) == 2:
                 lng_from = pd.Timestamp(date_range_lng[0])
@@ -1395,8 +1403,8 @@ if show_gas:
                         key="gassco_points",
                     )
                 with col2:
-                    if "gassco_daterange" not in st.session_state:
-                        st.session_state["gassco_daterange"] = (
+                    if "gassco_dr" not in st.session_state:
+                        st.session_state["gassco_dr"] = (
                             (max_date_g - pd.Timedelta(days=30)).date(),
                             max_date_g.date(),
                         )
@@ -1406,12 +1414,12 @@ if show_gas:
                     for i, (lbl, delta) in enumerate(zip(labels, deltas)):
                         if qd_cols[i].button(lbl, key=f"gassco_qd_{lbl}"):
                             if delta:
-                                st.session_state["gassco_daterange"] = (
+                                st.session_state["gassco_dr"] = (
                                     (max_date_g - pd.Timedelta(days=delta)).date(),
                                     max_date_g.date(),
                                 )
                             else:
-                                st.session_state["gassco_daterange"] = (
+                                st.session_state["gassco_dr"] = (
                                     df_gassco["date"].min().date(),
                                     max_date_g.date(),
                                 )
@@ -1419,8 +1427,12 @@ if show_gas:
                 with col3:
                     date_range_g = st.date_input(
                         "📆 Rozsah",
+                        value=st.session_state["gassco_dr"],
                         key="gassco_daterange",
                     )
+                    st.session_state["gassco_dr"] = date_range_g \
+                        if isinstance(date_range_g, tuple) \
+                        else st.session_state["gassco_dr"]
 
                 if isinstance(date_range_g, (list, tuple)) and len(date_range_g) == 2:
                     ts_from = pd.Timestamp(date_range_g[0], tz="UTC")
