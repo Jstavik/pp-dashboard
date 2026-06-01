@@ -1545,18 +1545,7 @@ elif show_rep:
                 },
             )
 
-        col_dl, col_cp, _ = st.columns([1, 1, 4])
-        with col_dl:
-            st.download_button(
-                "⬇️ Stáhnout PNG",
-                data=fig_map_rep.to_image(format="png",
-                    width=794, height=1123, scale=2),
-                file_name=f"toky_plynu_{pd.Timestamp.now().strftime('%Y%m%d')}.png",
-                mime="image/png",
-                use_container_width=True,
-            )
-        with col_cp:
-            st.info("📋 Zkopírovat: klikněte na ikonu fotoaparátu v grafu")
+        st.info("📋 Zkopírovat: klikněte na ikonu 📷 v pravém horním rohu grafu → Download plot as PNG")
 
     # ── GASSCO ──────────────────────────────────────────
     with rep_gassco:
@@ -1684,19 +1673,7 @@ elif show_rep:
                 },
             )
 
-            col_dl2, col_cp2, _ = st.columns([1, 1, 4])
-            with col_dl2:
-                st.download_button(
-                    "⬇️ Stáhnout PNG",
-                    data=fig_rep_g.to_image(
-                        format="png", width=794,
-                        height=1123, scale=2),
-                    file_name=f"gassco_{pd.Timestamp.now().strftime('%Y%m%d')}.png",
-                    mime="image/png",
-                    use_container_width=True,
-                )
-            with col_cp2:
-                st.info("📋 Zkopírovat: klikněte na ikonu fotoaparátu v grafu")
+            st.info("📋 Zkopírovat: klikněte na ikonu 📷 v pravém horním rohu grafu → Download plot as PNG")
 
     # ── Zásobníky ────────────────────────────────────────
     with rep_stor:
@@ -1861,18 +1838,6 @@ elif show_rep:
                 },
             )
 
-            col_dl3, col_cp3, _ = st.columns([1, 1, 4])
-            with col_dl3:
-                st.download_button(
-                    "⬇️ Stáhnout PNG",
-                    data=fig_rep_s.to_image(
-                        format="png", width=794,
-                        height=1123, scale=2),
-                    file_name=f"zasobniky_{pd.Timestamp.now().strftime('%Y%m%d')}.png",
-                    mime="image/png",
-                    use_container_width=True,
-                )
-            with col_cp3:
-                st.info("📋 Zkopírovat: klikněte na ikonu fotoaparátu v grafu")
+            st.info("📋 Zkopírovat: klikněte na ikonu 📷 v pravém horním rohu grafu → Download plot as PNG")
 
 st.session_state.iteration += 1
