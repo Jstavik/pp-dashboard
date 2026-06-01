@@ -1545,7 +1545,11 @@ elif show_rep:
                 },
             )
 
-        st.info("📋 Zkopírovat: klikněte na ikonu 📷 v pravém horním rohu grafu → Download plot as PNG")
+        st.caption(
+            "📷 Stáhnout PNG: ikona fotoaparátu vpravo nahoře v grafu  |  "
+            "📋 Kopírovat: pravý klik na graf → Uložit obrázek jako → "
+            "pak Ctrl+C z prohlížeče nebo vložit přímo do Wordu"
+        )
 
     # ── GASSCO ──────────────────────────────────────────
     with rep_gassco:
@@ -1673,7 +1677,11 @@ elif show_rep:
                 },
             )
 
-            st.info("📋 Zkopírovat: klikněte na ikonu 📷 v pravém horním rohu grafu → Download plot as PNG")
+            st.caption(
+            "📷 Stáhnout PNG: ikona fotoaparátu vpravo nahoře v grafu  |  "
+            "📋 Kopírovat: pravý klik na graf → Uložit obrázek jako → "
+            "pak Ctrl+C z prohlížeče nebo vložit přímo do Wordu"
+        )
 
     # ── Zásobníky ────────────────────────────────────────
     with rep_stor:
@@ -1838,6 +1846,10 @@ elif show_rep:
                 },
             )
 
-            st.info("📋 Zkopírovat: klikněte na ikonu 📷 v pravém horním rohu grafu → Download plot as PNG")
+            st.caption(
+            "📷 Stáhnout PNG: ikona fotoaparátu vpravo nahoře v grafu  |  "
+            "📋 Kopírovat: pravý klik na graf → Uložit obrázek jako → "
+            "pak Ctrl+C z prohlížeče nebo vložit přímo do Wordu"
+        )
 
 st.session_state.iteration += 1
