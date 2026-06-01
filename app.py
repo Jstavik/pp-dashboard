@@ -1516,7 +1516,6 @@ elif show_rep:
         with st.spinner("Načítám data..."):
             fig_map_rep = fig_gas_map(
                 df_hist,
-                df_gie=load_gie_all(),
                 df_gassco=load_gassco(),
             )
             fig_map_rep.update_layout(
