@@ -145,17 +145,18 @@ with st.sidebar:
             help="Baterie drží aktuální SoC místo nabíjení/vybíjení pokud není jasný cenový signál")
 
     st.markdown("---")
-    commodity = st.radio(
+    show_commodity = st.radio(
         "Komodita",
-        options=["⚡ Elektřina", "🔵 Plyn"],
-        horizontal=True,
-        key="commodity",
+        ["⚡ Elektřina", "🔵 Plyn", "📋 Report"],
+        horizontal=False,
     )
-    show_gas = (commodity == "🔵 Plyn")
+    show_ee  = show_commodity == "⚡ Elektřina"
+    show_gas = show_commodity == "🔵 Plyn"
+    show_rep = show_commodity == "📋 Report"
 
     st.markdown("---")
     st.markdown("### Zdroje dat")
-    if not show_gas:
+    if show_ee:
         st.caption(
             "**ENTSO-E Transparency Platform**  \n"
             "DAP ceny · Generace · Odstávky · Rezervy"
@@ -169,7 +170,7 @@ with st.sidebar:
             "**Delta Green API**  \n"
             "Portfolio stav · Disponibilní flexibilita (volitelné)"
         )
-    else:
+    elif show_gas:
         st.caption(
             "**ENTSO-G Transparency Platform**  \n"
             "Fyzické toky · Hraniční přechody · Kapacity · Denní data"
@@ -215,17 +216,6 @@ df_out   = parse_outages(out_raw)
 changes  = detect_changes(st.session_state.df_out_prev, df_out)
 st.session_state.df_out_prev = df_out.copy() if not df_out.empty else None
 
-with st.spinner("Načítám data rezerv…"):
-    try:
-        reserves = fetch_reserves()
-    except Exception:
-        reserves = dict(afrr_d_amt=pd.DataFrame(), afrr_d_pri=pd.DataFrame(),
-                        afrr_y_amt=pd.DataFrame(), afrr_y_pri=pd.DataFrame(),
-                        mfrr_d_amt=pd.DataFrame(), mfrr_d_pri=pd.DataFrame(),
-                        start=now.normalize(), end=now.normalize()+pd.Timedelta(days=10), now=now)
-
-df_act  = fetch_activation_prices()
-ws_raw  = fetch_wind_solar_forecast()
 
 last_imbal = float(df_imbal["odchylka_MWh"].iloc[-1]) if not df_imbal.empty else 0.0
 ceps_d = None
@@ -235,7 +225,19 @@ n_pu  = int((df_out["unit_level"] == "PU").sum()) if not df_out.empty else 0
 n_gu  = int((df_out["unit_level"] == "GU").sum()) if not df_out.empty else 0
 n_new = len(changes["new"])
 
-if not show_gas:
+if show_ee:
+    with st.spinner("Načítám data rezerv…"):
+        try:
+            reserves = fetch_reserves()
+        except Exception:
+            reserves = dict(afrr_d_amt=pd.DataFrame(), afrr_d_pri=pd.DataFrame(),
+                            afrr_y_amt=pd.DataFrame(), afrr_y_pri=pd.DataFrame(),
+                            mfrr_d_amt=pd.DataFrame(), mfrr_d_pri=pd.DataFrame(),
+                            start=now.normalize(), end=now.normalize()+pd.Timedelta(days=10), now=now)
+
+    df_act = fetch_activation_prices()
+    ws_raw = fetch_wind_solar_forecast()
+
     # ── BANNER ───────────────────────────────────────────────────────
     if last_imbal < -THRESHOLD:
         bcls, bstate = "banner-bad",  f"DEFICIT &nbsp; {last_imbal:+.1f} MWh"
@@ -320,23 +322,6 @@ if not show_gas:
         st.markdown(f'<div class="alert-box">{"  ·  ".join(parts)}</div>',
                     unsafe_allow_html=True)
 
-else:
-    st.markdown(
-        '<div class="banner banner-ok">'
-        '<div class="banner-left"><span class="pulse-dot"></span>'
-        '<span>🔵 PP DASHBOARD — PLYN</span></div>'
-        '<div class="banner-center"></div>'
-        '<div class="banner-right">'
-        + pd.Timestamp.now(tz="Europe/Prague").strftime("%a %d.%m.%Y · %H:%M:%S") +
-        '</div></div>',
-        unsafe_allow_html=True,
-    )
-
-tab_ee, tab_gas, tab_report = st.tabs([
-    "⚡ Elektřina", "🔵 Plyn", "📋 Report"
-])
-
-with tab_ee:
     # ── ZÁLOŽKY ──────────────────────────────────────────────────────
     tab_dash, tab_ceps, tab_out, tab_dap, tab_rezervy, tab_hydro, tab_dg, tab_data = st.tabs([
         "📊 Odchylka & Generace",
@@ -792,9 +777,17 @@ with tab_ee:
             else:
                 st.info("Data generace nejsou dostupná.")
 
-st.session_state.iteration += 1
-
-with tab_gas:
+elif show_gas:
+    st.markdown(
+        '<div class="banner banner-ok">'
+        '<div class="banner-left"><span class="pulse-dot"></span>'
+        '<span>🔵 PP DASHBOARD — PLYN</span></div>'
+        '<div class="banner-center"></div>'
+        '<div class="banner-right">'
+        + pd.Timestamp.now(tz="Europe/Prague").strftime("%a %d.%m.%Y · %H:%M:%S") +
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
     with st.spinner("Načítám data ENTSO-G..."):
         df_hist = load_entsog_history()
 
@@ -1505,7 +1498,7 @@ with tab_gas:
                 use_container_width=True,
             )
 
-with tab_report:
+elif show_rep:
     df_hist = load_entsog_history()
     st.markdown("### 📋 Ranní report — přehledy")
     st.caption("Každá záložka = jedna stránka A4 na výšku. "
@@ -1883,3 +1876,5 @@ with tab_report:
                 )
             with col_cp3:
                 st.info("📋 Zkopírovat: klikněte na ikonu fotoaparátu v grafu")
+
+st.session_state.iteration += 1
