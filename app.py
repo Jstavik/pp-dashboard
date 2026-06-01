@@ -1599,38 +1599,97 @@ elif show_rep:
             .dt.year.dropna().unique().astype(int))[-5:]
             if not df_gie_r.empty else [])
 
-        # ── Aktuální stav per země ────────────────────────────────
-        if not df_gie_r.empty:
-            df_gie_r["gasDayStart"] = pd.to_datetime(
-                df_gie_r["gasDayStart"], errors="coerce")
-            last_stor_map = (df_gie_r
-                             .dropna(subset=["gasDayStart"])
-                             .sort_values("gasDayStart")
-                             .groupby("country_code").last()
-                             .reset_index())
-            last_stor_map = (last_stor_map[
-                last_stor_map["country_code"] != "EU"
-            ].copy().sort_values("country_code"))
+        # ── Aktuální stav — Plotly tabulka ───────────────────────
+        import plotly.graph_objects as go
 
-            st.markdown("##### Aktuální stav zásobníků")
-            cols_s = st.columns(len(last_stor_map))
-            for i, (_, row) in enumerate(last_stor_map.iterrows()):
-                cc    = row["country_code"]
-                full  = float(str(row.get("full", "0")).replace(",", "."))
-                twh   = float(row.get("gasInStorage", 0))
-                inj   = float(row.get("injection", 0))
-                with_ = float(row.get("withdrawal", 0))
-                net   = inj - with_
-                net_str = f"+{net:.0f}" if net >= 0 else f"{net:.0f}"
-                icon  = ("🔴" if full < 25 else
-                         "🟠" if full < 50 else
-                         "🔵" if full < 75 else "🟢")
-                cols_s[i].metric(
-                    label=f"{icon} {cc}",
-                    value=f"{full:.1f}%",
-                    delta=f"{net_str} GWh/d",
-                )
-                cols_s[i].caption(f"{twh:.1f} TWh")
+        df_gie_r2 = load_gie_all()
+        df_gie_r2["gasDayStart"] = pd.to_datetime(
+            df_gie_r2["gasDayStart"], errors="coerce")
+        for c in ["full", "gasInStorage", "injection", "withdrawal"]:
+            df_gie_r2[c] = pd.to_numeric(df_gie_r2[c], errors="coerce")
+
+        last_stor2 = (df_gie_r2.dropna(subset=["gasDayStart"])
+                      .sort_values("gasDayStart")
+                      .groupby("country_code").last()
+                      .reset_index())
+
+        show_cc = ["EU", "AT", "BE", "CZ", "DE", "ES", "FR",
+                   "HR", "HU", "IT", "LV", "NL", "PL", "PT",
+                   "RO", "SK", "UA"]
+        tbl = last_stor2[last_stor2["country_code"].isin(show_cc)].copy()
+        tbl = tbl.set_index("country_code").reindex(show_cc).reset_index()
+        tbl["net"] = tbl["injection"].fillna(0) - tbl["withdrawal"].fillna(0)
+        tbl["net_str"] = tbl["net"].apply(
+            lambda x: f"+{x:.0f}" if x >= 0 else f"{x:.0f}")
+        tbl["full_str"] = tbl["full"].apply(
+            lambda x: f"{x:.1f}%" if not pd.isna(x) else "n/a")
+        tbl["twh_str"] = tbl["gasInStorage"].apply(
+            lambda x: f"{x:.1f} TWh" if not pd.isna(x) else "n/a")
+
+        def stor_color(v):
+            if pd.isna(v): return "#BDBDBD"
+            if v < 25: return "#C62828"
+            if v < 45: return "#FF8F00"
+            if v < 65: return "#1565C0"
+            return "#2E7D32"
+
+        cell_colors = [
+            ["#F5F5F5"] * len(tbl),
+            [stor_color(v) for v in tbl["full"]],
+            ["white"] * len(tbl),
+            ["#E8F5E9" if n >= 0 else "#FFEBEE" for n in tbl["net"]],
+            ["white"] * len(tbl),
+        ]
+        font_colors = [
+            ["#333"] * len(tbl),
+            ["white"] * len(tbl),
+            ["#333"] * len(tbl),
+            ["#2E7D32" if n >= 0 else "#C62828" for n in tbl["net"]],
+            ["#555"] * len(tbl),
+        ]
+
+        fig_tbl = go.Figure(data=[go.Table(
+            columnwidth=[60, 80, 90, 90, 90],
+            header=dict(
+                values=["<b>Země</b>", "<b>Plnost %</b>",
+                        "<b>Objem TWh</b>", "<b>Net GWh/d</b>",
+                        "<b>Vtláčení GWh/d</b>"],
+                fill_color="#1565C0",
+                font=dict(color="white", size=11),
+                align="center", height=32,
+            ),
+            cells=dict(
+                values=[
+                    tbl["country_code"],
+                    tbl["full_str"],
+                    tbl["twh_str"],
+                    tbl["net_str"],
+                    tbl["injection"].apply(
+                        lambda x: f"+{x:.0f}" if not pd.isna(x) else "n/a"),
+                ],
+                fill_color=cell_colors,
+                font=dict(color=font_colors, size=11),
+                align="center", height=28,
+            ),
+        )])
+        fig_tbl.update_layout(
+            height=len(tbl) * 28 + 60,
+            margin=dict(l=0, r=0, t=0, b=0),
+            paper_bgcolor="white",
+        )
+        st.plotly_chart(
+            fig_tbl,
+            use_container_width=True,
+            config={"toImageButtonOptions": {
+                "format": "png",
+                "filename": f"zasobniky_stav_{pd.Timestamp.now().strftime('%Y%m%d')}",
+                "height": 600, "width": 794, "scale": 2,
+            }},
+        )
+        st.caption(
+            f"Stav: {df_gie_r2['gasDayStart'].dt.tz_convert('Europe/Prague').dt.date.max().strftime('%d.%m.%Y')}  |  "
+            "📷 Stáhnout: ikona fotoaparátu v grafu"
+        )
 
         st.markdown("---")
 
