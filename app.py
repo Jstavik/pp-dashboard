@@ -1518,7 +1518,6 @@ elif show_rep:
                 df_hist,
                 df_gie=load_gie_all(),
                 df_gassco=load_gassco(),
-                show_storage=False,
             )
             fig_map_rep.update_layout(
                 height=1050,
