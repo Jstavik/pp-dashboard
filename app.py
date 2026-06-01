@@ -1686,8 +1686,11 @@ elif show_rep:
                 "height": 600, "width": 794, "scale": 2,
             }},
         )
+        last_date_stor = (df_gie_r2["gasDayStart"]
+            .dropna()
+            .dt.date.max())
         st.caption(
-            f"Stav: {df_gie_r2['gasDayStart'].dt.tz_convert('Europe/Prague').dt.date.max().strftime('%d.%m.%Y')}  |  "
+            f"Stav: {last_date_stor.strftime('%d.%m.%Y')}  |  "
             "📷 Stáhnout: ikona fotoaparátu v grafu"
         )
 
@@ -1698,8 +1701,10 @@ elif show_rep:
             fig_storage_grid(df_gie_r, "full", default_yrs_s),
             use_container_width=True,
             config={"toImageButtonOptions": {
-                "format": "png", "filename": "storage_grid",
-                "height": 700, "width": 794, "scale": 2}})
+                "format": "png",
+                "filename": f"zasobniky_grid_{pd.Timestamp.now().strftime('%Y%m%d')}",
+                "height": 700, "width": 794, "scale": 2,
+            }})
 
         st.caption("📷 Stáhnout: ikona fotoaparátu v grafu")
 
