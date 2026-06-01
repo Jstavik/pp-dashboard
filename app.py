@@ -1600,13 +1600,6 @@ elif show_rep:
             if not df_gie_r.empty else [])
 
         st.plotly_chart(
-            fig_storage_main(df_gie_r, "CZ", "full", default_yrs_s),
-            use_container_width=True,
-            config={"toImageButtonOptions": {
-                "format": "png", "filename": "storage_cz",
-                "height": 500, "width": 794, "scale": 2}})
-
-        st.plotly_chart(
             fig_storage_grid(df_gie_r, "full", default_yrs_s),
             use_container_width=True,
             config={"toImageButtonOptions": {
