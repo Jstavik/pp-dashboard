@@ -202,8 +202,13 @@ with st.spinner("Načítám data z ENTSO-E…"):
     try:
         imbal_raw, gen_raw, load_actual, load_fc, out_raw, now = fetch_entsoe_data()
     except Exception as e:
-        st.error(f"Chyba při načítání ENTSO-E dat: {e}")
-        st.stop()
+        st.warning(f"⚠️ ENTSO-E dočasně nedostupné ({type(e).__name__}): {e}")
+        now         = pd.Timestamp.now(tz="Europe/Prague")
+        imbal_raw   = pd.DataFrame(columns=["odchylka_MWh", "price_Short", "price_Long"])
+        gen_raw     = pd.DataFrame()
+        load_actual = pd.Series(dtype="float64", name="actual_MW")
+        load_fc     = pd.Series(dtype="float64", name="forecast_MW")
+        out_raw     = pd.DataFrame()
 
 df_imbal = parse_imbalance(imbal_raw)
 df_out   = parse_outages(out_raw)
