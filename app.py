@@ -230,6 +230,11 @@ ws_raw  = fetch_wind_solar_forecast()
 last_imbal = float(df_imbal["odchylka_MWh"].iloc[-1]) if not df_imbal.empty else 0.0
 ceps_d = None
 
+# fallbacky pro případ show_gas=True nebo ENTSO-E 503
+n_pu  = int((df_out["unit_level"] == "PU").sum()) if not df_out.empty else 0
+n_gu  = int((df_out["unit_level"] == "GU").sum()) if not df_out.empty else 0
+n_new = len(changes["new"])
+
 if not show_gas:
     # ── BANNER ───────────────────────────────────────────────────────
     if last_imbal < -THRESHOLD:
