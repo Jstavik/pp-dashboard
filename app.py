@@ -1599,6 +1599,42 @@ elif show_rep:
             .dt.year.dropna().unique().astype(int))[-5:]
             if not df_gie_r.empty else [])
 
+        # ── Aktuální stav per země ────────────────────────────────
+        if not df_gie_r.empty:
+            df_gie_r["gasDayStart"] = pd.to_datetime(
+                df_gie_r["gasDayStart"], errors="coerce")
+            last_stor_map = (df_gie_r
+                             .dropna(subset=["gasDayStart"])
+                             .sort_values("gasDayStart")
+                             .groupby("country_code").last()
+                             .reset_index())
+            last_stor_map = (last_stor_map[
+                last_stor_map["country_code"] != "EU"
+            ].copy().sort_values("country_code"))
+
+            st.markdown("##### Aktuální stav zásobníků")
+            cols_s = st.columns(len(last_stor_map))
+            for i, (_, row) in enumerate(last_stor_map.iterrows()):
+                cc    = row["country_code"]
+                full  = float(str(row.get("full", "0")).replace(",", "."))
+                twh   = float(row.get("gasInStorage", 0))
+                inj   = float(row.get("injection", 0))
+                with_ = float(row.get("withdrawal", 0))
+                net   = inj - with_
+                net_str = f"+{net:.0f}" if net >= 0 else f"{net:.0f}"
+                icon  = ("🔴" if full < 25 else
+                         "🟠" if full < 50 else
+                         "🔵" if full < 75 else "🟢")
+                cols_s[i].metric(
+                    label=f"{icon} {cc}",
+                    value=f"{full:.1f}%",
+                    delta=f"{net_str} GWh/d",
+                )
+                cols_s[i].caption(f"{twh:.1f} TWh")
+
+        st.markdown("---")
+
+        # ── Sezonnost — grid 6 zemí ───────────────────────────────
         st.plotly_chart(
             fig_storage_grid(df_gie_r, "full", default_yrs_s),
             use_container_width=True,
