@@ -7,3 +7,4 @@ zeep>=4.2.0
 folium>=0.16.0
 python-dateutil>=2.8.0
 pyarrow>=15.0.0
+kaleido

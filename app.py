@@ -322,7 +322,11 @@ else:
         unsafe_allow_html=True,
     )
 
-if not show_gas:
+tab_ee, tab_gas, tab_report = st.tabs([
+    "⚡ Elektřina", "🔵 Plyn", "📋 Report"
+])
+
+with tab_ee:
     # ── ZÁLOŽKY ──────────────────────────────────────────────────────
     tab_dash, tab_ceps, tab_out, tab_dap, tab_rezervy, tab_hydro, tab_dg, tab_data = st.tabs([
         "📊 Odchylka & Generace",
@@ -780,10 +784,7 @@ if not show_gas:
 
 st.session_state.iteration += 1
 
-if show_gas:
-    st.markdown("---")
-    st.markdown("## 🔵 Fyzické toky plynu — CZ")
-
+with tab_gas:
     with st.spinner("Načítám data ENTSO-G..."):
         df_hist = load_entsog_history()
 
@@ -1493,3 +1494,382 @@ if show_gas:
                 fig_gas_point_history(pivot_gas, point_sel),
                 use_container_width=True,
             )
+
+with tab_report:
+    df_hist = load_entsog_history()
+    st.markdown("### 📋 Ranní report — přehledy")
+    st.caption("Každá záložka = jedna stránka A4 na výšku. "
+               "Použijte tlačítko ke stažení nebo zkopírování.")
+
+    rep_map, rep_gassco, rep_stor = st.tabs([
+        "🗺️ Toky plynu", "🇳🇴 GASSCO", "🏭 Zásobníky"
+    ])
+
+    # ── Toky plynu ──────────────────────────────────────
+    with rep_map:
+        st.markdown("#### Fyzické toky plynu — Evropa")
+        st.caption("Mapa ENTSO-G D-2 + norské nominace live (GASSCO)")
+
+        with st.spinner("Načítám data..."):
+            fig_map_rep = fig_gas_map(
+                df_hist,
+                df_gie=load_gie_all(),
+                df_gassco=load_gassco(),
+                show_storage=False,
+            )
+            fig_map_rep.update_layout(
+                height=1050,
+                width=744,
+                margin=dict(l=10, r=10, t=50, b=30),
+                paper_bgcolor="white",
+            )
+
+        with st.container():
+            st.plotly_chart(
+                fig_map_rep,
+                use_container_width=False,
+                config={
+                    "displayModeBar": True,
+                    "modeBarButtonsToRemove": [
+                        "pan2d", "lasso2d", "select2d",
+                        "autoScale2d", "resetScale2d"
+                    ],
+                    "toImageButtonOptions": {
+                        "format": "png",
+                        "filename": f"toky_plynu_{pd.Timestamp.now().strftime('%Y%m%d')}",
+                        "height": 1123,
+                        "width": 794,
+                        "scale": 2,
+                    },
+                },
+            )
+
+        col_dl, col_cp, _ = st.columns([1, 1, 4])
+        with col_dl:
+            st.download_button(
+                "⬇️ Stáhnout PNG",
+                data=fig_map_rep.to_image(format="png",
+                    width=794, height=1123, scale=2),
+                file_name=f"toky_plynu_{pd.Timestamp.now().strftime('%Y%m%d')}.png",
+                mime="image/png",
+                use_container_width=True,
+            )
+        with col_cp:
+            st.info("📋 Zkopírovat: klikněte na ikonu fotoaparátu v grafu")
+
+    # ── GASSCO ──────────────────────────────────────────
+    with rep_gassco:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        from config import year_color
+
+        st.markdown("#### GASSCO — Norský export plynu")
+
+        with st.spinner("Načítám GASSCO data..."):
+            df_g = load_gassco()
+            KEY_PTS = ["Emden", "Dornum", "Zeebrugge",
+                       "Dunkerque", "Nybro", "Easington", "St.Fergus"]
+
+        if not df_g.empty:
+            df_g["date_p"] = df_g["date"].dt.tz_convert(
+                "Europe/Prague").dt.date
+            last_g = df_g["date_p"].max()
+            prev_g = last_g - timedelta(days=1)
+
+            live_g = df_g[df_g["date_p"] == last_g].groupby(
+                "point")["value_GWh"].sum()
+            prev_gv = df_g[df_g["date_p"] == prev_g].groupby(
+                "point")["value_GWh"].sum()
+
+            exclude = ["Sum Exit Nominations NCS",
+                       "Other Exit Nominations",
+                       "Fields Delivering into SEGAL"]
+            df_sea_g = df_g[~df_g["point"].isin(exclude)].copy()
+            df_sea_g["year"] = df_g["date"].dt.tz_convert(
+                "Europe/Prague").dt.year
+            df_sea_g["doy"] = df_g["date"].dt.tz_convert(
+                "Europe/Prague").dt.day_of_year
+            sea_sum = df_sea_g.groupby(["year", "doy"])[
+                "value_GWh"].sum().reset_index()
+
+            fig_rep_g = make_subplots(
+                rows=3, cols=1,
+                subplot_titles=[
+                    "Agregovaná denní nominace — GWh/d",
+                    "Nominace per výstupní bod",
+                    "Sezonnost — celkový export (GWh/d)",
+                ],
+                vertical_spacing=0.10,
+                row_heights=[0.20, 0.35, 0.45],
+            )
+
+            pts_kpi = [p for p in KEY_PTS if live_g.get(p, 0) > 0]
+            fig_rep_g.add_trace(go.Bar(
+                x=pts_kpi,
+                y=[live_g.get(p, 0) for p in pts_kpi],
+                name=f"Dnes ({last_g.strftime('%d.%m.')})",
+                marker_color="#1565C0",
+            ), row=1, col=1)
+            fig_rep_g.add_trace(go.Bar(
+                x=pts_kpi,
+                y=[prev_gv.get(p, 0) for p in pts_kpi],
+                name=f"Včera ({prev_g.strftime('%d.%m.')})",
+                marker_color="#BDBDBD",
+            ), row=1, col=1)
+
+            pts_s = sorted(KEY_PTS, key=lambda p: live_g.get(p, 0))
+            colors_b = ["#2E7D32" if live_g.get(p, 0) >= prev_gv.get(p, 0)
+                        else "#C62828" for p in pts_s]
+            fig_rep_g.add_trace(go.Bar(
+                y=pts_s,
+                x=[live_g.get(p, 0) for p in pts_s],
+                orientation="h",
+                marker_color=colors_b,
+                text=[f"{live_g.get(p, 0):.0f}" for p in pts_s],
+                textposition="outside",
+                showlegend=False,
+            ), row=2, col=1)
+
+            for yr in sorted(sea_sum["year"].unique()):
+                d = sea_sum[sea_sum["year"] == yr].sort_values("doy")
+                if d.empty:
+                    continue
+                fig_rep_g.add_trace(go.Scatter(
+                    x=d["doy"], y=d["value_GWh"],
+                    mode="lines",
+                    name=str(yr),
+                    line=dict(
+                        color=year_color(yr),
+                        width=2.5 if yr == 2026 else 1.0,
+                    ),
+                    showlegend=True,
+                ), row=3, col=1)
+
+            doy_now = (last_g - date(last_g.year, 1, 1)).days + 1
+            fig_rep_g.add_vline(x=doy_now, line_dash="dot",
+                                line_color="#555", line_width=1,
+                                row=3, col=1)
+
+            fig_rep_g.update_layout(
+                height=1050, width=744,
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                margin=dict(l=60, r=20, t=80, b=40),
+                barmode="group",
+                legend=dict(
+                    orientation="h", x=0, y=-0.02,
+                    font=dict(size=9),
+                ),
+                title=dict(
+                    text=(f"GASSCO — Norský export plynu  |  "
+                          f"Gasday: {last_g.strftime('%d.%m.%Y')}  |  "
+                          f"Zdroj: GASSCO realTimeAtom.xml"),
+                    font=dict(size=11), x=0.01,
+                ),
+            )
+            fig_rep_g.update_xaxes(showgrid=False)
+            fig_rep_g.update_yaxes(showgrid=True, gridcolor="#F0F0F0")
+
+            st.plotly_chart(
+                fig_rep_g,
+                use_container_width=False,
+                config={
+                    "displayModeBar": True,
+                    "toImageButtonOptions": {
+                        "format": "png",
+                        "filename": f"gassco_{pd.Timestamp.now().strftime('%Y%m%d')}",
+                        "height": 1123, "width": 794, "scale": 2,
+                    },
+                },
+            )
+
+            col_dl2, col_cp2, _ = st.columns([1, 1, 4])
+            with col_dl2:
+                st.download_button(
+                    "⬇️ Stáhnout PNG",
+                    data=fig_rep_g.to_image(
+                        format="png", width=794,
+                        height=1123, scale=2),
+                    file_name=f"gassco_{pd.Timestamp.now().strftime('%Y%m%d')}.png",
+                    mime="image/png",
+                    use_container_width=True,
+                )
+            with col_cp2:
+                st.info("📋 Zkopírovat: klikněte na ikonu fotoaparátu v grafu")
+
+    # ── Zásobníky ────────────────────────────────────────
+    with rep_stor:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        from config import year_color
+
+        st.markdown("#### Zásobníky plynu — Evropa")
+
+        df_gie_r = load_gie_all()
+
+        if not df_gie_r.empty:
+            df_gie_r["gasDayStart"] = pd.to_datetime(
+                df_gie_r["gasDayStart"], errors="coerce")
+            df_gie_r["year"] = df_gie_r["gasDayStart"].dt.year
+            df_gie_r["doy"] = df_gie_r["gasDayStart"].dt.day_of_year
+
+            for c in ["full", "gasInStorage", "injection", "withdrawal"]:
+                df_gie_r[c] = pd.to_numeric(df_gie_r[c], errors="coerce")
+
+            last_stor = (df_gie_r.dropna(subset=["gasDayStart"])
+                         .sort_values("gasDayStart")
+                         .groupby("country_code").last()
+                         .reset_index())
+
+            SHOW_C = ["EU", "DE", "FR", "AT", "CZ", "IT",
+                      "NL", "PL", "HU", "SK", "UA"]
+            last_s = last_stor[
+                last_stor["country_code"].isin(SHOW_C)
+            ].set_index("country_code").reindex(SHOW_C).reset_index()
+
+            gie_eu = df_gie_r[df_gie_r["country_code"] == "EU"].copy()
+            eu_sea = gie_eu.groupby(["year", "doy"])[
+                "full"].mean().reset_index()
+
+            fig_rep_s = make_subplots(
+                rows=3, cols=1,
+                subplot_titles=[
+                    "Aktuální plnost zásobníků (%)",
+                    "Plnost per země + vtláčení/těžba (GWh/d)",
+                    "Sezonnost EU zásobníků (% plnosti)",
+                ],
+                vertical_spacing=0.09,
+                row_heights=[0.18, 0.38, 0.44],
+            )
+
+            vals_s = [last_s.loc[last_s["country_code"] == c, "full"].values[0]
+                      if c in last_s["country_code"].values else 0
+                      for c in SHOW_C]
+            colors_s = []
+            for v in vals_s:
+                if pd.isna(v) or v == 0:
+                    colors_s.append("#BDBDBD")
+                elif v < 25:
+                    colors_s.append("#C62828")
+                elif v < 45:
+                    colors_s.append("#FF8F00")
+                elif v < 65:
+                    colors_s.append("#1565C0")
+                else:
+                    colors_s.append("#2E7D32")
+
+            fig_rep_s.add_trace(go.Bar(
+                x=SHOW_C, y=vals_s,
+                marker_color=colors_s,
+                text=[f"{v:.1f}%" if not pd.isna(v) else ""
+                      for v in vals_s],
+                textposition="outside",
+                showlegend=False,
+            ), row=1, col=1)
+
+            show_bar_s = last_s[last_s["country_code"] != "EU"].copy()
+            show_bar_s = show_bar_s.dropna(subset=["full"]).sort_values("full")
+            net_vals = (show_bar_s["injection"].fillna(0) -
+                        show_bar_s["withdrawal"].fillna(0))
+            bar_c2 = []
+            for v in show_bar_s["full"]:
+                if pd.isna(v):
+                    bar_c2.append("#BDBDBD")
+                elif v < 25:
+                    bar_c2.append("#C62828")
+                elif v < 45:
+                    bar_c2.append("#FF8F00")
+                elif v < 65:
+                    bar_c2.append("#1565C0")
+                else:
+                    bar_c2.append("#2E7D32")
+
+            fig_rep_s.add_trace(go.Bar(
+                y=show_bar_s["country_code"],
+                x=show_bar_s["full"],
+                orientation="h",
+                marker_color=bar_c2,
+                text=[f"{v:.1f}%  {n:+.0f} GWh/d"
+                      for v, n in zip(show_bar_s["full"], net_vals)],
+                textposition="outside",
+                showlegend=False,
+            ), row=2, col=1)
+
+            eu_full_v = last_s.loc[
+                last_s["country_code"] == "EU", "full"].values
+            if len(eu_full_v) > 0 and not pd.isna(eu_full_v[0]):
+                fig_rep_s.add_vline(
+                    x=eu_full_v[0], line_dash="dash",
+                    line_color="#1565C0", line_width=1.5,
+                    annotation_text=f"EU {eu_full_v[0]:.1f}%",
+                    annotation_font_size=9,
+                    row=2, col=1,
+                )
+
+            for yr in sorted(eu_sea["year"].unique()):
+                if yr < 2021:
+                    continue
+                d = eu_sea[eu_sea["year"] == yr].sort_values("doy")
+                if d.empty:
+                    continue
+                fig_rep_s.add_trace(go.Scatter(
+                    x=d["doy"], y=d["full"],
+                    mode="lines", name=str(yr),
+                    line=dict(
+                        color=year_color(yr),
+                        width=2.5 if yr == 2026 else 1.0,
+                    ),
+                ), row=3, col=1)
+
+            last_stor_date = df_gie_r["gasDayStart"].dropna().dt.date.max()
+            doy_stor = (last_stor_date -
+                        date(last_stor_date.year, 1, 1)).days + 1
+            fig_rep_s.add_vline(x=doy_stor, line_dash="dot",
+                                line_color="#555", line_width=1,
+                                row=3, col=1)
+
+            fig_rep_s.update_layout(
+                height=1050, width=744,
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                margin=dict(l=60, r=20, t=80, b=40),
+                legend=dict(
+                    orientation="h", x=0, y=-0.02,
+                    font=dict(size=9),
+                ),
+                title=dict(
+                    text=(f"Zásobníky plynu — Evropa  |  "
+                          f"Stav: {last_stor_date.strftime('%d.%m.%Y')}  |  "
+                          f"Zdroj: GIE AGSI+"),
+                    font=dict(size=11), x=0.01,
+                ),
+            )
+            fig_rep_s.update_xaxes(showgrid=False)
+            fig_rep_s.update_yaxes(showgrid=True, gridcolor="#F0F0F0")
+
+            st.plotly_chart(
+                fig_rep_s,
+                use_container_width=False,
+                config={
+                    "displayModeBar": True,
+                    "toImageButtonOptions": {
+                        "format": "png",
+                        "filename": f"zasobniky_{pd.Timestamp.now().strftime('%Y%m%d')}",
+                        "height": 1123, "width": 794, "scale": 2,
+                    },
+                },
+            )
+
+            col_dl3, col_cp3, _ = st.columns([1, 1, 4])
+            with col_dl3:
+                st.download_button(
+                    "⬇️ Stáhnout PNG",
+                    data=fig_rep_s.to_image(
+                        format="png", width=794,
+                        height=1123, scale=2),
+                    file_name=f"zasobniky_{pd.Timestamp.now().strftime('%Y%m%d')}.png",
+                    mime="image/png",
+                    use_container_width=True,
+                )
+            with col_cp3:
+                st.info("📋 Zkopírovat: klikněte na ikonu fotoaparátu v grafu")
