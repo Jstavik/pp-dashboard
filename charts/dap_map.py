@@ -29,13 +29,12 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
 
         fig.add_trace(go.Scattermapbox(
             lat=[lat], lon=[lon],
-            mode="markers+text",
-            marker=dict(size=1, color="rgba(0,0,0,0)"),
+            mode="text",
             text=[
                 f"{cc} {r['base']:.0f}|{r['peak']:.0f}€\n"
                 f"Δ{r['dod_base']:+.0f}|Δ{r['dod_peak']:+.0f}€"
             ],
-            textfont=dict(size=11, color=color, family="Arial Black"),
+            textfont=dict(size=8, color=color),
             textposition="middle center",
             hovertemplate=(
                 f"<b>{cc}</b><br>"
