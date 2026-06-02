@@ -28,6 +28,12 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
         color = "#C62828" if r["dod_base"] > 0 else "#2E7D32"
 
         fig.add_trace(go.Scattermap(
+            lat=[lat, lat], lon=[lon, lon], mode="lines",
+            line=dict(width=0, color=color),
+            hoverinfo="skip", showlegend=False,
+        ))
+
+        fig.add_trace(go.Scattermap(
             lat=[lat], lon=[lon],
             mode="text",
             text=[
