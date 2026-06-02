@@ -27,17 +27,15 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
         lat, lon = CENTERS[cc]
         color = "#C62828" if r["dod_base"] > 0 else "#2E7D32"
 
-        fig.add_trace(go.Scattergeo(
+        fig.add_trace(go.Scattermap(
             lat=[lat], lon=[lon],
-            mode="markers+text",
-            marker=dict(size=4, color=color, opacity=0.6),
+            mode="text",
             text=[
                 f"{cc}\n"
-                f"{r['base']:.0f}|{r['peak']:.0f}€\n"
-                f"Δ{r['dod_base']:+.0f}|Δ{r['dod_peak']:+.0f}€"
+                f"{r['base']:.0f}|{r['peak']:.0f}\n"
+                f"Δ{r['dod_base']:+.0f}|Δ{r['dod_peak']:+.0f}"
             ],
-            textposition="top center",
-            textfont=dict(size=10, color=color, family="Arial Black"),
+            textfont=dict(size=10, color="#212121", family="Arial Black"),
             hovertemplate=(
                 f"<b>{cc}</b><br>"
                 f"Base: <b>{r['base']:.1f} EUR/MWh</b><br>"
@@ -52,17 +50,12 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
     last_date = str(df["date"].iloc[0]) if len(df) > 0 else ""
 
     fig.update_layout(
-        geo=dict(
-            scope="europe",
-            projection_type="natural earth",
-            showland=True, landcolor="rgb(243,243,243)",
-            showocean=True, oceancolor="rgb(204,229,255)",
-            showcountries=True, countrycolor="rgb(180,180,180)",
-            showcoastlines=True, coastlinecolor="rgb(150,150,150)",
-            lonaxis=dict(range=[-15, 35]),
-            lataxis=dict(range=[35, 72]),
+        map=dict(
+            style="carto-positron",
+            zoom=3.5,
+            center=dict(lat=52, lon=12),
         ),
-        height=750,
+        height=720,
         margin=dict(l=0, r=0, t=50, b=0),
         title=dict(
             text=(
