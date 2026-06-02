@@ -790,6 +790,7 @@ if show_ee:
             st.plotly_chart(
                 fig_dap_map(df_dap),
                 use_container_width=True,
+                key="dap_mapa_chart",
                 config={
                     "displayModeBar": True,
                     "scrollZoom": True,
