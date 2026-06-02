@@ -45,19 +45,9 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
 
         fig.add_trace(go.Scattergeo(
             lat=[lat], lon=[lon],
-            mode="markers",
-            marker=dict(
-                size=34, color="white", opacity=0.75,
-                line=dict(color="#CCCCCC", width=0.5),
-            ),
-            hoverinfo="skip", showlegend=False,
-        ))
-
-        fig.add_trace(go.Scattergeo(
-            lat=[lat], lon=[lon],
             mode="text",
             text=[label],
-            textfont=dict(size=8, color="black", family="Arial"),
+            textfont=dict(size=9, color="white", family="Arial Black"),
             hovertemplate=(
                 f"<b>{cc}</b><br>"
                 f"Base: <b>{r['base']:.1f} EUR/MWh</b><br>"
@@ -104,7 +94,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
             ),
             font=dict(size=11),
         ),
-        height=680,
+        height=750,
         margin=dict(l=0, r=0, t=40, b=0),
         paper_bgcolor="white",
     )
