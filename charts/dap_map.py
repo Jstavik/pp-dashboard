@@ -35,7 +35,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
                 f"{cc} {r['base']:.0f}|{r['peak']:.0f}€\n"
                 f"Δ{r['dod_base']:+.0f}|Δ{r['dod_peak']:+.0f}€"
             ],
-            textfont=dict(size=11, color=color, family="Arial Black"),
+            textfont=dict(size=12, color="#FF0000"),
             hovertemplate=(
                 f"<b>{cc}</b><br>"
                 f"Base: <b>{r['base']:.1f} EUR/MWh</b><br>"
