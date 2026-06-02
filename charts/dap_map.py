@@ -31,7 +31,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
             lat=[lat], lon=[lon],
             mode="text",
             text=[f"Base: {r['base']:.0f} | Peak: {r['peak']:.0f}<br>Δ {r['dod_base']:+.0f} | Δ {r['dod_peak']:+.0f}"],
-            textfont=dict(size=10, color=color),
+            textfont=dict(size=11, color=color, weight="bold"),
             hoverinfo="skip",
             showlegend=False,
         ))
@@ -41,8 +41,8 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
     fig.update_layout(
         mapbox=dict(
             style="carto-positron",
-            center=dict(lat=52, lon=12),
-            zoom=3.5,
+            center=dict(lat=51, lon=12),
+            zoom=4.0,
         ),
         height=720,
         margin=dict(l=0, r=0, t=50, b=0),
