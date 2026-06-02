@@ -25,15 +25,17 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
         if cc not in CENTERS:
             continue
         lat, lon = CENTERS[cc]
+        color = "#C62828" if r["dod_base"] > 0 else "#2E7D32"
+
         fig.add_trace(go.Scattermapbox(
             lat=[lat], lon=[lon],
-            mode="text",
+            mode="markers+text",
+            marker=dict(size=1, color="rgba(0,0,0,0)"),
             text=[
-                f"{cc}\n"
-                f"{r['base']:.0f}|{r['peak']:.0f} €\n"
-                f"Δ{r['dod_base']:+.0f}|Δ{r['dod_peak']:+.0f} €"
+                f"{cc} {r['base']:.0f}|{r['peak']:.0f}€\n"
+                f"Δ{r['dod_base']:+.0f}|Δ{r['dod_peak']:+.0f}€"
             ],
-            textfont=dict(size=11, color="black", family="Arial Black"),
+            textfont=dict(size=11, color=color, family="Arial Black"),
             textposition="middle center",
             hovertemplate=(
                 f"<b>{cc}</b><br>"
