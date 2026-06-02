@@ -63,6 +63,8 @@ from charts.reserves import (
     fig_reserve_volumes, fig_reserve_prices,
     fig_dap, calc_dap_stats, simulate_battery_dap, fig_battery_strategy,
 )
+from charts.dap_map import fig_dap_map
+from data.dap_europe import load_dap_europe
 
 def data_status_row(sources: list) -> None:
     """Zobrazí řádek se stavem datových zdrojů."""
@@ -323,7 +325,7 @@ if show_ee:
                     unsafe_allow_html=True)
 
     # ── ZÁLOŽKY ──────────────────────────────────────────────────────
-    tab_dash, tab_ceps, tab_out, tab_dap, tab_rezervy, tab_hydro, tab_dg, tab_data = st.tabs([
+    tab_dash, tab_ceps, tab_out, tab_dap, tab_rezervy, tab_hydro, tab_dg, tab_data, tab_dap_mapa = st.tabs([
         "📊 Odchylka & Generace",
         "⚡ ČEPS",
         "🔧 Odstávky",
@@ -332,6 +334,7 @@ if show_ee:
         "💧 Hydro",
         "🌿 Delta Green",
         "📋 Data",
+        "🗺️ DAP Mapa",
     ])
 
     # ──────────── TAB 1: ODCHYLKA + GENERACE ─────────────────────────
@@ -776,6 +779,36 @@ if show_ee:
                                    "generace.csv", "text/csv")
             else:
                 st.info("Data generace nejsou dostupná.")
+
+    # ──────────── TAB: DAP MAPA ──────────────────────────────────────
+    with tab_dap_mapa:
+        df_dap = load_dap_europe()
+        if df_dap.empty:
+            st.info("Data DAP Mapa nejsou k dispozici. "
+                    "Spusťte GitHub Actions pro stažení.")
+        else:
+            st.plotly_chart(
+                fig_dap_map(df_dap),
+                use_container_width=True,
+                config={
+                    "displayModeBar": True,
+                    "scrollZoom": True,
+                    "toImageButtonOptions": {
+                        "format": "png",
+                        "filename": "dap_mapa_evropa",
+                        "height": 800,
+                        "width": 1200,
+                        "scale": 2,
+                    },
+                },
+            )
+            last_date = df_dap["date"].max()
+            st.caption(
+                f"Data: {last_date}  |  "
+                "Zdroj: ENTSO-E Transparency Platform  |  "
+                "Base | Peak = denní průměr EUR/MWh  |  "
+                "Δ = DoD změna"
+            )
 
 elif show_gas:
     st.markdown(
@@ -1504,8 +1537,8 @@ elif show_rep:
     st.caption("Každá záložka = jedna stránka A4 na výšku. "
                "Použijte tlačítko ke stažení nebo zkopírování.")
 
-    rep_map, rep_gassco, rep_stor = st.tabs([
-        "🗺️ Toky plynu", "🇳🇴 GASSCO", "🏭 Zásobníky"
+    rep_map, rep_gassco, rep_stor, rep_dap = st.tabs([
+        "🗺️ Toky plynu", "🇳🇴 GASSCO", "🏭 Zásobníky", "⚡ DAP Mapa"
     ])
 
     # ── Toky plynu ──────────────────────────────────────
@@ -1707,5 +1740,25 @@ elif show_rep:
             }})
 
         st.caption("📷 Stáhnout: ikona fotoaparátu v grafu")
+
+    # ── DAP Mapa ─────────────────────────────────────────
+    with rep_dap:
+        st.markdown("#### DAP ceny elektřiny — Evropa")
+        df_dap_r = load_dap_europe()
+        if df_dap_r.empty:
+            st.info("Data nejsou k dispozici.")
+        else:
+            st.plotly_chart(
+                fig_dap_map(df_dap_r),
+                use_container_width=True,
+                config={
+                    "toImageButtonOptions": {
+                        "format": "png",
+                        "filename": f"dap_mapa_{pd.Timestamp.now().strftime('%Y%m%d')}",
+                        "height": 800, "width": 1200, "scale": 2,
+                    },
+                },
+            )
+            st.caption("📷 Stáhnout: ikona fotoaparátu v grafu")
 
 st.session_state.iteration += 1

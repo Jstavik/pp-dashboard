@@ -283,6 +283,86 @@ def update_hydro():
     print(f"Hydro: uloženo {len(combined)} řádků ({size_kb:.0f} KB)")
 
 
+def update_dap_europe():
+    from entsoe import EntsoePandasClient
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    print("\n=== DAP Europe ===")
+
+    ENTSOE_TOKEN = "95fa8cc7-1438-455b-9060-795d7c44d389"
+    DAP_PATH = "data/history/dap_europe.parquet"
+    DAP_COUNTRIES = {
+        "CZ": "CZ", "DE": "DE_LU", "FR": "FR", "AT": "AT", "SK": "SK",
+        "PL": "PL", "HU": "HU", "NL": "NL", "BE": "BE", "ES": "ES",
+        "PT": "PT", "IT": "10Y1001A1001A73I", "RO": "10YRO-TEL------P",
+        "BG": "10YCA-BULGARIA-R", "GR": "10YGR-HTSO-----Y",
+        "RS": "10YCS-SERBIATSOV", "HR": "10YHR-HEP------M",
+        "SI": "10YSI-ELES-----O", "CH": "10YCH-SWISSGRIDZ",
+        "FI": "10YFI-1--------U", "NO": "10YNO-1--------2",
+        "DK": "10YDK-1--------W", "SE": "10Y1001A1001A46L",
+    }
+
+    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+
+    end   = pd.Timestamp.now(tz="Europe/Prague").normalize()
+    start = end - pd.Timedelta(days=2)
+    today_date = (end - pd.Timedelta(days=1)).date()
+    yest_date  = (end - pd.Timedelta(days=2)).date()
+
+    if os.path.exists(DAP_PATH):
+        existing = pd.read_parquet(DAP_PATH)
+        existing["date"] = pd.to_datetime(existing["date"]).dt.date
+        if today_date in existing["date"].values:
+            print(f"DAP Europe: data pro {today_date} už existují, skip")
+            return
+
+    def fetch_one(args):
+        cc, code = args
+        try:
+            d = client.query_day_ahead_prices(code, start=start, end=end)
+            d = d.tz_convert("Europe/Prague").resample("1h").mean()
+            today = d[d.index.date == today_date]
+            yest  = d[d.index.date == yest_date]
+            if today.empty or yest.empty:
+                return None
+            base_t = today.mean()
+            peak_t = today[today.index.hour.isin(range(8, 20))].mean()
+            base_y = yest.mean()
+            peak_y = yest[yest.index.hour.isin(range(8, 20))].mean()
+            return {
+                "date":     today_date,
+                "cc":       cc,
+                "base":     round(float(base_t), 2),
+                "peak":     round(float(peak_t), 2),
+                "dod_base": round(float(base_t - base_y), 2),
+                "dod_peak": round(float(peak_t - peak_y), 2),
+            }
+        except Exception as e:
+            print(f"  {cc}: CHYBA — {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futures = {ex.submit(fetch_one, item): item
+                   for item in DAP_COUNTRIES.items()}
+        results = [f.result() for f in as_completed(futures)
+                   if f.result() is not None]
+
+    if not results:
+        print("DAP Europe: žádná data")
+        return
+
+    df_new = pd.DataFrame(results)
+
+    if os.path.exists(DAP_PATH):
+        df_old = pd.read_parquet(DAP_PATH)
+        df_final = pd.concat([df_old, df_new], ignore_index=True)
+        df_final = df_final.drop_duplicates(subset=["date", "cc"], keep="last")
+    else:
+        df_final = df_new
+
+    df_final.to_parquet(DAP_PATH, index=False)
+    print(f"DAP Europe: {len(df_new)} zemí → {DAP_PATH}")
+
+
 if __name__ == "__main__":
     for label, fn in [
         ("ENTSO-G flows (všechny země)",      update_entsog),
@@ -291,6 +371,7 @@ if __name__ == "__main__":
         ("Kapacity ENTSO-G",                  update_capacity),
         ("LNG terminály (GIE ALSI)",          update_lng),
         ("GASSCO nominace",                   update_gassco),
+        ("DAP Europe choropleth",             update_dap_europe),
     ]:
         print(f"\n=== {label} ===")
         try:
