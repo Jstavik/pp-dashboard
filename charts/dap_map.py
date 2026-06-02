@@ -40,9 +40,17 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
 
     fig.update_layout(
         mapbox=dict(
-            style="carto-positron",
-            center=dict(lat=51, lon=12),
-            zoom=4.0,
+            style="white-bg",
+            center=dict(lat=52, lon=12),
+            zoom=3.8,
+            layers=[{
+                "below": "traces",
+                "sourcetype": "geojson",
+                "source": "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson",
+                "type": "line",
+                "color": "#AAAAAA",
+                "line": {"width": 0.5},
+            }],
         ),
         height=720,
         margin=dict(l=0, r=0, t=50, b=0),
