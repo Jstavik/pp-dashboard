@@ -398,7 +398,7 @@ def _add_arrow(fig, lat1, lon1, lat2, lon2, color, size=0.2):
     left_lon  = lon2 - size*np.cos(angle) - size*0.4*np.sin(angle)
     right_lat = lat2 - size*np.sin(angle) - size*0.4*np.cos(angle)
     right_lon = lon2 - size*np.cos(angle) + size*0.4*np.sin(angle)
-    fig.add_trace(go.Scattermapbox(
+    fig.add_trace(go.Scattermap(
         lat=[lat2, left_lat, right_lat, lat2],
         lon=[lon2, left_lon, right_lon, lon2],
         mode="lines", fill="toself",
@@ -418,13 +418,13 @@ def _draw_flow(fig, c_from, c_to, val, dod_pct, color, label=None):
     width = max(1.5, min(8, val / 150))
     dod_str = f"+{dod_pct:.0f}%" if dod_pct >= 0 else f"{dod_pct:.0f}%"
     lbl = label or f"{c_from}→{c_to}"
-    fig.add_trace(go.Scattermapbox(
+    fig.add_trace(go.Scattermap(
         lat=[s1, e1], lon=[s2, e2], mode="lines",
         line=dict(width=width, color=color),
         hoverinfo="skip", showlegend=False,
     ))
     _add_arrow(fig, s1, s2, e1, e2, color, size=0.2)
-    fig.add_trace(go.Scattermapbox(
+    fig.add_trace(go.Scattermap(
         lat=[mid_lat], lon=[mid_lon], mode="text",
         text=[f"{lbl}\n{val:.0f} GWh/d\nDoD {dod_str}"],
         textfont=dict(size=8, color=color),
@@ -589,13 +589,13 @@ def fig_gas_map(
             continue
         s1, s2, e1, e2 = _shorten(NO_CENTER[0], NO_CENTER[1], lat, lon, 0.15)
         dod_str = f"+{dod_pct:.0f}%" if dod_pct >= 0 else f"{dod_pct:.0f}%"
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[s1, e1], lon=[s2, e2], mode="lines",
             line=dict(width=max(1.5, min(6, val / 150)), color="#7B1FA2"),
             hoverinfo="skip", showlegend=False,
         ))
         _add_arrow(fig, s1, s2, e1, e2, "#7B1FA2", size=0.2)
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[e1 + 0.5], lon=[e2], mode="text",
             text=[f"NO→{country}\n{val:.0f} GWh/d\nDoD {dod_str}"],
             textfont=dict(size=8, color="#7B1FA2"),
@@ -610,13 +610,13 @@ def fig_gas_map(
     # 5. Baltic Pipe
     if baltic_val > 10:
         s1, s2, e1, e2 = _shorten(NO_CENTER[0], NO_CENTER[1], 54.5, 14.3, 0.1)
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[s1, 57.0, e1], lon=[s2, 9.5, e2], mode="lines",
             line=dict(width=3, color="#00838F"),
             hoverinfo="skip", showlegend=False,
         ))
         _add_arrow(fig, 57.0, 9.5, e1, e2, "#00838F", size=0.2)
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[56.0], lon=[12.0], mode="text",
             text=[f"Baltic Pipe\nNO→DK→PL\n{baltic_val:.0f} GWh/d"],
             textfont=dict(size=8, color="#00838F"),
@@ -630,13 +630,13 @@ def fig_gas_map(
         if val < 5:
             continue
         s1, s2, e1, e2 = _shorten(lat, lon, IT_CENTER[0], IT_CENTER[1], 0.1)
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[s1, e1], lon=[s2, e2], mode="lines",
             line=dict(width=max(1.5, min(5, val / 150)), color="#E65100"),
             hoverinfo="skip", showlegend=False,
         ))
         _add_arrow(fig, s1, s2, e1, e2, "#E65100", size=0.2)
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[lat], lon=[lon], mode="markers+text",
             marker=dict(size=6, color="#E65100"),
             text=[f"{lbl}\n{val:.0f} GWh/d"],
@@ -651,7 +651,7 @@ def fig_gas_map(
 
     # 7. Yamal
     if yamal_val > 5:
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[53.0], lon=[23.5], mode="text",
             text=[f"Yamal tranzit PL\n{yamal_val:.0f} GWh/d"],
             textfont=dict(size=8, color="#546E7A"),
@@ -670,14 +670,14 @@ def fig_gas_map(
         ("#546E7A", "Yamal tranzit"),
     ]
     for color, label in legend_items:
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[None], lon=[None], mode="markers",
             marker=dict(size=10, color=color),
             name=label, showlegend=True,
         ))
 
     fig.update_layout(
-        mapbox=dict(
+        map=dict(
             style="carto-positron",
             zoom=3.8,
             center=dict(lat=50.0, lon=10.0),
@@ -708,7 +708,7 @@ def _mapbox_layout(
     """Mapbox layout — carto-positron, no token needed."""
     GREEN = "#2E7D32"
     fig.update_layout(
-        mapbox=dict(
+        map=dict(
             style="carto-positron",
             center=dict(lat=49.0, lon=13.5),
             zoom=4.3,
