@@ -20,6 +20,12 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
     df = df.copy()
     fig = go.Figure()
 
+    fig.add_trace(go.Scattermap(
+        lat=[50.0, 50.1], lon=[10.0, 10.1], mode="lines",
+        line=dict(width=1, color="rgba(0,0,0,0)"),
+        hoverinfo="skip", showlegend=False,
+    ))
+
     for _, r in df.iterrows():
         cc = r["cc"]
         if cc not in CENTERS:
