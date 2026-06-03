@@ -12,21 +12,17 @@ CENTERS = {
     "DK": (56.0, 10.0), "SE": (59.0, 15.0),
 }
 
-
 def fig_dap_map(df: pd.DataFrame) -> go.Figure:
     if df.empty:
         return go.Figure()
-
     df = df.copy()
     fig = go.Figure()
-
     for _, r in df.iterrows():
         cc = r["cc"]
         if cc not in CENTERS:
             continue
         lat, lon = CENTERS[cc]
         color = "#C62828" if r["dod_base"] > 0 else "#2E7D32"
-
         fig.add_trace(go.Scattermapbox(
             lat=[lat], lon=[lon],
             mode="text",
@@ -35,9 +31,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
             hoverinfo="skip",
             showlegend=False,
         ))
-
     last_date = str(df["date"].iloc[0]) if len(df) > 0 else ""
-
     fig.update_layout(
         mapbox=dict(
             style="white-bg",
@@ -55,10 +49,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
         height=720,
         margin=dict(l=0, r=0, t=50, b=0),
         title=dict(
-            text=(
-                f"DAP ceny elektřiny — Evropa  |  {last_date}  |  "
-                "Base | Peak €/MWh  //  Δ Base | Δ Peak €/MWh DoD"
-            ),
+            text=f"DAP ceny elektřiny — Evropa  |  {last_date}  |  Base | Peak €/MWh  //  Δ Base | Δ Peak €/MWh DoD",
             font=dict(size=11),
         ),
         paper_bgcolor="white",
