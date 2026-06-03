@@ -678,9 +678,17 @@ def fig_gas_map(
 
     fig.update_layout(
         map=dict(
-            style="carto-positron",
+            style="white-bg",
             zoom=3.8,
             center=dict(lat=50.0, lon=10.0),
+            layers=[{
+                "below": "traces",
+                "sourcetype": "geojson",
+                "source": "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson",
+                "type": "line",
+                "color": "#AAAAAA",
+                "line": {"width": 0.5},
+            }],
         ),
         height=720,
         margin=dict(l=0, r=0, t=50, b=0),
