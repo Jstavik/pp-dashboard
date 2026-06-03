@@ -669,7 +669,7 @@ def fig_gas_map(
         ))
 
     fig.update_layout(
-        map=dict(
+        mapbox=dict(
             style="white-bg",
             accesstoken="",
             zoom=3.8,
@@ -709,7 +709,7 @@ def _mapbox_layout(
     """Mapbox layout — carto-positron, no token needed."""
     GREEN = "#2E7D32"
     fig.update_layout(
-        map=dict(
+        mapbox=dict(
             style="carto-positron",
             center=dict(lat=49.0, lon=13.5),
             zoom=4.3,
