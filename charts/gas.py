@@ -671,6 +671,7 @@ def fig_gas_map(
     fig.update_layout(
         map=dict(
             style="white-bg",
+            accesstoken="",
             zoom=3.8,
             center=dict(lat=50.0, lon=10.0),
             layers=[{

@@ -41,6 +41,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
     fig.update_layout(
         mapbox=dict(
             style="white-bg",
+            accesstoken="",
             center=dict(lat=52, lon=12),
             zoom=3.8,
             layers=[{
