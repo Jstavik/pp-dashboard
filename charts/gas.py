@@ -428,7 +428,11 @@ def _draw_flow(fig, c_from, c_to, val, dod_pct, color, label=None):
         lat=[mid_lat], lon=[mid_lon], mode="text",
         text=[f"{lbl}\n{val:.0f} GWh/d\nDoD {dod_str}"],
         textfont=dict(size=8, color=color),
-        hoverinfo="skip",
+        hovertemplate=(
+            f"<b>{lbl}</b><br>"
+            f"Tok: <b>{val:.0f} GWh/d</b><br>"
+            f"DoD: <b>{dod_str}</b><extra></extra>"
+        ),
         showlegend=False,
     ))
 
@@ -595,7 +599,11 @@ def fig_gas_map(
             lat=[e1 + 0.5], lon=[e2], mode="text",
             text=[f"NO→{country}\n{val:.0f} GWh/d\nDoD {dod_str}"],
             textfont=dict(size=8, color="#7B1FA2"),
-            hoverinfo="skip",
+            hovertemplate=(
+                f"<b>Norsko → {country} ({point})</b><br>"
+                f"<b>{val:.0f} GWh/d</b><br>"
+                f"DoD: <b>{dod_str}</b><extra></extra>"
+            ),
             showlegend=False,
         ))
 
@@ -669,19 +677,10 @@ def fig_gas_map(
         ))
 
     fig.update_layout(
-        mapbox=dict(
-            style="white-bg",
-            accesstoken="",
+        map=dict(
+            style="carto-positron",
             zoom=3.8,
             center=dict(lat=50.0, lon=10.0),
-            layers=[{
-                "below": "traces",
-                "sourcetype": "geojson",
-                "source": "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson",
-                "type": "line",
-                "color": "#AAAAAA",
-                "line": {"width": 0.5},
-            }],
         ),
         height=720,
         margin=dict(l=0, r=0, t=50, b=0),
@@ -709,7 +708,7 @@ def _mapbox_layout(
     """Mapbox layout — carto-positron, no token needed."""
     GREEN = "#2E7D32"
     fig.update_layout(
-        mapbox=dict(
+        map=dict(
             style="carto-positron",
             center=dict(lat=49.0, lon=13.5),
             zoom=4.3,
