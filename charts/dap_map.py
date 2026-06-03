@@ -31,7 +31,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
             lat=[lat], lon=[lon],
             mode="text",
             text=[f"Base: {r['base']:.0f} | Peak: {r['peak']:.0f}<br>Δ {r['dod_base']:+.0f} | Δ {r['dod_peak']:+.0f}"],
-            textfont=dict(size=11, color=color, weight="bold"),
+            textfont=dict(size=11, color=color),
             hoverinfo="skip",
             showlegend=False,
         ))
