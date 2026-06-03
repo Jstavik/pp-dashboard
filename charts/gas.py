@@ -428,11 +428,7 @@ def _draw_flow(fig, c_from, c_to, val, dod_pct, color, label=None):
         lat=[mid_lat], lon=[mid_lon], mode="text",
         text=[f"{lbl}\n{val:.0f} GWh/d\nDoD {dod_str}"],
         textfont=dict(size=8, color=color),
-        hovertemplate=(
-            f"<b>{lbl}</b><br>"
-            f"Tok: <b>{val:.0f} GWh/d</b><br>"
-            f"DoD: <b>{dod_str}</b><extra></extra>"
-        ),
+        hoverinfo="skip",
         showlegend=False,
     ))
 
@@ -599,11 +595,7 @@ def fig_gas_map(
             lat=[e1 + 0.5], lon=[e2], mode="text",
             text=[f"NO→{country}\n{val:.0f} GWh/d\nDoD {dod_str}"],
             textfont=dict(size=8, color="#7B1FA2"),
-            hovertemplate=(
-                f"<b>Norsko → {country} ({point})</b><br>"
-                f"<b>{val:.0f} GWh/d</b><br>"
-                f"DoD: <b>{dod_str}</b><extra></extra>"
-            ),
+            hoverinfo="skip",
             showlegend=False,
         ))
 
