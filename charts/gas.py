@@ -508,7 +508,7 @@ def fig_gas_map(
             lambda r: r["nb"] in NEIGHBORS_MAP.get(r["countryLabel"], []),
             axis=1,
         )
-        & (flows["value_GWh"] > 5.0)
+        & (flows["value_GWh"] >= 0.0)
     ]
 
     sub_d2 = df[
@@ -627,7 +627,7 @@ def fig_gas_map(
     IT_CENTER = CENTERS_MAP["Italy"]
     for key, (lat, lon, lbl) in _TAP_COORDS.items():
         val = sum(v for k, v in tap_val.items() if key in k)
-        if val < 5:
+        if val < 0:
             continue
         s1, s2, e1, e2 = _shorten(lat, lon, IT_CENTER[0], IT_CENTER[1], 0.1)
         fig.add_trace(go.Scattermap(
@@ -650,7 +650,7 @@ def fig_gas_map(
         ))
 
     # 7. Yamal
-    if yamal_val > 5:
+    if yamal_val >= 0:
         fig.add_trace(go.Scattermap(
             lat=[53.0], lon=[23.5], mode="text",
             text=[f"Yamal tranzit PL\n{yamal_val:.0f} GWh/d"],
