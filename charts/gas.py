@@ -508,7 +508,7 @@ def fig_gas_map(
             lambda r: r["nb"] in NEIGHBORS_MAP.get(r["countryLabel"], []),
             axis=1,
         )
-        & (flows["value_GWh"] >= 0.0)
+        & (flows["value_GWh"] > 1.0)
     ]
 
     sub_d2 = df[
