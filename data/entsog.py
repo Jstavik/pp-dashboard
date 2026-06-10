@@ -50,7 +50,7 @@ def fetch_entsog_flows(days: int = 90) -> pd.DataFrame:
 
     try:
         import streamlit as st
-        return st.cache_data(ttl=3600, show_spinner=False)(_impl)(days)
+        return st.cache_data(ttl=300, show_spinner=False)(_impl)(days)
     except ImportError:
         return _impl(days)
 
@@ -65,7 +65,7 @@ def load_entsog_history() -> pd.DataFrame:
         return fetch_entsog_flows(days=90)
     try:
         import streamlit as st
-        return st.cache_data(ttl=3600, show_spinner=False)(_load)()
+        return st.cache_data(ttl=300, show_spinner=False)(_load)()
     except ImportError:
         return _load()
 

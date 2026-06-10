@@ -35,7 +35,7 @@ CENTERS = {
 }
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=300)
 def load_dap_europe() -> pd.DataFrame:
     if not os.path.exists(DAP_PATH):
         return pd.DataFrame()
