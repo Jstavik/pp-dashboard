@@ -426,7 +426,7 @@ def _draw_flow(fig, c_from, c_to, val, dod_pct, color, label=None):
     _add_arrow(fig, s1, s2, e1, e2, color, size=0.2)
     fig.add_trace(go.Scattermap(
         lat=[mid_lat], lon=[mid_lon], mode="text",
-        text=[f"{lbl}\n{val:.0f} GWh/d\nDoD {dod_str}"],
+        text=[f"{lbl}<br>{val:.0f} GWh/d<br>DoD {dod_str}"],
         textfont=dict(size=8, color=color),
         hovertemplate=(
             f"<b>{lbl}</b><br>"
@@ -492,8 +492,10 @@ def fig_gas_map(
     df["value_GWh"] = pd.to_numeric(
         df.get("value_GWh", 0), errors="coerce").fillna(0)
 
-    d2 = date.today() - timedelta(days=2)
-    d3 = date.today() - timedelta(days=3)
+    counts = df.groupby(df["date"].dt.tz_convert("Europe/Prague").dt.date).size()
+    complete = counts[counts >= 300]
+    d2 = complete.index.max()
+    d3 = complete.index[complete.index < d2].max()
 
     flows_d2 = _get_flows_clean(df, d2)
     flows_d3 = _get_flows_clean(df, d3)
@@ -597,7 +599,7 @@ def fig_gas_map(
         _add_arrow(fig, s1, s2, e1, e2, "#7B1FA2", size=0.2)
         fig.add_trace(go.Scattermap(
             lat=[e1 + 0.5], lon=[e2], mode="text",
-            text=[f"NO→{country}\n{val:.0f} GWh/d\nDoD {dod_str}"],
+            text=[f"NO→{country}<br>{val:.0f} GWh/d<br>DoD {dod_str}"],
             textfont=dict(size=8, color="#7B1FA2"),
             hovertemplate=(
                 f"<b>Norsko → {country} ({point})</b><br>"
@@ -618,7 +620,7 @@ def fig_gas_map(
         _add_arrow(fig, 57.0, 9.5, e1, e2, "#00838F", size=0.2)
         fig.add_trace(go.Scattermap(
             lat=[56.0], lon=[12.0], mode="text",
-            text=[f"Baltic Pipe\nNO→DK→PL\n{baltic_val:.0f} GWh/d"],
+            text=[f"Baltic Pipe<br>NO→DK→PL<br>{baltic_val:.0f} GWh/d"],
             textfont=dict(size=8, color="#00838F"),
             hoverinfo="skip", showlegend=False,
         ))
@@ -639,7 +641,7 @@ def fig_gas_map(
         fig.add_trace(go.Scattermap(
             lat=[lat], lon=[lon], mode="markers+text",
             marker=dict(size=6, color="#E65100"),
-            text=[f"{lbl}\n{val:.0f} GWh/d"],
+            text=[f"{lbl}<br>{val:.0f} GWh/d"],
             textposition="bottom right",
             textfont=dict(size=8, color="#E65100"),
             hovertemplate=(
@@ -653,7 +655,7 @@ def fig_gas_map(
     if yamal_val >= 0:
         fig.add_trace(go.Scattermap(
             lat=[53.0], lon=[23.5], mode="text",
-            text=[f"Yamal tranzit PL\n{yamal_val:.0f} GWh/d"],
+            text=[f"Yamal tranzit PL<br>{yamal_val:.0f} GWh/d"],
             textfont=dict(size=8, color="#546E7A"),
             hoverinfo="skip", showlegend=False,
         ))
@@ -694,7 +696,7 @@ def fig_gas_map(
         margin=dict(l=0, r=0, t=50, b=0),
         title=dict(
             text=(f"Fyzické toky plynu — Evropa  |  "
-                  f"{d2} (D-2)  |  NO nominace live"),
+                  f"{d2}  |  NO nominace live"),
             font=dict(size=13),
         ),
         legend=dict(
