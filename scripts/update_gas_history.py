@@ -304,15 +304,14 @@ def update_dap_europe():
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 
     end   = pd.Timestamp.now(tz="Europe/Prague").normalize()
-    start = end - pd.Timedelta(days=2)
-    today_date = (end - pd.Timedelta(days=1)).date()
-    yest_date  = (end - pd.Timedelta(days=2)).date()
+    start = end - pd.Timedelta(days=3)
 
     if os.path.exists(DAP_PATH):
         existing = pd.read_parquet(DAP_PATH)
         existing["date"] = pd.to_datetime(existing["date"]).dt.date
-        if today_date in existing["date"].values:
-            print(f"DAP Europe: data pro {today_date} už existují, skip")
+        last_existing = existing["date"].max()
+        if last_existing >= (pd.Timestamp.now(tz="Europe/Prague").normalize() - pd.Timedelta(days=1)).date():
+            print(f"DAP Europe: data pro {last_existing} už existují, skip")
             return
 
     def fetch_one(args):
@@ -320,6 +319,14 @@ def update_dap_europe():
         try:
             d = client.query_day_ahead_prices(code, start=start, end=end)
             d = d.tz_convert("Europe/Prague").resample("1h").mean()
+
+            # Vezmi poslední dostupný den z dat
+            available_dates = sorted(d.index.date)
+            if len(available_dates) < 2:
+                return None
+            today_date = available_dates[-1]
+            yest_date  = available_dates[-2]
+
             today = d[d.index.date == today_date]
             yest  = d[d.index.date == yest_date]
             if today.empty or yest.empty:
