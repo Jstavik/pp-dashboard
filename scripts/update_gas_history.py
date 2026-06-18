@@ -303,16 +303,18 @@ def update_dap_europe():
 
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 
-    end   = pd.Timestamp.now(tz="Europe/Prague").normalize()
-    start = end - pd.Timedelta(days=3)
+    end = pd.Timestamp.now(tz="Europe/Prague").normalize()
 
+    df_existing = None
+    existing_dates = set()
     if os.path.exists(DAP_PATH):
-        existing = pd.read_parquet(DAP_PATH)
-        existing["date"] = pd.to_datetime(existing["date"]).dt.date
-        last_existing = existing["date"].max()
-        if last_existing >= (pd.Timestamp.now(tz="Europe/Prague").normalize() - pd.Timedelta(days=1)).date():
-            print(f"DAP Europe: data pro {last_existing} už existují, skip")
-            return
+        df_existing = pd.read_parquet(DAP_PATH)
+        df_existing["date"] = pd.to_datetime(df_existing["date"]).dt.date
+        existing_dates = set(df_existing["date"].unique())
+        last_existing = df_existing["date"].max()
+        start = pd.Timestamp(last_existing, tz="Europe/Prague") - pd.Timedelta(days=1)
+    else:
+        start = end - pd.Timedelta(days=3)
 
     def fetch_one(args):
         cc, code = args
@@ -358,10 +360,14 @@ def update_dap_europe():
         return
 
     df_new = pd.DataFrame(results)
+    today_date = df_new["date"].max()
 
-    if os.path.exists(DAP_PATH):
-        df_old = pd.read_parquet(DAP_PATH)
-        df_final = pd.concat([df_old, df_new], ignore_index=True)
+    if today_date in existing_dates:
+        print(f"DAP Europe: data pro {today_date} už existují, skip")
+        return
+
+    if df_existing is not None:
+        df_final = pd.concat([df_existing, df_new], ignore_index=True)
         df_final = df_final.drop_duplicates(subset=["date", "cc"], keep="last")
     else:
         df_final = df_new
