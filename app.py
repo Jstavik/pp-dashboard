@@ -1607,8 +1607,8 @@ elif show_rep:
         st.plotly_chart(
             fig_gassco_timeseries(
                 df_g, default_pts,
-                pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=365),
-                pd.Timestamp.now(tz="UTC")),
+                df_g["date"].max() - pd.Timedelta(days=365),
+                df_g["date"].max()),
             use_container_width=True,
             config={"toImageButtonOptions": {
                 "format": "png", "filename": "gassco_ts",

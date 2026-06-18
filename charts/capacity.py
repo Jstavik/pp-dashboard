@@ -1,7 +1,7 @@
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import date, timedelta
+
 from data.entsog_capacity import expand_capacity, TSO_COUNTRY
 
 COLORS = {
@@ -32,9 +32,9 @@ def fig_capacity(
     if sub.empty:
         return go.Figure()
 
-    target_dates = [
-        date.today() + timedelta(weeks=w) for w in range(-104, 52 * 3)
-    ]
+    data_start   = pd.to_datetime(sub["periodFrom"], utc=True).min().date()
+    data_end     = pd.to_datetime(sub["periodTo"],   utc=True).max().date()
+    target_dates = list(pd.date_range(data_start, data_end, freq="W").date)
     expanded = expand_capacity(sub, target_dates)
     if expanded.empty:
         return go.Figure()
