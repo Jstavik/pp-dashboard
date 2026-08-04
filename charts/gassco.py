@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import timedelta
-from config import year_color
+from config import year_color, MONTH_TICKS
 
 
 def fig_gassco_kpi(df: pd.DataFrame) -> go.Figure:
@@ -191,9 +191,7 @@ def fig_gassco_seasonality(
         hovermode="x unified",
         xaxis=dict(
             title="Den v roce",
-            tickvals=[1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335],
-            ticktext=["Led", "Úno", "Bře", "Dub", "Kvě", "Čvn",
-                      "Čvc", "Srp", "Zář", "Říj", "Lis", "Pro"],
+            **MONTH_TICKS,
             gridcolor="#f0f0f0",
         ),
         yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),

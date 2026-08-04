@@ -4,6 +4,8 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import plotly.graph_objects as go
 
+from config import MONTH_TICKS, MSMM3_TO_GWH, GEOJSON_COUNTRIES_URL
+
 FLOW_COLORS = [
     "#1565C0","#C62828","#2E7D32","#F57F17","#6A1B9A",
     "#00838F","#E65100","#4527A0","#558B2F","#AD1457",
@@ -198,9 +200,7 @@ def fig_flow_seasonality(
         legend=dict(orientation="h", y=-0.2),
         xaxis=dict(
             title="Den v roce",
-            tickvals=[1,32,60,91,121,152,182,213,244,274,305,335],
-            ticktext=["Led","Úno","Bře","Dub","Kvě","Čvn",
-                      "Čvc","Srp","Zář","Říj","Lis","Pro"],
+            **MONTH_TICKS,
             gridcolor="#f0f0f0",
         ),
         yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),
@@ -342,9 +342,6 @@ _TAP_COORDS = {
     "Mazara":     (37.6, 12.5, "Mazara (Alžírsko)"),
     "Gela":       (37.5, 15.1, "Gela (Sev. Afrika)"),
 }
-
-MSMM3_TO_GWH = 10.55
-
 
 def _shorten(lat1, lon1, lat2, lon2, margin=0.25):
     dlat, dlon = lat2 - lat1, lon2 - lon1
@@ -647,7 +644,7 @@ def fig_gas_map(
             layers=[{
                 "below": "traces",
                 "sourcetype": "geojson",
-                "source": "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson",
+                "source": GEOJSON_COUNTRIES_URL,
                 "type": "line",
                 "color": "#AAAAAA",
                 "line": {"width": 0.5},

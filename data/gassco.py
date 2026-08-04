@@ -3,9 +3,9 @@ import pandas as pd
 import os
 from datetime import timedelta
 
+from config import MSMM3_TO_GWH
+
 GASSCO_CSV  = "data/history/gassco_nominations.csv"
-# Výhřevnost NO plynu ~10.55 GWh/MSm3, aktualizuj pokud se změní
-MSMM3_TO_GWH = 10.55
 
 
 def _get_session() -> requests.Session:

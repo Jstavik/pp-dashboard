@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from config import (
     CSS_STYLES, THRESHOLD,
     C_DEFICIT, C_SURPLUS, C_OK, C_WARN, C_NEW, C_TEXT, C_MUTED,
-    sparkline_svg,
+    sparkline_svg, storage_color,
 )
 from data.entsoe import (
     fetch_entsoe_data, fetch_dap, fetch_installed_capacity,
@@ -923,9 +923,8 @@ elif show_gas:
                         with_ = float(row.get("withdrawal", 0))
                         net   = inj - with_
                         net_str = f"+{net:.0f}" if net >= 0 else f"{net:.0f}"
-                        icon  = ("🔴" if full < 25 else
-                                 "🟠" if full < 50 else
-                                 "🔵" if full < 75 else "🟢")
+                        icon  = {"#C62828": "🔴", "#FF8F00": "🟠",
+                                 "#1565C0": "🔵", "#2E7D32": "🟢"}[storage_color(full)]
                         cols[i].metric(
                             label=f"{icon} {cc}",
                             value=f"{full:.1f}%",
@@ -1668,16 +1667,9 @@ elif show_rep:
             tbl["twh_str"] = tbl["gasInStorage"].apply(
                 lambda x: f"{x:.1f} TWh" if not pd.isna(x) else "n/a")
 
-            def stor_color(v):
-                if pd.isna(v): return "#BDBDBD"
-                if v < 25: return "#C62828"
-                if v < 45: return "#FF8F00"
-                if v < 65: return "#1565C0"
-                return "#2E7D32"
-
             cell_colors = [
                 ["#F5F5F5"] * len(tbl),
-                [stor_color(v) for v in tbl["full"]],
+                ["#BDBDBD" if pd.isna(v) else storage_color(v) for v in tbl["full"]],
                 ["white"] * len(tbl),
                 ["#E8F5E9" if n >= 0 else "#FFEBEE" for n in tbl["net"]],
                 ["white"] * len(tbl),

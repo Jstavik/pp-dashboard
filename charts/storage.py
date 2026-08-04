@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from data.gie import VARIABLES, FIXED_COUNTRIES
-from config import year_color
+from config import year_color, MONTH_TICKS
 
 
 def year_width(year: int) -> float:
@@ -49,9 +49,7 @@ def fig_storage_main(
         hovermode="x unified",
         xaxis=dict(
             title="Den v roce",
-            tickvals=[1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335],
-            ticktext=["Led", "Úno", "Bře", "Dub", "Kvě", "Čvn",
-                      "Čvc", "Srp", "Zář", "Říj", "Lis", "Pro"],
+            **MONTH_TICKS,
             gridcolor="#f0f0f0",
         ),
         yaxis=dict(title=f"{label} [{unit}]", gridcolor="#f0f0f0"),

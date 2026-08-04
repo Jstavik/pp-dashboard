@@ -1,16 +1,8 @@
 import plotly.graph_objects as go
 import pandas as pd
 
-CENTERS = {
-    "CZ": (49.8, 15.5), "DE": (51.2, 10.4), "FR": (46.5, 2.5),
-    "AT": (47.5, 14.5), "SK": (48.7, 19.5), "PL": (52.0, 19.5),
-    "HU": (47.2, 19.3), "NL": (52.3, 5.3),  "BE": (50.5, 4.5),
-    "ES": (40.0, -3.5), "PT": (39.5, -8.0), "IT": (42.5, 12.5),
-    "RO": (45.8, 24.8), "BG": (42.7, 25.5), "GR": (39.5, 22.0),
-    "RS": (44.0, 21.0), "HR": (45.2, 15.5), "SI": (46.1, 14.8),
-    "CH": (47.0, 8.3),  "FI": (64.0, 26.0), "NO": (62.0, 10.0),
-    "DK": (56.0, 10.0), "SE": (59.0, 15.0),
-}
+from data.dap_europe import CENTERS
+from config import GEOJSON_COUNTRIES_URL
 
 def fig_dap_map(df: pd.DataFrame) -> go.Figure:
     if df.empty:
@@ -40,7 +32,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
             layers=[{
                 "below": "traces",
                 "sourcetype": "geojson",
-                "source": "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson",
+                "source": GEOJSON_COUNTRIES_URL,
                 "type": "line",
                 "color": "#AAAAAA",
                 "line": {"width": 0.5},

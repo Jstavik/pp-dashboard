@@ -9,6 +9,7 @@ import time
 from data.entsog_capacity import update_capacity
 from data.lng import update_lng
 from data.gassco import update_gassco
+from data.dap_europe import DAP_COUNTRIES
 
 # ENTSO-G aggregateddata API sahá do 2020, dříve není dostupné
 HISTORY_START  = date(2020, 1, 1)
@@ -290,16 +291,6 @@ def update_dap_europe():
 
     ENTSOE_TOKEN = "95fa8cc7-1438-455b-9060-795d7c44d389"
     DAP_PATH = "data/history/dap_europe.parquet"
-    DAP_COUNTRIES = {
-        "CZ": "CZ", "DE": "DE_LU", "FR": "FR", "AT": "AT", "SK": "SK",
-        "PL": "PL", "HU": "HU", "NL": "NL", "BE": "BE", "ES": "ES",
-        "PT": "PT", "IT": "10Y1001A1001A73I", "RO": "10YRO-TEL------P",
-        "BG": "10YCA-BULGARIA-R", "GR": "10YGR-HTSO-----Y",
-        "RS": "10YCS-SERBIATSOV", "HR": "10YHR-HEP------M",
-        "SI": "10YSI-ELES-----O", "CH": "10YCH-SWISSGRIDZ",
-        "FI": "10YFI-1--------U", "NO": "10YNO-1--------2",
-        "DK": "10YDK-1--------W", "SE": "10Y1001A1001A46L",
-    }
 
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 

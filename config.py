@@ -5,6 +5,8 @@ ENTSOE_TOKEN = "95fa8cc7-1438-455b-9060-795d7c44d389"
 THRESHOLD    = 20          # MWh — práh DEFICIT / SURPLUS
 PEAK_HOURS   = set(range(8, 20))
 DG_BASE      = "https://api.deltagreen.cz/api/proteus/external/v1"
+MSMM3_TO_GWH = 10.55       # převod norských nominací MSm3 → GWh
+GEOJSON_COUNTRIES_URL = "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
 
 # Barvy
 C_DEFICIT = "#C62828"
@@ -161,6 +163,21 @@ def year_color(year: int) -> str:
     if year == current:
         return "#2E7D32"
     return YEAR_PALETTE[(current - year - 1) % len(YEAR_PALETTE)]
+
+
+def storage_color(pct: float) -> str:
+    """Barva podle % plnosti zásobníku — sdílené prahy 25/50/75."""
+    if pct < 25: return "#C62828"
+    if pct < 50: return "#FF8F00"
+    if pct < 75: return "#1565C0"
+    return "#2E7D32"
+
+
+# ── SEZONNOST — MĚSÍČNÍ TICK LABELS ──────────────────────────────
+MONTH_TICKS = dict(
+    tickvals=[1,32,60,91,121,152,182,213,244,274,305,335],
+    ticktext=["Led","Úno","Bře","Dub","Kvě","Čvn","Čvc","Srp","Zář","Říj","Lis","Pro"],
+)
 
 
 # ── SDÍLENÉ CHART HELPERY ────────────────────────────────────────

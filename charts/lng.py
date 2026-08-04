@@ -1,7 +1,7 @@
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from config import year_color
+from config import year_color, storage_color, MONTH_TICKS
 
 
 def _add_trace(fig, x, y, name, color, chart_type):
@@ -172,9 +172,7 @@ def fig_lng_seasonality(
         hovermode="x unified",
         xaxis=dict(
             title="Den v roce",
-            tickvals=[1,32,60,91,121,152,182,213,244,274,305,335],
-            ticktext=["Led","Úno","Bře","Dub","Kvě","Čvn",
-                      "Čvc","Srp","Zář","Říj","Lis","Pro"],
+            **MONTH_TICKS,
             gridcolor="#f0f0f0",
         ),
         yaxis=dict(title="GWh/d", gridcolor="#f0f0f0"),
@@ -202,13 +200,7 @@ def fig_lng_inventory(df_alsi: pd.DataFrame) -> go.Figure:
     last = last.sort_values("full_pct", ascending=True)
     name_col = "name" if "name" in last.columns else last.columns[0]
 
-    colors = [
-        "#C62828" if f < 25 else
-        "#FF8F00" if f < 50 else
-        "#1565C0" if f < 75 else
-        "#2E7D32"
-        for f in last["full_pct"]
-    ]
+    colors = [storage_color(f) for f in last["full_pct"]]
 
     fig = go.Figure(go.Bar(
         x=last["full_pct"],
@@ -346,9 +338,7 @@ def fig_lng_storage_seasonality(
         hovermode="x unified",
         xaxis=dict(
             title="Den v roce",
-            tickvals=[1,32,60,91,121,152,182,213,244,274,305,335],
-            ticktext=["Led","Úno","Bře","Dub","Kvě","Čvn",
-                      "Čvc","Srp","Zář","Říj","Lis","Pro"],
+            **MONTH_TICKS,
             gridcolor="#f0f0f0",
         ),
         yaxis=dict(title="%", gridcolor="#f0f0f0", range=[0, 105]),
