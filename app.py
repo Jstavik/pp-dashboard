@@ -581,9 +581,10 @@ if show_ee:
             st.plotly_chart(fig_nuclear_fr_capacity(data_fr), use_container_width=True,
                             config={"displayModeBar": False})
 
-            df_gen_fr = load_nuclear_fr_generation()
-            st.plotly_chart(fig_nuclear_fr_seasonality(df_gen_fr), use_container_width=True,
-                            config={"displayModeBar": False})
+            with st.expander("📈 Sezonalita produkce (načítá se déle)"):
+                df_gen_fr = load_nuclear_fr_generation()
+                st.plotly_chart(fig_nuclear_fr_seasonality(df_gen_fr), use_container_width=True,
+                                config={"displayModeBar": False})
 
             st.markdown('<div class="section-title">Aktivní odstávky</div>',
                         unsafe_allow_html=True)

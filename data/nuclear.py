@@ -1,7 +1,10 @@
+import os
 from entsoe import EntsoePandasClient
 import pandas as pd
 import streamlit as st
 from config import ENTSOE_TOKEN
+
+NUCLEAR_FR_GEN_PATH = "data/history/nuclear_fr_generation.parquet"
 
 @st.cache_data(ttl=3600)
 def load_nuclear_fr(days_back: int = 0, days_forward: int = 90) -> dict:
@@ -62,9 +65,16 @@ def load_nuclear_fr(days_back: int = 0, days_forward: int = 90) -> dict:
 
 @st.cache_data(ttl=86400)
 def load_nuclear_fr_generation() -> pd.DataFrame:
+    current_year = pd.Timestamp.now().year
+
+    if os.path.exists(NUCLEAR_FR_GEN_PATH):
+        df_cached = pd.read_parquet(NUCLEAR_FR_GEN_PATH)
+        if not df_cached.empty and df_cached.index.max().year == current_year:
+            return df_cached
+
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
     results = []
-    for year in range(2020, pd.Timestamp.now().year + 1):
+    for year in range(2020, current_year + 1):
         try:
             start = pd.Timestamp(f"{year}-01-01", tz="Europe/Paris")
             end = pd.Timestamp(f"{year}-12-31", tz="Europe/Paris")
@@ -75,4 +85,9 @@ def load_nuclear_fr_generation() -> pd.DataFrame:
             results.append(df)
         except Exception as e:
             print(f"FR generation {year}: {e}")
-    return pd.concat(results) if results else pd.DataFrame()
+    df_result = pd.concat(results) if results else pd.DataFrame()
+
+    if not df_result.empty:
+        df_result.to_parquet(NUCLEAR_FR_GEN_PATH)
+
+    return df_result
