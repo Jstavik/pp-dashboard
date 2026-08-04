@@ -303,7 +303,9 @@ def update_dap_europe():
 
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 
-    end = pd.Timestamp.now(tz="Europe/Prague").normalize()
+    # +1 den: den-ahead ceny na dnešek jsou publikované už včera, takže
+    # dnešek je kompletní den dat a musí být celý zahrnutý v dotazu.
+    end = pd.Timestamp.now(tz="Europe/Prague").normalize() + pd.Timedelta(days=1)
 
     df_existing = None
     existing_dates = set()
@@ -322,12 +324,15 @@ def update_dap_europe():
             d = client.query_day_ahead_prices(code, start=start, end=end)
             d = d.tz_convert("Europe/Prague").resample("1h").mean()
 
-            # Vezmi poslední dostupný den z dat
-            available_dates = sorted(d.index.date)
-            if len(available_dates) < 2:
+            # Vezmi jen kompletní dny (>= 20 hodinových bodů) — poslední den
+            # v odpovědi ENTSO-E může být jen okrajový bod (např. 00:00),
+            # což by se mylně vzalo jako "dnešek" a peak (8-20h) by vyšel NaN.
+            day_counts = pd.Series(d.index.date).value_counts()
+            full_dates = sorted(dt for dt, cnt in day_counts.items() if cnt >= 20)
+            if len(full_dates) < 2:
                 return None
-            today_date = available_dates[-1]
-            yest_date  = available_dates[-2]
+            today_date = full_dates[-1]
+            yest_date  = full_dates[-2]
 
             today = d[d.index.date == today_date]
             yest  = d[d.index.date == yest_date]
