@@ -395,6 +395,8 @@ def update_nuclear_fr_generation():
 
     df_new = client.query_generation("FR", start=start, end=end, psr_type="B14")
     df_new.columns = ["nuclear_mw"]
+    df_new["year"] = df_new.index.tz_convert("Europe/Paris").year
+    df_new["day_of_year"] = df_new.index.tz_convert("Europe/Paris").day_of_year
 
     if existing is not None:
         df_final = pd.concat([existing, df_new])
