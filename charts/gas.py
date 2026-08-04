@@ -1,18 +1,30 @@
-import math
-import re
 import numpy as np
 import requests
 import xml.etree.ElementTree as ET
 import pandas as pd
 import plotly.graph_objects as go
-import streamlit as st
-from datetime import date, timedelta
-from data.entsog import POINTS_CONFIG
 
 FLOW_COLORS = [
     "#1565C0","#C62828","#2E7D32","#F57F17","#6A1B9A",
     "#00838F","#E65100","#4527A0","#558B2F","#AD1457",
 ]
+
+_YEAR_COLOR_BY_AGE = {
+    0: "#2E7D32",  # aktuální rok — nejsilnější
+    1: "#C62828",  # current-1 — výrazná
+    2: "#F57F17",
+    3: "#1565C0",
+}
+_YEAR_COLOR_OLD = "#BDBDBD"  # current-4 a starší
+
+
+def _year_color_seasonality(year: int) -> str:
+    """Barva pro rok v sezonním grafu — relativně k aktuálnímu roku,
+    stejný princip jako config.year_color(). current-4 a starší = šedá."""
+    diff = pd.Timestamp.now().year - year
+    if diff <= 0:
+        return _YEAR_COLOR_BY_AGE[0]
+    return _YEAR_COLOR_BY_AGE.get(diff, _YEAR_COLOR_OLD)
 
 
 def fig_flow_timeseries(
@@ -115,12 +127,6 @@ def fig_flow_seasonality(
     Sezonnost — agregát vybraných filtrů, jedna křivka = jeden rok.
     Osa X = den v roce (1–366).
     """
-    YEAR_COLORS = {
-        2020: "#BDBDBD", 2021: "#90A4AE", 2022: "#42A5F5",
-        2023: "#1565C0", 2024: "#F57F17", 2025: "#C62828",
-        2026: "#2E7D32",
-    }
-
     fig = go.Figure()
 
     if any([countries, points, systems, directions]):
@@ -156,7 +162,7 @@ def fig_flow_seasonality(
         if grp.empty:
             continue
         series = grp.groupby("day_of_year")["value_GWh"].sum().sort_index()
-        color  = YEAR_COLORS.get(yr, "#9E9E9E")
+        color  = _year_color_seasonality(yr)
         width  = 2.5 if yr == pd.Timestamp.now().year else 1.5
         if chart_type == "Sloupcový":
             fig.add_trace(go.Bar(
@@ -201,39 +207,6 @@ def fig_flow_seasonality(
         margin=dict(l=60, r=20, t=50, b=80),
     )
     return fig
-
-def fig_gas_flows_bar(pivot: pd.DataFrame, height: int = 380) -> go.Figure:
-    """Sloupcový graf fyzických toků CZ — netto GWh/d."""
-    colors = {
-        "Brandov/Waidhaus (DE)": "#1565C0",
-        "Lanžhot (SK)":          "#2E7D32",
-        "Český Těšín (PL)":      "#F57F17",
-        "Zásobníky":             "#6A1B9A",
-        "Distribuce":            "#C62828",
-        "Koneční spotřebitelé":  "#E65100",
-    }
-    fig = go.Figure()
-    for col in pivot.columns:
-        if pivot[col].abs().sum() < 0.1:
-            continue
-        fig.add_trace(go.Bar(
-            x=pivot.index, y=pivot[col],
-            name=col,
-            marker_color=colors.get(col, "#9E9E9E"),
-            hovertemplate=f"<b>{col}</b><br>%{{x|%d.%m.%Y}}<br>%{{y:.1f}} GWh/d<extra></extra>",
-        ))
-    fig.add_hline(y=0, line_color="black", line_width=0.8)
-    fig.update_layout(
-        barmode="relative", height=height, template="plotly_white",
-        hovermode="x unified",
-        title="Fyzické toky plynu CZ — netto (+ import, − export) [GWh/d]",
-        legend=dict(orientation="h", y=-0.15),
-        xaxis=dict(tickformat="%d.%m", gridcolor="#f0f0f0"),
-        yaxis=dict(title="GWh/d"),
-        margin=dict(l=60, r=20, t=50, b=80),
-    )
-    return fig
-
 
 def fig_gas_point_history(pivot: pd.DataFrame, point: str, height: int = 260) -> go.Figure:
     """Historický graf pro jeden hraniční přechod."""
@@ -371,18 +344,6 @@ _TAP_COORDS = {
 }
 
 MSMM3_TO_GWH = 10.55
-
-
-def _make_bar(full_pct, width=8):
-    filled = round(full_pct / 100 * width)
-    return "█" * filled + "░" * (width - filled)
-
-
-def _storage_color(full_pct):
-    if full_pct < 25: return "#C62828"
-    if full_pct < 50: return "#FF8F00"
-    if full_pct < 75: return "#1565C0"
-    return "#2E7D32"
 
 
 def _shorten(lat1, lon1, lat2, lon2, margin=0.25):
@@ -710,38 +671,3 @@ def fig_gas_map(
         paper_bgcolor="white",
     )
     return fig
-
-
-def _mapbox_layout(
-    fig: go.Figure, height: int, date_label: str
-) -> None:
-    """Mapbox layout — carto-positron, no token needed."""
-    GREEN = "#2E7D32"
-    fig.update_layout(
-        map=dict(
-            style="carto-positron",
-            center=dict(lat=49.0, lon=13.5),
-            zoom=4.3,
-        ),
-        height=height,
-        margin=dict(l=0, r=0, t=55, b=0),
-        title=dict(
-            text=(
-                f"<b>Fyzické toky plynu — CEE Flowchart</b>"
-                f"<br><span style='font-size:11px;color:#757575'>"
-                f"Gasday: {date_label} · 06:00–06:00 CET"
-                f" · GWh/d · ENTSO-G TP</span>"
-                f"<br><span style='font-size:10px;color:{GREEN}'>"
-                f"● hraniční přechod · hodnoty GWh/d"
-                f" · ▲▼ DoD %</span>"
-            ),
-            font=dict(size=15, color="#212121"),
-            x=0.01,
-        ),
-        showlegend=False,
-        autosize=True,
-    )
-
-
-# backward compat alias
-_geo_layout = _mapbox_layout

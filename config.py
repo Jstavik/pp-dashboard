@@ -1,5 +1,4 @@
 import pandas as pd
-import plotly.graph_objects as go
 
 # ── KONFIGURACE ──────────────────────────────────────────────────
 ENTSOE_TOKEN = "95fa8cc7-1438-455b-9060-795d7c44d389"

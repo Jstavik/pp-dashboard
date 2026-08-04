@@ -20,12 +20,12 @@ from data.ceps import (
     fetch_ceps_imbalance, fetch_ceps_svr, fetch_ceps_imbalance_price, fetch_ceps_all,
 )
 from data.deltagreen import fetch_deltagreen
-from data.entsog import fetch_entsog_flows, load_entsog_history, _short_name
-from data.gie import load_gie_all, VARIABLES, FIXED_COUNTRIES
+from data.entsog import load_entsog_history, _short_name
+from data.gie import load_gie_all, VARIABLES
 from data.hydro import load_hydro, HYDRO_COUNTRY_NAMES
-from data.entsog_capacity import load_capacity, GAS_KEY_POINTS
+from data.entsog_capacity import load_capacity
 from charts.gas import (
-    fig_gas_flows_bar, fig_gas_point_history, fig_gas_map,
+    fig_gas_point_history, fig_gas_map,
     fig_flow_timeseries, fig_flow_seasonality,
 )
 from charts.storage import fig_storage_main, fig_storage_grid
@@ -47,7 +47,7 @@ from charts.gassco import (
 from charts.imbalance import (
     parse_imbalance,
     fig_ceps_dashboard, fig_ceps_combined, fig_ceps_svr,
-    fig_imbalance, fig_signal, fig_activation_prices,
+    fig_activation_prices,
     balancing_strategy_ema, fig_balancing_strategy,
 )
 from charts.generation import (
@@ -1547,43 +1547,46 @@ elif show_rep:
         st.markdown("#### Fyzické toky plynu — Evropa")
         st.caption("Mapa ENTSO-G D-2 + norské nominace live (GASSCO)")
 
-        with st.spinner("Načítám data..."):
-            fig_map_rep = fig_gas_map(
-                df_hist,
-                df_gassco=load_gassco(),
-            )
-            fig_map_rep.update_layout(
-                height=1050,
-                width=744,
-                margin=dict(l=10, r=10, t=50, b=30),
-                paper_bgcolor="white",
-            )
+        if df_hist.empty:
+            st.warning("Data nejsou k dispozici.")
+        else:
+            with st.spinner("Načítám data..."):
+                fig_map_rep = fig_gas_map(
+                    df_hist,
+                    df_gassco=load_gassco(),
+                )
+                fig_map_rep.update_layout(
+                    height=1050,
+                    width=744,
+                    margin=dict(l=10, r=10, t=50, b=30),
+                    paper_bgcolor="white",
+                )
 
-        with st.container():
-            st.plotly_chart(
-                fig_map_rep,
-                use_container_width=False,
-                config={
-                    "displayModeBar": True,
-                    "modeBarButtonsToRemove": [
-                        "pan2d", "lasso2d", "select2d",
-                        "autoScale2d", "resetScale2d"
-                    ],
-                    "toImageButtonOptions": {
-                        "format": "png",
-                        "filename": f"toky_plynu_{pd.Timestamp.now().strftime('%Y%m%d')}",
-                        "height": 1123,
-                        "width": 794,
-                        "scale": 2,
+            with st.container():
+                st.plotly_chart(
+                    fig_map_rep,
+                    use_container_width=False,
+                    config={
+                        "displayModeBar": True,
+                        "modeBarButtonsToRemove": [
+                            "pan2d", "lasso2d", "select2d",
+                            "autoScale2d", "resetScale2d"
+                        ],
+                        "toImageButtonOptions": {
+                            "format": "png",
+                            "filename": f"toky_plynu_{pd.Timestamp.now().strftime('%Y%m%d')}",
+                            "height": 1123,
+                            "width": 794,
+                            "scale": 2,
+                        },
                     },
-                },
-            )
+                )
 
-        st.caption(
-            "📷 Stáhnout PNG: ikona fotoaparátu vpravo nahoře v grafu  |  "
-            "📋 Kopírovat: pravý klik na graf → Uložit obrázek jako → "
-            "pak Ctrl+C z prohlížeče nebo vložit přímo do Wordu"
-        )
+            st.caption(
+                "📷 Stáhnout PNG: ikona fotoaparátu vpravo nahoře v grafu  |  "
+                "📋 Kopírovat: pravý klik na graf → Uložit obrázek jako → "
+                "pak Ctrl+C z prohlížeče nebo vložit přímo do Wordu"
+            )
 
     # ── GASSCO ──────────────────────────────────────────
     with rep_gassco:
@@ -1591,156 +1594,161 @@ elif show_rep:
 
         df_g = load_gassco()
 
-        default_pts = ["Emden", "Dornum", "Zeebrugge",
-                       "Nybro", "Dunkerque", "Easington", "St.Fergus"]
-        default_yrs = (sorted(df_g["date"].dt.tz_convert(
-            "Europe/Prague").dt.year.unique())[-5:]
-            if not df_g.empty else [])
+        if df_g.empty:
+            st.warning("Data nejsou k dispozici.")
+        else:
+            default_pts = ["Emden", "Dornum", "Zeebrugge",
+                           "Nybro", "Dunkerque", "Easington", "St.Fergus"]
+            default_yrs = sorted(df_g["date"].dt.tz_convert(
+                "Europe/Prague").dt.year.unique())[-5:]
 
-        st.plotly_chart(
-            fig_gassco_kpi(df_g),
-            use_container_width=True,
-            config={"toImageButtonOptions": {
-                "format": "png", "filename": "gassco_kpi",
-                "height": 400, "width": 794, "scale": 2}})
+            st.plotly_chart(
+                fig_gassco_kpi(df_g),
+                use_container_width=True,
+                config={"toImageButtonOptions": {
+                    "format": "png", "filename": "gassco_kpi",
+                    "height": 400, "width": 794, "scale": 2}})
 
-        st.plotly_chart(
-            fig_gassco_timeseries(
-                df_g, default_pts,
-                df_g["date"].max() - pd.Timedelta(days=365),
-                df_g["date"].max()),
-            use_container_width=True,
-            config={"toImageButtonOptions": {
-                "format": "png", "filename": "gassco_ts",
-                "height": 400, "width": 794, "scale": 2}})
+            st.plotly_chart(
+                fig_gassco_timeseries(
+                    df_g, default_pts,
+                    df_g["date"].max() - pd.Timedelta(days=365),
+                    df_g["date"].max()),
+                use_container_width=True,
+                config={"toImageButtonOptions": {
+                    "format": "png", "filename": "gassco_ts",
+                    "height": 400, "width": 794, "scale": 2}})
 
-        st.plotly_chart(
-            fig_gassco_seasonality(df_g, default_pts, default_yrs),
-            use_container_width=True,
-            config={"toImageButtonOptions": {
-                "format": "png", "filename": "gassco_sea",
-                "height": 400, "width": 794, "scale": 2}})
+            st.plotly_chart(
+                fig_gassco_seasonality(df_g, default_pts, default_yrs),
+                use_container_width=True,
+                config={"toImageButtonOptions": {
+                    "format": "png", "filename": "gassco_sea",
+                    "height": 400, "width": 794, "scale": 2}})
 
-        st.caption("📷 Stáhnout: ikona fotoaparátu v grafu")
+            st.caption("📷 Stáhnout: ikona fotoaparátu v grafu")
 
     # ── Zásobníky ────────────────────────────────────────
     with rep_stor:
         st.markdown("#### Zásobníky plynu — Evropa")
 
         df_gie_r = load_gie_all()
-        default_yrs_s = (sorted(
-            pd.to_datetime(df_gie_r["gasDayStart"], errors="coerce")
-            .dt.year.dropna().unique().astype(int))[-5:]
-            if not df_gie_r.empty else [])
 
-        # ── Aktuální stav — Plotly tabulka ───────────────────────
-        import plotly.graph_objects as go
+        if df_gie_r.empty:
+            st.warning("Data nejsou k dispozici.")
+        else:
+            default_yrs_s = sorted(
+                pd.to_datetime(df_gie_r["gasDayStart"], errors="coerce")
+                .dt.year.dropna().unique().astype(int))[-5:]
 
-        df_gie_r2 = load_gie_all()
-        df_gie_r2["gasDayStart"] = pd.to_datetime(
-            df_gie_r2["gasDayStart"], errors="coerce")
-        for c in ["full", "gasInStorage", "injection", "withdrawal"]:
-            df_gie_r2[c] = pd.to_numeric(df_gie_r2[c], errors="coerce")
+            # ── Aktuální stav — Plotly tabulka ───────────────────────
+            import plotly.graph_objects as go
 
-        last_stor2 = (df_gie_r2.dropna(subset=["gasDayStart"])
-                      .sort_values("gasDayStart")
-                      .groupby("country_code").last()
-                      .reset_index())
+            df_gie_r2 = load_gie_all()
+            df_gie_r2["gasDayStart"] = pd.to_datetime(
+                df_gie_r2["gasDayStart"], errors="coerce")
+            for c in ["full", "gasInStorage", "injection", "withdrawal"]:
+                df_gie_r2[c] = pd.to_numeric(df_gie_r2[c], errors="coerce")
 
-        show_cc = ["EU", "AT", "BE", "CZ", "DE", "ES", "FR",
-                   "HR", "HU", "IT", "LV", "NL", "PL", "PT",
-                   "RO", "SK", "UA"]
-        tbl = last_stor2[last_stor2["country_code"].isin(show_cc)].copy()
-        tbl = tbl.set_index("country_code").reindex(show_cc).reset_index()
-        tbl["net"] = tbl["injection"].fillna(0) - tbl["withdrawal"].fillna(0)
-        tbl["net_str"] = tbl["net"].apply(
-            lambda x: f"+{x:.0f}" if x >= 0 else f"{x:.0f}")
-        tbl["full_str"] = tbl["full"].apply(
-            lambda x: f"{x:.1f}%" if not pd.isna(x) else "n/a")
-        tbl["twh_str"] = tbl["gasInStorage"].apply(
-            lambda x: f"{x:.1f} TWh" if not pd.isna(x) else "n/a")
+            last_stor2 = (df_gie_r2.dropna(subset=["gasDayStart"])
+                          .sort_values("gasDayStart")
+                          .groupby("country_code").last()
+                          .reset_index())
 
-        def stor_color(v):
-            if pd.isna(v): return "#BDBDBD"
-            if v < 25: return "#C62828"
-            if v < 45: return "#FF8F00"
-            if v < 65: return "#1565C0"
-            return "#2E7D32"
+            show_cc = ["EU", "AT", "BE", "CZ", "DE", "ES", "FR",
+                       "HR", "HU", "IT", "LV", "NL", "PL", "PT",
+                       "RO", "SK", "UA"]
+            tbl = last_stor2[last_stor2["country_code"].isin(show_cc)].copy()
+            tbl = tbl.set_index("country_code").reindex(show_cc).reset_index()
+            tbl["net"] = tbl["injection"].fillna(0) - tbl["withdrawal"].fillna(0)
+            tbl["net_str"] = tbl["net"].apply(
+                lambda x: f"+{x:.0f}" if x >= 0 else f"{x:.0f}")
+            tbl["full_str"] = tbl["full"].apply(
+                lambda x: f"{x:.1f}%" if not pd.isna(x) else "n/a")
+            tbl["twh_str"] = tbl["gasInStorage"].apply(
+                lambda x: f"{x:.1f} TWh" if not pd.isna(x) else "n/a")
 
-        cell_colors = [
-            ["#F5F5F5"] * len(tbl),
-            [stor_color(v) for v in tbl["full"]],
-            ["white"] * len(tbl),
-            ["#E8F5E9" if n >= 0 else "#FFEBEE" for n in tbl["net"]],
-            ["white"] * len(tbl),
-        ]
-        font_colors = [
-            ["#333"] * len(tbl),
-            ["white"] * len(tbl),
-            ["#333"] * len(tbl),
-            ["#2E7D32" if n >= 0 else "#C62828" for n in tbl["net"]],
-            ["#555"] * len(tbl),
-        ]
+            def stor_color(v):
+                if pd.isna(v): return "#BDBDBD"
+                if v < 25: return "#C62828"
+                if v < 45: return "#FF8F00"
+                if v < 65: return "#1565C0"
+                return "#2E7D32"
 
-        fig_tbl = go.Figure(data=[go.Table(
-            columnwidth=[60, 80, 90, 90, 90],
-            header=dict(
-                values=["<b>Země</b>", "<b>Plnost %</b>",
-                        "<b>Objem TWh</b>", "<b>Net GWh/d</b>",
-                        "<b>Vtláčení GWh/d</b>"],
-                fill_color="#1565C0",
-                font=dict(color="white", size=11),
-                align="center", height=32,
-            ),
-            cells=dict(
-                values=[
-                    tbl["country_code"],
-                    tbl["full_str"],
-                    tbl["twh_str"],
-                    tbl["net_str"],
-                    tbl["injection"].apply(
-                        lambda x: f"+{x:.0f}" if not pd.isna(x) else "n/a"),
-                ],
-                fill_color=cell_colors,
-                font=dict(color=font_colors, size=11),
-                align="center", height=28,
-            ),
-        )])
-        fig_tbl.update_layout(
-            height=len(tbl) * 28 + 60,
-            margin=dict(l=0, r=0, t=0, b=0),
-            paper_bgcolor="white",
-        )
-        st.plotly_chart(
-            fig_tbl,
-            use_container_width=True,
-            config={"toImageButtonOptions": {
-                "format": "png",
-                "filename": f"zasobniky_stav_{pd.Timestamp.now().strftime('%Y%m%d')}",
-                "height": 600, "width": 794, "scale": 2,
-            }},
-        )
-        last_date_stor = (df_gie_r2["gasDayStart"]
-            .dropna()
-            .dt.date.max())
-        st.caption(
-            f"Stav: {last_date_stor.strftime('%d.%m.%Y')}  |  "
-            "📷 Stáhnout: ikona fotoaparátu v grafu"
-        )
+            cell_colors = [
+                ["#F5F5F5"] * len(tbl),
+                [stor_color(v) for v in tbl["full"]],
+                ["white"] * len(tbl),
+                ["#E8F5E9" if n >= 0 else "#FFEBEE" for n in tbl["net"]],
+                ["white"] * len(tbl),
+            ]
+            font_colors = [
+                ["#333"] * len(tbl),
+                ["white"] * len(tbl),
+                ["#333"] * len(tbl),
+                ["#2E7D32" if n >= 0 else "#C62828" for n in tbl["net"]],
+                ["#555"] * len(tbl),
+            ]
 
-        st.markdown("---")
+            fig_tbl = go.Figure(data=[go.Table(
+                columnwidth=[60, 80, 90, 90, 90],
+                header=dict(
+                    values=["<b>Země</b>", "<b>Plnost %</b>",
+                            "<b>Objem TWh</b>", "<b>Net GWh/d</b>",
+                            "<b>Vtláčení GWh/d</b>"],
+                    fill_color="#1565C0",
+                    font=dict(color="white", size=11),
+                    align="center", height=32,
+                ),
+                cells=dict(
+                    values=[
+                        tbl["country_code"],
+                        tbl["full_str"],
+                        tbl["twh_str"],
+                        tbl["net_str"],
+                        tbl["injection"].apply(
+                            lambda x: f"+{x:.0f}" if not pd.isna(x) else "n/a"),
+                    ],
+                    fill_color=cell_colors,
+                    font=dict(color=font_colors, size=11),
+                    align="center", height=28,
+                ),
+            )])
+            fig_tbl.update_layout(
+                height=len(tbl) * 28 + 60,
+                margin=dict(l=0, r=0, t=0, b=0),
+                paper_bgcolor="white",
+            )
+            st.plotly_chart(
+                fig_tbl,
+                use_container_width=True,
+                config={"toImageButtonOptions": {
+                    "format": "png",
+                    "filename": f"zasobniky_stav_{pd.Timestamp.now().strftime('%Y%m%d')}",
+                    "height": 600, "width": 794, "scale": 2,
+                }},
+            )
+            last_date_stor = (df_gie_r2["gasDayStart"]
+                .dropna()
+                .dt.date.max())
+            st.caption(
+                f"Stav: {last_date_stor.strftime('%d.%m.%Y')}  |  "
+                "📷 Stáhnout: ikona fotoaparátu v grafu"
+            )
 
-        # ── Sezonnost — grid 6 zemí ───────────────────────────────
-        st.plotly_chart(
-            fig_storage_grid(df_gie_r, "full", default_yrs_s),
-            use_container_width=True,
-            config={"toImageButtonOptions": {
-                "format": "png",
-                "filename": f"zasobniky_grid_{pd.Timestamp.now().strftime('%Y%m%d')}",
-                "height": 700, "width": 794, "scale": 2,
-            }})
+            st.markdown("---")
 
-        st.caption("📷 Stáhnout: ikona fotoaparátu v grafu")
+            # ── Sezonnost — grid 6 zemí ───────────────────────────────
+            st.plotly_chart(
+                fig_storage_grid(df_gie_r, "full", default_yrs_s),
+                use_container_width=True,
+                config={"toImageButtonOptions": {
+                    "format": "png",
+                    "filename": f"zasobniky_grid_{pd.Timestamp.now().strftime('%Y%m%d')}",
+                    "height": 700, "width": 794, "scale": 2,
+                }})
+
+            st.caption("📷 Stáhnout: ikona fotoaparátu v grafu")
 
     # ── DAP Mapa ─────────────────────────────────────────
     with rep_dap:

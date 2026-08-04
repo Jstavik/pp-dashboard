@@ -11,7 +11,11 @@ def _get_ceps_client():
     return SoapClient(wsdl=CEPS_WSDL)
 
 
-ceps = _get_ceps_client()
+try:
+    ceps = _get_ceps_client()
+except Exception as e:
+    print(f"CEPS SOAP init failed: {e}")
+    ceps = None
 
 
 def _parse_ceps(result) -> pd.DataFrame:
@@ -33,6 +37,8 @@ def fetch_ceps_imbalance():
     """Systémová odchylka ČR z ČEPS — minutová, ~5min zpoždění."""
     now   = pd.Timestamp.now(tz="Europe/Prague")
     start = now.normalize()
+    if ceps is None:
+        return pd.DataFrame(), now
     try:
         result = ceps.service.AktualniSystemovaOdchylkaCR(
             dateFrom  =start.to_pydatetime().replace(tzinfo=None),
@@ -64,6 +70,8 @@ def fetch_ceps_svr():
         "value4": "mFRR- [MW]",
         "value7": "mFRR5 [MW]",
     }
+    if ceps is None:
+        return pd.DataFrame()
     try:
         result = ceps.service.AktivaceSVRvCR(
             dateFrom  =start.to_pydatetime().replace(tzinfo=None),
@@ -88,6 +96,8 @@ def fetch_ceps_imbalance_price():
     """Odhadovaná cena odchylky z ČEPS — 15min, CZK/MWh."""
     now   = pd.Timestamp.now(tz="Europe/Prague")
     today = now.normalize()
+    if ceps is None:
+        return pd.DataFrame()
     try:
         result = ceps.service.OdhadovanaCenaOdchylky(
             dateFrom=today.to_pydatetime().replace(tzinfo=None),
@@ -113,6 +123,14 @@ def fetch_ceps_all():
     """Stáhne všechna ČEPS data najednou — jeden cache entry."""
     now   = pd.Timestamp.now(tz="Europe/Prague")
     start = now.normalize()
+
+    if ceps is None:
+        empty = pd.DataFrame()
+        return {
+            "imbal": empty, "svr": empty, "load": empty,
+            "gen": empty, "res": empty, "freq": empty,
+            "cb": empty, "cena": empty, "now": now,
+        }
 
     def call(method, **kw):
         fn = getattr(ceps.service, method)
