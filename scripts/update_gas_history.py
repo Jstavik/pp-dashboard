@@ -10,6 +10,7 @@ from data.entsog_capacity import update_capacity
 from data.lng import update_lng
 from data.gassco import update_gassco
 from data.dap_europe import DAP_COUNTRIES
+from config import ENTSOE_TOKEN
 
 # ENTSO-G aggregateddata API sahá do 2020, dříve není dostupné
 HISTORY_START  = date(2020, 1, 1)
@@ -372,6 +373,39 @@ def update_dap_europe():
     print(f"DAP Europe: {len(df_new)} zemí → {DAP_PATH}")
 
 
+def update_nuclear_fr_generation():
+    from entsoe import EntsoePandasClient
+    import pandas as pd, os
+    PATH = "data/history/nuclear_fr_generation.parquet"
+    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+
+    if os.path.exists(PATH):
+        existing = pd.read_parquet(PATH)
+        last_date = existing.index.max()
+        # Stáhnout jen od posledního data
+        start = last_date.normalize()
+        end = pd.Timestamp.now(tz="Europe/Paris") + pd.Timedelta(days=1)
+        if start.date() >= pd.Timestamp.now().date():
+            print(f"Nuclear FR gen: aktuální, skip")
+            return
+    else:
+        existing = None
+        start = pd.Timestamp("2020-01-01", tz="Europe/Paris")
+        end = pd.Timestamp.now(tz="Europe/Paris") + pd.Timedelta(days=1)
+
+    df_new = client.query_generation("FR", start=start, end=end, psr_type="B14")
+    df_new.columns = ["nuclear_mw"]
+
+    if existing is not None:
+        df_final = pd.concat([existing, df_new])
+        df_final = df_final[~df_final.index.duplicated(keep="last")]
+    else:
+        df_final = df_new
+
+    df_final.to_parquet(PATH)
+    print(f"Nuclear FR gen: {len(df_new)} nových hodnot → {PATH}")
+
+
 if __name__ == "__main__":
     for label, fn in [
         ("ENTSO-G flows (všechny země)",      update_entsog),
@@ -381,6 +415,7 @@ if __name__ == "__main__":
         ("LNG terminály (GIE ALSI)",          update_lng),
         ("GASSCO nominace",                   update_gassco),
         ("DAP Europe choropleth",             update_dap_europe),
+        ("Jaderná výroba FR (ENTSO-E)",        update_nuclear_fr_generation),
     ]:
         print(f"\n=== {label} ===")
         try:
