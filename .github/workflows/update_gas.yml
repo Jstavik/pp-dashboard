@@ -24,9 +24,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests pandas python-dateutil pyarrow entsoe-py
+        run: pip install requests pandas python-dateutil pyarrow entsoe-py streamlit
 
       - name: Run update script
+        env:
+          ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}
         run: python scripts/update_gas_history.py
 
       - name: Commit and push if changed

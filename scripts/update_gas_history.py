@@ -290,7 +290,6 @@ def update_dap_europe():
     from concurrent.futures import ThreadPoolExecutor, as_completed
     print("\n=== DAP Europe ===")
 
-    ENTSOE_TOKEN = "95fa8cc7-1438-455b-9060-795d7c44d389"
     DAP_PATH = "data/history/dap_europe.parquet"
 
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)

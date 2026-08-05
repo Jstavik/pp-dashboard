@@ -1,7 +1,9 @@
+import os
 import pandas as pd
+import streamlit as st
 
 # ── KONFIGURACE ──────────────────────────────────────────────────
-ENTSOE_TOKEN = "95fa8cc7-1438-455b-9060-795d7c44d389"
+ENTSOE_TOKEN = os.environ.get("ENTSOE_TOKEN") or st.secrets.get("ENTSOE_TOKEN")
 THRESHOLD    = 20          # MWh — práh DEFICIT / SURPLUS
 PEAK_HOURS   = set(range(8, 20))
 DG_BASE      = "https://api.deltagreen.cz/api/proteus/external/v1"
