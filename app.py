@@ -67,7 +67,7 @@ from charts.dap_map import fig_dap_map
 from data.dap_europe import load_dap_europe
 from data.nuclear import load_nuclear_fr, load_nuclear_fr_generation
 from charts.nuclear import (
-    fig_nuclear_fr_capacity, fig_nuclear_fr_seasonality, fig_nuclear_fr_table,
+    fig_nuclear_fr_unavailability, fig_nuclear_fr_seasonality_with_forecast, fig_nuclear_fr_table,
 )
 
 def data_status_row(sources: list) -> None:
@@ -1793,13 +1793,13 @@ elif show_out:
         k3.metric("Bloků v odstávce", n_blocks_fr)
         k4.metric("Unplanned", n_unplanned_fr)
 
-        st.plotly_chart(fig_nuclear_fr_capacity(data_fr), use_container_width=True,
+        st.plotly_chart(fig_nuclear_fr_unavailability(data_fr, data_fr), use_container_width=True,
                         config={"displayModeBar": False})
 
         with st.expander("📈 Sezonalita produkce (načítá se déle)"):
             df_gen_fr = load_nuclear_fr_generation()
-            st.plotly_chart(fig_nuclear_fr_seasonality(df_gen_fr), use_container_width=True,
-                            config={"displayModeBar": False})
+            st.plotly_chart(fig_nuclear_fr_seasonality_with_forecast(df_gen_fr, data_fr),
+                            use_container_width=True, config={"displayModeBar": False})
 
         st.markdown('<div class="section-title">Aktivní odstávky</div>',
                     unsafe_allow_html=True)

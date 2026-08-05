@@ -7,15 +7,16 @@ from config import ENTSOE_TOKEN
 NUCLEAR_FR_GEN_PATH = "data/history/nuclear_fr_generation.parquet"
 
 @st.cache_data(ttl=3600)
-def load_nuclear_fr(days_back: int = 0, days_forward: int = 90) -> dict:
+def load_nuclear_fr() -> dict:
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
     now = pd.Timestamp.now(tz="Europe/Paris")
+    today = now.normalize()
+    year_start = pd.Timestamp(year=now.year, month=1, day=1, tz="Europe/Paris")
+    next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz="Europe/Paris")
 
-    # Odstávky
-    start = now - pd.Timedelta(days=1)
-    end = now + pd.Timedelta(days=days_forward)
+    # Odstávky — od začátku aktuálního roku (historie) do konce příštího roku (predikce)
     df_out = client.query_unavailability_of_generation_units(
-        "FR", start=start, end=end, docstatus=None
+        "FR", start=year_start, end=next_year_end, docstatus=None
     )
     nuclear = df_out[df_out["plant_type"] == "Nuclear"].copy()
     nuclear["nominal_power"] = pd.to_numeric(nuclear["nominal_power"], errors="coerce").fillna(0)
@@ -40,25 +41,33 @@ def load_nuclear_fr(days_back: int = 0, days_forward: int = 90) -> dict:
     all_units = pd.to_numeric(all_units, errors="coerce").fillna(0)
     total_installed = all_units.sum()
 
-    # Timeline po dnech
-    days = pd.date_range(now.date(), end.date(), freq="D", tz="Europe/Paris")
-    daily = []
-    for day in days:
-        active_day = latest[
-            (latest["start"] <= day) &
-            (latest["end"] >= day) &
-            (latest["unavail_mw"] > 0)
-        ]
-        daily.append({
-            "date": day,
-            "unavail_mw": active_day["unavail_mw"].sum(),
-            "units_count": len(active_day),
-        })
-    df_daily = pd.DataFrame(daily)
+    def _daily_unavailability(day_range: pd.DatetimeIndex) -> pd.DataFrame:
+        rows = []
+        for day in day_range:
+            active_day = latest[
+                (latest["start"] <= day) &
+                (latest["end"] >= day) &
+                (latest["unavail_mw"] > 0)
+            ]
+            rows.append({
+                "date": day,
+                "unavail_mw": active_day["unavail_mw"].sum(),
+                "units_count": len(active_day),
+            })
+        return pd.DataFrame(rows)
+
+    # Historie: od začátku roku do dneška
+    history_days = pd.date_range(year_start, today, freq="D")
+    df_history = _daily_unavailability(history_days)
+
+    # Predikce: od zítra do konce příštího roku
+    forecast_days = pd.date_range(today + pd.Timedelta(days=1), next_year_end, freq="D")
+    df_forecast_long = _daily_unavailability(forecast_days)
 
     return {
         "active": active,
-        "daily": df_daily,
+        "history": df_history,
+        "forecast_long": df_forecast_long,
         "total_installed": total_installed,
         "now": now,
     }
