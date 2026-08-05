@@ -2,8 +2,16 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from config import C_DEFICIT, MONTH_TICKS
+from charts.gas import _year_color_seasonality
 
-_C_YEAR_BG = "#BDBDBD"
+
+def _year_color_seasonality_bg(yr: int) -> str:
+    """Barva pro roky v pozadí sezonního grafu — o jeden věk posunuto oproti
+    _year_color_seasonality(yr). Aktuální rok má v tomhle grafu vlastní pevnou
+    červenou (C_DEFICIT) mimo tuhle smyčku, takže current-1 nesmí dostat
+    stejnou červenou z automatické gradace — posun uvolní červenou výhradně
+    pro aktuální rok a zbytek stupnice (oranžová/modrá/šedá) se posune o rok."""
+    return _year_color_seasonality(yr - 1)
 
 
 def fig_nuclear_fr_unavailability(data_hist: dict, data_future: dict) -> go.Figure:
@@ -62,7 +70,7 @@ def fig_nuclear_fr_seasonality_with_forecast(df_gen: pd.DataFrame, data_future: 
             series = grp.groupby("day_of_year")["nuclear_mw"].mean().sort_index()
             fig.add_trace(go.Scatter(
                 x=series.index, y=series.values / 1000, mode="lines", name=str(yr),
-                line=dict(color=_C_YEAR_BG, width=1),
+                line=dict(color=_year_color_seasonality_bg(yr), width=1.5),
                 hovertemplate=f"<b>{yr}</b><br>Den %{{x}}<br>%{{y:,.2f}} GW<extra></extra>",
             ))
 
