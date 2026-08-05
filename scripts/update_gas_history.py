@@ -10,7 +10,7 @@ from data.entsog_capacity import update_capacity
 from data.lng import update_lng
 from data.gassco import update_gassco
 from data.dap_europe import DAP_COUNTRIES
-from config import ENTSOE_TOKEN
+from config import ENTSOE_TOKEN, NUCLEAR_FR_OUTAGE_REVISION_WINDOW_DAYS
 
 # ENTSO-G aggregateddata API sahá do 2020, dříve není dostupné
 HISTORY_START  = date(2020, 1, 1)
@@ -408,26 +408,29 @@ def update_nuclear_fr_generation():
 
 
 def update_nuclear_fr_outages():
-    """Stáhne jaderné odstávky FR (ENTSO-E unavailability) pro okno
-    year_start → next_year_end (stejné okno jako data/nuclear.py::load_nuclear_fr
-    potřebuje pro history + forecast_long) a uloží do parquet.
+    """Stáhne jaderné odstávky FR (ENTSO-E unavailability) jen za posledních
+    NUCLEAR_FR_OUTAGE_REVISION_WINDOW_DAYS dní zpět → next_year_end a
+    zmerguje s existujícím parquetem.
 
-    Na rozdíl od update_nuclear_fr_generation() se nedělá inkrementální append —
-    odstávky se v revizích mění (docstatus, avail_qty), proto se okno vždy
-    stáhne celé znovu a parquet se přepíše. Objem dat je malý (řádově stovky
-    záznamů), takže to není problém.
+    Odstávky se v revizích mění (docstatus, avail_qty), ale jen ty
+    "aktivní/blízké" — revize starší než pár týdnů se prakticky nedějí
+    (předpoklad, needěláno na historických datech). Proto na rozdíl od
+    update_nuclear_fr_generation() nejde o čistý append: záznamy, jejichž
+    odstávka skončila před stahovaným oknem, zůstávají z parquetu beze
+    změny; záznamy uvnitř okna (mohly dostat novou revizi) se z API
+    stažení přepíšou celé.
     """
     from entsoe import EntsoePandasClient
-    import pandas as pd
+    import pandas as pd, os
     PATH = "data/history/nuclear_fr_outages.parquet"
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 
     now = pd.Timestamp.now(tz="Europe/Paris")
-    year_start = pd.Timestamp(year=now.year, month=1, day=1, tz="Europe/Paris")
+    fetch_start = now - pd.Timedelta(days=NUCLEAR_FR_OUTAGE_REVISION_WINDOW_DAYS)
     next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz="Europe/Paris")
 
     df_out = client.query_unavailability_of_generation_units(
-        "FR", start=year_start, end=next_year_end, docstatus=None
+        "FR", start=fetch_start, end=next_year_end, docstatus=None
     )
     nuclear = df_out[df_out["plant_type"] == "Nuclear"].copy()
     nuclear["nominal_power"] = pd.to_numeric(nuclear["nominal_power"], errors="coerce").fillna(0)
@@ -444,8 +447,18 @@ def update_nuclear_fr_outages():
             "avail_qty", "unavail_mw", "docstatus", "businesstype"]
     latest = latest[cols].reset_index(drop=True)
 
-    latest.to_parquet(PATH, index=False)
-    print(f"Nuclear FR outages: {len(latest)} záznamů → {PATH}")
+    if os.path.exists(PATH):
+        existing = pd.read_parquet(PATH)
+        frozen = existing[existing["end"] < fetch_start]
+        combined = pd.concat([frozen, latest], ignore_index=True)
+    else:
+        frozen = latest.iloc[0:0]
+        combined = latest
+
+    combined = combined.sort_values(["production_resource_name", "start"]).reset_index(drop=True)
+    combined.to_parquet(PATH, index=False)
+    print(f"Nuclear FR outages: {len(latest)} z API (okno {fetch_start.date()}→{next_year_end.date()}) "
+          f"+ {len(frozen)} beze změny z parquetu → {len(combined)} celkem → {PATH}")
 
 
 if __name__ == "__main__":

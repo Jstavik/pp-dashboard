@@ -181,6 +181,23 @@ MONTH_TICKS = dict(
     ticktext=["Led","Úno","Bře","Dub","Kvě","Čvn","Čvc","Srp","Zář","Říj","Lis","Pro"],
 )
 
+# Náhradní barva pro current-1 v sezonních grafech, kde current-1 by jinak
+# kolidoval s pevnou C_DEFICIT vyhrazenou pro zvýrazněnou "aktuální rok" trasu
+# (viz charts/nuclear.py::_year_color_seasonality_bg)
+C_YEAR_SEASONALITY_ALT = "#6A1B9A"
+
+# ── JADERNÁ FR — PARAMETRY ───────────────────────────────────────
+# Okno pro výpočet kapacitního faktoru (skutečná výroba / teoretická
+# dostupnost) použitého k navázání predikce na historii — viz
+# charts/nuclear.py::fig_nuclear_fr_seasonality_with_forecast
+NUCLEAR_FR_CF_WINDOW_DAYS = 30
+
+# Okno zpětného stahování odstávek FR — revize starší než tohle se
+# prakticky nemění, takže update_nuclear_fr_outages() přepisuje jen tuhle
+# část a starší záznamy v parquetu nechává beze změny — viz
+# scripts/update_gas_history.py::update_nuclear_fr_outages
+NUCLEAR_FR_OUTAGE_REVISION_WINDOW_DAYS = 14
+
 
 # ── SDÍLENÉ CHART HELPERY ────────────────────────────────────────
 
