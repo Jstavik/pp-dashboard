@@ -5,13 +5,19 @@ from config import C_DEFICIT, MONTH_TICKS
 from charts.gas import _year_color_seasonality
 
 
+_C_YEAR_BG_CURRENT_MINUS_1 = "#6A1B9A"  # náhrada za červenou, viz _year_color_seasonality_bg
+
+
 def _year_color_seasonality_bg(yr: int) -> str:
-    """Barva pro roky v pozadí sezonního grafu — o jeden věk posunuto oproti
-    _year_color_seasonality(yr). Aktuální rok má v tomhle grafu vlastní pevnou
-    červenou (C_DEFICIT) mimo tuhle smyčku, takže current-1 nesmí dostat
-    stejnou červenou z automatické gradace — posun uvolní červenou výhradně
-    pro aktuální rok a zbytek stupnice (oranžová/modrá/šedá) se posune o rok."""
-    return _year_color_seasonality(yr - 1)
+    """Barva pro roky v pozadí sezonního grafu — stejná stupnice jako
+    _year_color_seasonality(yr), jen current-1 dostane náhradní barvu.
+    Aktuální rok má v tomhle grafu vlastní pevnou červenou (C_DEFICIT) mimo
+    tuhle smyčku a current-1 by jinak dostal tu samou červenou z automatické
+    gradace — nahrazeno fialovou, ostatní roky (current-2, current-3, staré)
+    beze změny."""
+    if pd.Timestamp.now().year - yr == 1:
+        return _C_YEAR_BG_CURRENT_MINUS_1
+    return _year_color_seasonality(yr)
 
 
 def fig_nuclear_fr_unavailability(data_hist: dict, data_future: dict) -> go.Figure:
