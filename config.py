@@ -68,6 +68,33 @@ PSR_NAMES = {
 }
 
 
+# Mapování ENTSO-E source_type (anglický název, jak ho vrací query_generation
+# s psr_type=None) → psr_code (B01-B20), aby šlo výrobu podle zdroje sjednotit
+# se sdílenou paletou/pořadím z PSR_TYPES/GEN_STACK_ORDER.
+PSR_CODE_BY_SOURCE_TYPE = {
+    "Biomass":                             "B01",
+    "Fossil Brown coal/Lignite":           "B02",
+    "Fossil Coal-derived gas":             "B03",
+    "Fossil Gas":                          "B04",
+    "Fossil Hard coal":                    "B05",
+    "Fossil Oil":                          "B06",
+    "Fossil Oil shale":                    "B07",
+    "Fossil Peat":                         "B08",
+    "Geothermal":                          "B09",
+    "Hydro Pumped Storage":                "B10",
+    "Hydro Run-of-river and poundage":     "B11",
+    "Hydro Water Reservoir":               "B12",
+    "Marine":                              "B13",
+    "Nuclear":                             "B14",
+    "Other renewable":                     "B15",
+    "Solar":                               "B16",
+    "Waste":                               "B17",
+    "Wind Offshore":                       "B18",
+    "Wind Onshore":                        "B19",
+    "Other":                               "B20",
+}
+
+
 def psr_lookup(col) -> tuple:
     psr = str(col[0]) if isinstance(col, tuple) else str(col)
     if psr in PSR_TYPES:
@@ -186,17 +213,24 @@ MONTH_TICKS = dict(
 # (viz charts/nuclear.py::_year_color_seasonality_bg)
 C_YEAR_SEASONALITY_ALT = "#6A1B9A"
 
-# ── JADERNÁ FR — PARAMETRY ───────────────────────────────────────
+# ── ENTSO-E ODSTÁVKY/VÝROBA — PARAMETRY ──────────────────────────
 # Okno pro výpočet kapacitního faktoru (skutečná výroba / teoretická
 # dostupnost) použitého k navázání predikce na historii — viz
 # charts/nuclear.py::fig_nuclear_fr_seasonality_with_forecast
 NUCLEAR_FR_CF_WINDOW_DAYS = 30
 
-# Okno zpětného stahování odstávek FR — revize starší než tohle se
-# prakticky nemění, takže update_nuclear_fr_outages() přepisuje jen tuhle
-# část a starší záznamy v parquetu nechává beze změny — viz
-# scripts/update_gas_history.py::update_nuclear_fr_outages
-NUCLEAR_FR_OUTAGE_REVISION_WINDOW_DAYS = 14
+# Okno zpětného stahování odstávek (rolling-window refetch) — revize starší
+# než tohle se prakticky nemění, takže update_*_outages() přepisuje jen
+# tuhle část a starší záznamy v parquetu nechává beze změny. Sdílené mezi
+# FR i HU — viz scripts/update_gas_history.py::update_nuclear_fr_outages,
+# update_hu_outages
+ENTSOE_OUTAGE_REVISION_WINDOW_DAYS = 14
+
+# Chunkování backfillu query_generation("HU", ...) — ENTSO-E vrací
+# 503/504 na širokých rozsazích, proto se stahuje po menších oknech
+# s retry — viz scripts/update_gas_history.py::update_hu_generation
+HU_GENERATION_CHUNK_DAYS = 30
+HU_GENERATION_CHUNK_RETRIES = 3
 
 
 # ── SDÍLENÉ CHART HELPERY ────────────────────────────────────────

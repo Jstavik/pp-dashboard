@@ -10,7 +10,11 @@ from data.entsog_capacity import update_capacity
 from data.lng import update_lng
 from data.gassco import update_gassco
 from data.dap_europe import DAP_COUNTRIES
-from config import ENTSOE_TOKEN, NUCLEAR_FR_OUTAGE_REVISION_WINDOW_DAYS
+from config import (
+    ENTSOE_TOKEN, ENTSOE_OUTAGE_REVISION_WINDOW_DAYS,
+    HU_GENERATION_CHUNK_DAYS, HU_GENERATION_CHUNK_RETRIES,
+    PSR_CODE_BY_SOURCE_TYPE,
+)
 
 # ENTSO-G aggregateddata API sahá do 2020, dříve není dostupné
 HISTORY_START  = date(2020, 1, 1)
@@ -225,9 +229,7 @@ def update_hydro():
     from entsoe import EntsoePandasClient
 
     os.makedirs("data/history", exist_ok=True)
-    client = EntsoePandasClient(
-        api_key="95fa8cc7-1438-455b-9060-795d7c44d389"
-    )
+    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 
     if os.path.exists(HYDRO_CSV):
         existing  = pd.read_csv(HYDRO_CSV, parse_dates=["date"])
@@ -409,7 +411,7 @@ def update_nuclear_fr_generation():
 
 def update_nuclear_fr_outages():
     """Stáhne jaderné odstávky FR (ENTSO-E unavailability) jen za posledních
-    NUCLEAR_FR_OUTAGE_REVISION_WINDOW_DAYS dní zpět → next_year_end a
+    ENTSOE_OUTAGE_REVISION_WINDOW_DAYS dní zpět → next_year_end a
     zmerguje s existujícím parquetem.
 
     Odstávky se v revizích mění (docstatus, avail_qty), ale jen ty
@@ -426,7 +428,7 @@ def update_nuclear_fr_outages():
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 
     now = pd.Timestamp.now(tz="Europe/Paris")
-    fetch_start = now - pd.Timedelta(days=NUCLEAR_FR_OUTAGE_REVISION_WINDOW_DAYS)
+    fetch_start = now - pd.Timedelta(days=ENTSOE_OUTAGE_REVISION_WINDOW_DAYS)
     next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz="Europe/Paris")
 
     df_out = client.query_unavailability_of_generation_units(
@@ -461,6 +463,144 @@ def update_nuclear_fr_outages():
           f"+ {len(frozen)} beze změny z parquetu → {len(combined)} celkem → {PATH}")
 
 
+def _melt_hu_generation(df_wide: pd.DataFrame) -> pd.DataFrame:
+    """Wide/MultiIndex df z query_generation("HU", ..., psr_type=None) →
+    long formát (date, source_type, psr_code, mw). Zachovává jen sloupce
+    'Actual Aggregated' (zahazuje 'Actual Consumption', např. u přečerpávání)."""
+    cols = ["date", "source_type", "psr_code", "mw"]
+    if df_wide.empty:
+        return pd.DataFrame(columns=cols)
+
+    agg_cols = [c for c in df_wide.columns if c[1] == "Actual Aggregated"]
+    df = df_wide[agg_cols].copy()
+    df.columns = [c[0] for c in agg_cols]
+    df.index.name = "date"
+
+    long = df.reset_index().melt(id_vars="date", var_name="source_type", value_name="mw")
+    long = long.dropna(subset=["mw"])
+
+    unmapped = sorted(set(long["source_type"]) - set(PSR_CODE_BY_SOURCE_TYPE))
+    if unmapped:
+        print(f"    VAROVÁNÍ: nenamapované source_type v PSR_CODE_BY_SOURCE_TYPE: {unmapped}")
+
+    long["psr_code"] = long["source_type"].map(PSR_CODE_BY_SOURCE_TYPE)
+    return long[cols]
+
+
+def update_hu_generation():
+    """Výroba HU podle zdroje (ENTSO-E query_generation, psr_type=None) →
+    long formát parquet (date, source_type, psr_code, mw).
+
+    Stahuje po HU_GENERATION_CHUNK_DAYS-denních chuncích s
+    HU_GENERATION_CHUNK_RETRIES pokusy na chunk — ENTSO-E vrací 503/504 na
+    širokých rozsazích. Append-only vzor jako update_nuclear_fr_generation():
+    při existujícím parquetu stahuje jen od last_date (s pár dny přesahu
+    pro jistotu), jinak celý backfill od HISTORY_START."""
+    from entsoe import EntsoePandasClient
+    import pandas as pd, os, time
+    PATH = "data/history/hu_generation.parquet"
+    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+    tz = "Europe/Budapest"
+
+    if os.path.exists(PATH):
+        existing = pd.read_parquet(PATH)
+        existing["date"] = pd.to_datetime(existing["date"], utc=True)
+        last_date = existing["date"].max()
+        start = last_date.tz_convert(tz) - pd.Timedelta(days=3)
+        print(f"HU gen: existující data do {last_date.date()}, stahuji od {start.date()}")
+    else:
+        existing = None
+        start = pd.Timestamp(HISTORY_START, tz=tz)
+        print(f"HU gen: nový soubor, plný backfill od {start.date()}")
+
+    end = pd.Timestamp.now(tz=tz) + pd.Timedelta(days=1)
+
+    frames = []
+    cur = start
+    while cur < end:
+        chunk_end = min(cur + pd.Timedelta(days=HU_GENERATION_CHUNK_DAYS), end)
+        for attempt in range(1, HU_GENERATION_CHUNK_RETRIES + 1):
+            try:
+                raw = client.query_generation("HU", start=cur, end=chunk_end, psr_type=None)
+                frames.append(_melt_hu_generation(raw))
+                print(f"  {cur.date()} → {chunk_end.date()}: OK")
+                break
+            except Exception as e:
+                print(f"  {cur.date()} → {chunk_end.date()}: pokus {attempt}/{HU_GENERATION_CHUNK_RETRIES} "
+                      f"selhal — {str(e)[:80]}")
+                if attempt < HU_GENERATION_CHUNK_RETRIES:
+                    time.sleep(5)
+        cur = chunk_end
+        time.sleep(1)
+
+    if not frames:
+        print("HU gen: žádná nová data")
+        return
+
+    new_data = pd.concat(frames, ignore_index=True)
+    if new_data.empty:
+        print("HU gen: žádná nová data")
+        return
+    new_data["date"] = pd.to_datetime(new_data["date"], utc=True)
+
+    if existing is not None:
+        combined = pd.concat([existing, new_data], ignore_index=True)
+        combined = combined.drop_duplicates(subset=["date", "source_type"], keep="last")
+    else:
+        combined = new_data
+
+    combined = combined.sort_values(["date", "source_type"]).reset_index(drop=True)
+    combined.to_parquet(PATH, index=False)
+    years = sorted(combined["date"].dt.year.unique())
+    print(f"HU gen: uloženo {len(combined)} řádků, roky {years[0]}-{years[-1]} → {PATH}")
+
+
+def update_hu_outages():
+    """Odstávky HU (ENTSO-E unavailability) — stejná architektura jako
+    update_nuclear_fr_outages(), ale BEZ filtru na plant_type (u FR šlo jen
+    o jádro, u HU chceme rozpad podle všech typů zdrojů). Rolling window
+    [now - ENTSOE_OUTAGE_REVISION_WINDOW_DAYS, next_year_end] + merge se
+    starým parquetem, protože odstávky se v revizích mění."""
+    from entsoe import EntsoePandasClient
+    import pandas as pd, os
+    PATH = "data/history/hu_outages.parquet"
+    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+
+    now = pd.Timestamp.now(tz="Europe/Budapest")
+    fetch_start = now - pd.Timedelta(days=ENTSOE_OUTAGE_REVISION_WINDOW_DAYS)
+    next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz="Europe/Budapest")
+
+    df_out = client.query_unavailability_of_generation_units(
+        "HU", start=fetch_start, end=next_year_end, docstatus=None
+    ).copy()
+    df_out["nominal_power"] = pd.to_numeric(df_out["nominal_power"], errors="coerce").fillna(0)
+    df_out["avail_qty"] = pd.to_numeric(df_out["avail_qty"], errors="coerce").fillna(0)
+
+    # Nejnovější revision pro každý blok+interval
+    latest = df_out.sort_values("revision").groupby(
+        ["production_resource_name", "start", "end"]
+    ).last().reset_index()
+    latest = latest[latest["docstatus"] != "Cancelled"]
+    latest["unavail_mw"] = latest["nominal_power"] - latest["avail_qty"]
+
+    cols = ["production_resource_name", "plant_type", "start", "end", "nominal_power",
+            "avail_qty", "unavail_mw", "docstatus", "businesstype"]
+    latest = latest[cols].reset_index(drop=True)
+
+    if os.path.exists(PATH):
+        existing = pd.read_parquet(PATH)
+        frozen = existing[existing["end"] < fetch_start]
+        combined = pd.concat([frozen, latest], ignore_index=True)
+    else:
+        frozen = latest.iloc[0:0]
+        combined = latest
+
+    combined = combined.sort_values(["production_resource_name", "start"]).reset_index(drop=True)
+    combined.to_parquet(PATH, index=False)
+    print(f"HU outages: {len(latest)} z API (okno {fetch_start.date()}→{next_year_end.date()}) "
+          f"+ {len(frozen)} beze změny z parquetu → {len(combined)} celkem → {PATH}")
+
+
 if __name__ == "__main__":
     for label, fn in [
         ("ENTSO-G flows (všechny země)",      update_entsog),
@@ -472,6 +612,8 @@ if __name__ == "__main__":
         ("DAP Europe choropleth",             update_dap_europe),
         ("Jaderná výroba FR (ENTSO-E)",        update_nuclear_fr_generation),
         ("Jaderné odstávky FR (ENTSO-E)",      update_nuclear_fr_outages),
+        ("Výroba HU podle zdroje (ENTSO-E)",   update_hu_generation),
+        ("Odstávky HU (ENTSO-E)",              update_hu_outages),
     ]:
         print(f"\n=== {label} ===")
         try:
