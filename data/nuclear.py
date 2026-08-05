@@ -5,29 +5,42 @@ import streamlit as st
 from config import ENTSOE_TOKEN
 
 NUCLEAR_FR_GEN_PATH = "data/history/nuclear_fr_generation.parquet"
+NUCLEAR_FR_OUT_PATH = "data/history/nuclear_fr_outages.parquet"
 
-@st.cache_data(ttl=3600)
+_EMPTY_ACTIVE_COLS = ["production_resource_name", "start", "end", "nominal_power",
+                      "avail_qty", "unavail_mw", "docstatus", "businesstype"]
+_EMPTY_DAILY_COLS = ["date", "unavail_mw", "units_count"]
+
+
+def _empty_nuclear_fr(now: pd.Timestamp) -> dict:
+    return {
+        "active": pd.DataFrame(columns=_EMPTY_ACTIVE_COLS),
+        "history": pd.DataFrame(columns=_EMPTY_DAILY_COLS),
+        "forecast_long": pd.DataFrame(columns=_EMPTY_DAILY_COLS),
+        "total_installed": 0.0,
+        "now": now,
+    }
+
+
+@st.cache_data(ttl=300)
 def load_nuclear_fr() -> dict:
-    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+    """Čte odstávky FR z parquet cache (aktualizuje
+    scripts/update_gas_history.py::update_nuclear_fr_outages).
+
+    Žádné živé volání ENTSO-E — jen filtrování/agregace nad parquetem,
+    proto rychlé i na cold startu.
+    """
     now = pd.Timestamp.now(tz="Europe/Paris")
     today = now.normalize()
     year_start = pd.Timestamp(year=now.year, month=1, day=1, tz="Europe/Paris")
     next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz="Europe/Paris")
 
-    # Odstávky — od začátku aktuálního roku (historie) do konce příštího roku (predikce)
-    df_out = client.query_unavailability_of_generation_units(
-        "FR", start=year_start, end=next_year_end, docstatus=None
-    )
-    nuclear = df_out[df_out["plant_type"] == "Nuclear"].copy()
-    nuclear["nominal_power"] = pd.to_numeric(nuclear["nominal_power"], errors="coerce").fillna(0)
-    nuclear["avail_qty"] = pd.to_numeric(nuclear["avail_qty"], errors="coerce").fillna(0)
+    if not os.path.exists(NUCLEAR_FR_OUT_PATH):
+        return _empty_nuclear_fr(now)
 
-    # Nejnovější revision pro každý blok+interval
-    latest = nuclear.sort_values("revision").groupby(
-        ["production_resource_name", "start", "end"]
-    ).last().reset_index()
-    latest = latest[latest["docstatus"] != "Cancelled"]
-    latest["unavail_mw"] = latest["nominal_power"] - latest["avail_qty"]
+    latest = pd.read_parquet(NUCLEAR_FR_OUT_PATH)
+    if latest.empty:
+        return _empty_nuclear_fr(now)
 
     # Aktivní právě teď
     active = latest[
@@ -36,8 +49,8 @@ def load_nuclear_fr() -> dict:
         (latest["unavail_mw"] > 0)
     ].copy()
 
-    # Celkový instalovaný výkon
-    all_units = nuclear.groupby("production_resource_name")["nominal_power"].first()
+    # Celkový instalovaný výkon (podle bloků přítomných v parquetu)
+    all_units = latest.groupby("production_resource_name")["nominal_power"].first()
     all_units = pd.to_numeric(all_units, errors="coerce").fillna(0)
     total_installed = all_units.sum()
 

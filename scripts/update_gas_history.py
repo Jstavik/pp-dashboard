@@ -408,6 +408,47 @@ def update_nuclear_fr_generation():
     print(f"Nuclear FR gen: {len(df_new)} nových hodnot → {PATH}")
 
 
+def update_nuclear_fr_outages():
+    """Stáhne jaderné odstávky FR (ENTSO-E unavailability) pro okno
+    year_start → next_year_end (stejné okno jako data/nuclear.py::load_nuclear_fr
+    potřebuje pro history + forecast_long) a uloží do parquet.
+
+    Na rozdíl od update_nuclear_fr_generation() se nedělá inkrementální append —
+    odstávky se v revizích mění (docstatus, avail_qty), proto se okno vždy
+    stáhne celé znovu a parquet se přepíše. Objem dat je malý (řádově stovky
+    záznamů), takže to není problém.
+    """
+    from entsoe import EntsoePandasClient
+    import pandas as pd
+    PATH = "data/history/nuclear_fr_outages.parquet"
+    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+
+    now = pd.Timestamp.now(tz="Europe/Paris")
+    year_start = pd.Timestamp(year=now.year, month=1, day=1, tz="Europe/Paris")
+    next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz="Europe/Paris")
+
+    df_out = client.query_unavailability_of_generation_units(
+        "FR", start=year_start, end=next_year_end, docstatus=None
+    )
+    nuclear = df_out[df_out["plant_type"] == "Nuclear"].copy()
+    nuclear["nominal_power"] = pd.to_numeric(nuclear["nominal_power"], errors="coerce").fillna(0)
+    nuclear["avail_qty"] = pd.to_numeric(nuclear["avail_qty"], errors="coerce").fillna(0)
+
+    # Nejnovější revision pro každý blok+interval
+    latest = nuclear.sort_values("revision").groupby(
+        ["production_resource_name", "start", "end"]
+    ).last().reset_index()
+    latest = latest[latest["docstatus"] != "Cancelled"]
+    latest["unavail_mw"] = latest["nominal_power"] - latest["avail_qty"]
+
+    cols = ["production_resource_name", "start", "end", "nominal_power",
+            "avail_qty", "unavail_mw", "docstatus", "businesstype"]
+    latest = latest[cols].reset_index(drop=True)
+
+    latest.to_parquet(PATH, index=False)
+    print(f"Nuclear FR outages: {len(latest)} záznamů → {PATH}")
+
+
 if __name__ == "__main__":
     for label, fn in [
         ("ENTSO-G flows (všechny země)",      update_entsog),
@@ -418,6 +459,7 @@ if __name__ == "__main__":
         ("GASSCO nominace",                   update_gassco),
         ("DAP Europe choropleth",             update_dap_europe),
         ("Jaderná výroba FR (ENTSO-E)",        update_nuclear_fr_generation),
+        ("Jaderné odstávky FR (ENTSO-E)",      update_nuclear_fr_outages),
     ]:
         print(f"\n=== {label} ===")
         try:
