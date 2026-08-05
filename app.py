@@ -518,6 +518,8 @@ if show_ee:
     with tab_out:
         sub_ceps, sub_fr, sub_hu = st.tabs(["⚡ ČEPS", "🇫🇷 Francie", "🇭🇺 Maďarsko"])
 
+        st.write("DEBUG: tab_out se vykresluje")
+
         with sub_ceps:
             st.markdown('<div class="section-title">Instalovaná kapacita podle zdroje (14.1.A)</div>',
                         unsafe_allow_html=True)
