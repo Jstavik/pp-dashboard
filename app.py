@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from config import (
     CSS_STYLES, THRESHOLD,
     C_DEFICIT, C_SURPLUS, C_OK, C_WARN, C_NEW, C_TEXT, C_MUTED,
-    sparkline_svg, storage_color,
+    sparkline_svg, storage_color, psr_lookup,
 )
 from data.entsoe import (
     fetch_entsoe_data, fetch_dap, fetch_installed_capacity,
@@ -68,6 +68,10 @@ from data.dap_europe import load_dap_europe
 from data.nuclear import load_nuclear_fr, load_nuclear_fr_generation
 from charts.nuclear import (
     fig_nuclear_fr_unavailability, fig_nuclear_fr_seasonality_with_forecast, fig_nuclear_fr_table,
+)
+from data.hungary import load_hu_generation, load_hu_outages, hu_available_source_types
+from charts.hungary import (
+    fig_hu_generation_stacked, fig_hu_outages_by_type, fig_hu_seasonality, fig_hu_outages_table,
 )
 
 def data_status_row(sources: list) -> None:
@@ -1806,6 +1810,45 @@ elif show_out:
         st.dataframe(fig_nuclear_fr_table(data_fr), use_container_width=True, hide_index=True)
 
     with sub_hu:
-        st.info("Připravujeme data pro Maďarsko.")
+        with st.spinner("Načítám data pro Maďarsko..."):
+            df_gen_hu = load_hu_generation()
+            data_hu = load_hu_outages()
+
+        active_hu      = data_hu["active"]
+        n_active_hu    = len(active_hu)
+        unavail_now_hu = float(active_hu["unavail_mw"].sum()) if not active_hu.empty else 0.0
+        n_unplanned_hu = (int(active_hu["businesstype"].str.contains("Unplanned", na=False).sum())
+                            if not active_hu.empty else 0)
+        n_types_hu     = active_hu["plant_type"].nunique() if not active_hu.empty else 0
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Aktivních odstávek", n_active_hu)
+        k2.metric("Nedostupno teď", f"{unavail_now_hu:,.0f} MW")
+        k3.metric("Unplanned", n_unplanned_hu)
+        k4.metric("Zasažené typy zdrojů", n_types_hu)
+
+        st.plotly_chart(fig_hu_generation_stacked(df_gen_hu), use_container_width=True,
+                        config={"displayModeBar": False})
+
+        st.plotly_chart(fig_hu_outages_by_type(data_hu), use_container_width=True,
+                        config={"displayModeBar": False})
+
+        with st.expander("📈 Sezonnost podle zdroje (načítá se déle)"):
+            available_types = hu_available_source_types(df_gen_hu)
+            if available_types:
+                labels = {src: psr_lookup(src)[0] for src in available_types}
+                default_idx = available_types.index("Nuclear") if "Nuclear" in available_types else 0
+                selected_src = st.selectbox(
+                    "Zdroj", available_types, index=default_idx,
+                    format_func=lambda src: labels[src], key="hu_seasonality_source",
+                )
+                st.plotly_chart(fig_hu_seasonality(df_gen_hu, selected_src), use_container_width=True,
+                                config={"displayModeBar": False})
+            else:
+                st.info("Zatím nejsou k dispozici data o výrobě HU.")
+
+        st.markdown('<div class="section-title">Aktivní odstávky</div>',
+                    unsafe_allow_html=True)
+        st.dataframe(fig_hu_outages_table(data_hu), use_container_width=True, hide_index=True)
 
 st.session_state.iteration += 1
