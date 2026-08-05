@@ -153,12 +153,13 @@ with st.sidebar:
     st.markdown("---")
     show_commodity = st.radio(
         "Komodita",
-        ["⚡ Elektřina", "🔵 Plyn", "📋 Report"],
+        ["⚡ Elektřina", "🔵 Plyn", "📋 Report", "🔬 EE Odstávky"],
         horizontal=False,
     )
     show_ee  = show_commodity == "⚡ Elektřina"
     show_gas = show_commodity == "🔵 Plyn"
     show_rep = show_commodity == "📋 Report"
+    show_out = show_commodity == "🔬 EE Odstávky"
 
     st.markdown("---")
     st.markdown("### Zdroje dat")
@@ -516,84 +517,7 @@ if show_ee:
 
     # ──────────── TAB 2: ODSTÁVKY ─────────────────────────────────────
     with tab_out:
-        sub_ceps, sub_fr, sub_hu = st.tabs(["⚡ ČEPS", "🇫🇷 Francie", "🇭🇺 Maďarsko"])
-
-        st.write("DEBUG: tab_out se vykresluje")
-
-        with sub_ceps:
-            st.markdown('<div class="section-title">Instalovaná kapacita podle zdroje (14.1.A)</div>',
-                        unsafe_allow_html=True)
-            cap = fetch_installed_capacity()
-            if not cap.empty:
-                st.plotly_chart(fig_installed_capacity(cap), use_container_width=True,
-                                config={"displayModeBar": False})
-
-            st.markdown(f'<div class="section-title">Výrobní jednotky (PU) — {n_pu} aktivních</div>',
-                        unsafe_allow_html=True)
-            st.plotly_chart(fig_outages_gantt(df_out, "PU", now, changes),
-                            use_container_width=True, config={"displayModeBar": False})
-
-            st.markdown(f'<div class="section-title">Generační jednotky (GU) — {n_gu} aktivních</div>',
-                        unsafe_allow_html=True)
-            st.plotly_chart(fig_outages_gantt(df_out, "GU", now, changes),
-                            use_container_width=True, config={"displayModeBar": False})
-
-            n_ended_tab = len(changes.get("ended", set()))
-            n_chmw_tab  = len(changes["changed_mw"])
-            with st.expander(f"📋 Detail změn  ·  {n_new} nových · {n_ended_tab} ukončených · {n_chmw_tab} změn MW",
-                             expanded=bool(n_new or n_ended_tab or n_chmw_tab)):
-                if not (n_new or n_ended_tab or n_chmw_tab):
-                    st.markdown("<em style='color:#888'>Žádné změny od posledního obnovení.</em>",
-                                unsafe_allow_html=True)
-                else:
-                    if n_new and not df_out.empty:
-                        new_df = (df_out[df_out[["unit_raw","outage_start","outage_end"]]
-                                         .apply(tuple, axis=1).isin(changes["new"])]
-                                  .sort_values("unavailable_MW", ascending=False))
-                        st.markdown("**🆕 Nové odstávky**")
-                        st.dataframe(
-                            new_df[["unit_name","unit_level","outage_start","outage_end",
-                                     "installed_MW","unavailable_MW","outage_type"]],
-                            use_container_width=True, hide_index=True,
-                        )
-                    if not changes["changed_mw"].empty:
-                        st.markdown("**⚡ Změny výkonu**")
-                        st.dataframe(changes["changed_mw"], use_container_width=True, hide_index=True)
-
-        with sub_fr:
-            with st.spinner("Načítám jaderné odstávky FR..."):
-                data_fr = load_nuclear_fr()
-
-            total_installed = data_fr["total_installed"]
-            active_fr       = data_fr["active"]
-            unavail_now     = float(active_fr["unavail_mw"].sum()) if not active_fr.empty else 0.0
-            available_now   = total_installed - unavail_now
-            available_pct   = available_now / total_installed * 100 if total_installed else 0.0
-            n_blocks_fr     = len(active_fr)
-            n_unplanned_fr  = (int(active_fr["businesstype"].str.contains("Unplanned", na=False).sum())
-                                if not active_fr.empty else 0)
-
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Instalovaný výkon", f"{total_installed:,.0f} MW")
-            k2.metric("Dostupný výkon", f"{available_now:,.0f} MW",
-                      delta=f"{available_pct:.0f} %", delta_color="off")
-            k3.metric("Bloků v odstávce", n_blocks_fr)
-            k4.metric("Unplanned", n_unplanned_fr)
-
-            st.plotly_chart(fig_nuclear_fr_capacity(data_fr), use_container_width=True,
-                            config={"displayModeBar": False})
-
-            with st.expander("📈 Sezonalita produkce (načítá se déle)"):
-                df_gen_fr = load_nuclear_fr_generation()
-                st.plotly_chart(fig_nuclear_fr_seasonality(df_gen_fr), use_container_width=True,
-                                config={"displayModeBar": False})
-
-            st.markdown('<div class="section-title">Aktivní odstávky</div>',
-                        unsafe_allow_html=True)
-            st.dataframe(fig_nuclear_fr_table(data_fr), use_container_width=True, hide_index=True)
-
-        with sub_hu:
-            st.info("Připravujeme data pro Maďarsko.")
+        st.info("Viz záložka EE Odstávky v menu vlevo.")
 
 
     # ──────────── TAB 3: DAP CENY ────────────────────────────────────
@@ -1805,5 +1729,83 @@ elif show_rep:
                 },
             )
             st.caption("📷 Stáhnout: ikona fotoaparátu v grafu")
+
+elif show_out:
+    sub_ceps, sub_fr, sub_hu = st.tabs(["⚡ ČEPS", "🇫🇷 Francie", "🇭🇺 Maďarsko"])
+
+    with sub_ceps:
+        st.markdown('<div class="section-title">Instalovaná kapacita podle zdroje (14.1.A)</div>',
+                    unsafe_allow_html=True)
+        cap = fetch_installed_capacity()
+        if not cap.empty:
+            st.plotly_chart(fig_installed_capacity(cap), use_container_width=True,
+                            config={"displayModeBar": False})
+
+        st.markdown(f'<div class="section-title">Výrobní jednotky (PU) — {n_pu} aktivních</div>',
+                    unsafe_allow_html=True)
+        st.plotly_chart(fig_outages_gantt(df_out, "PU", now, changes),
+                        use_container_width=True, config={"displayModeBar": False})
+
+        st.markdown(f'<div class="section-title">Generační jednotky (GU) — {n_gu} aktivních</div>',
+                    unsafe_allow_html=True)
+        st.plotly_chart(fig_outages_gantt(df_out, "GU", now, changes),
+                        use_container_width=True, config={"displayModeBar": False})
+
+        n_ended_tab = len(changes.get("ended", set()))
+        n_chmw_tab  = len(changes["changed_mw"])
+        with st.expander(f"📋 Detail změn  ·  {n_new} nových · {n_ended_tab} ukončených · {n_chmw_tab} změn MW",
+                         expanded=bool(n_new or n_ended_tab or n_chmw_tab)):
+            if not (n_new or n_ended_tab or n_chmw_tab):
+                st.markdown("<em style='color:#888'>Žádné změny od posledního obnovení.</em>",
+                            unsafe_allow_html=True)
+            else:
+                if n_new and not df_out.empty:
+                    new_df = (df_out[df_out[["unit_raw","outage_start","outage_end"]]
+                                     .apply(tuple, axis=1).isin(changes["new"])]
+                              .sort_values("unavailable_MW", ascending=False))
+                    st.markdown("**🆕 Nové odstávky**")
+                    st.dataframe(
+                        new_df[["unit_name","unit_level","outage_start","outage_end",
+                                 "installed_MW","unavailable_MW","outage_type"]],
+                        use_container_width=True, hide_index=True,
+                    )
+                if not changes["changed_mw"].empty:
+                    st.markdown("**⚡ Změny výkonu**")
+                    st.dataframe(changes["changed_mw"], use_container_width=True, hide_index=True)
+
+    with sub_fr:
+        with st.spinner("Načítám jaderné odstávky FR..."):
+            data_fr = load_nuclear_fr()
+
+        total_installed = data_fr["total_installed"]
+        active_fr       = data_fr["active"]
+        unavail_now     = float(active_fr["unavail_mw"].sum()) if not active_fr.empty else 0.0
+        available_now   = total_installed - unavail_now
+        available_pct   = available_now / total_installed * 100 if total_installed else 0.0
+        n_blocks_fr     = len(active_fr)
+        n_unplanned_fr  = (int(active_fr["businesstype"].str.contains("Unplanned", na=False).sum())
+                            if not active_fr.empty else 0)
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Instalovaný výkon", f"{total_installed:,.0f} MW")
+        k2.metric("Dostupný výkon", f"{available_now:,.0f} MW",
+                  delta=f"{available_pct:.0f} %", delta_color="off")
+        k3.metric("Bloků v odstávce", n_blocks_fr)
+        k4.metric("Unplanned", n_unplanned_fr)
+
+        st.plotly_chart(fig_nuclear_fr_capacity(data_fr), use_container_width=True,
+                        config={"displayModeBar": False})
+
+        with st.expander("📈 Sezonalita produkce (načítá se déle)"):
+            df_gen_fr = load_nuclear_fr_generation()
+            st.plotly_chart(fig_nuclear_fr_seasonality(df_gen_fr), use_container_width=True,
+                            config={"displayModeBar": False})
+
+        st.markdown('<div class="section-title">Aktivní odstávky</div>',
+                    unsafe_allow_html=True)
+        st.dataframe(fig_nuclear_fr_table(data_fr), use_container_width=True, hide_index=True)
+
+    with sub_hu:
+        st.info("Připravujeme data pro Maďarsko.")
 
 st.session_state.iteration += 1
