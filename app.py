@@ -689,7 +689,7 @@ if show_ee:
 
     # ──────────── TAB 5: DELTA GREEN ─────────────────────────────────
     with tab_dg:
-        dg_key = st.session_state.dg_api_key.strip()
+        dg_key = st.session_state.get("dg_api_key", "").strip()
         if not dg_key:
             st.info("Zadejte Delta Green API klíč v levém panelu (⚙️ Nastavení).")
         else:
