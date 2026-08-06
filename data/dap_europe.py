@@ -2,7 +2,9 @@ import os
 import pandas as pd
 import streamlit as st
 
-DAP_PATH = "data/history/dap_europe.parquet"
+from data.partitioned_store import read_partitioned
+
+DAP_DIR = "data/history/dap_europe"
 
 DAP_COUNTRIES = {
     "CZ": "CZ", "DE": "DE_LU", "FR": "FR", "AT": "AT", "SK": "SK",
@@ -37,8 +39,8 @@ CENTERS = {
 
 @st.cache_data(ttl=300)
 def load_dap_europe() -> pd.DataFrame:
-    if not os.path.exists(DAP_PATH):
-        return pd.DataFrame()
-    df = pd.read_parquet(DAP_PATH)
+    df = read_partitioned(DAP_DIR, fmt="parquet")
+    if df.empty:
+        return df
     last = df["date"].max()
     return df[df["date"] == last].copy()

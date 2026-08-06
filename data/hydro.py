@@ -1,8 +1,9 @@
 import os
 import pandas as pd
 from config import year_color
+from data.partitioned_store import read_partitioned
 
-HYDRO_CSV = "data/history/hydro_reservoirs.csv"
+HYDRO_DIR = "data/history/hydro_reservoirs"
 
 HYDRO_GRID_COUNTRIES = ["NO", "ES", "FR", "IT", "AT", "RO"]
 
@@ -22,19 +23,13 @@ def year_width(year: int) -> float:
 
 
 def load_hydro() -> pd.DataFrame:
+    def _load():
+        df = read_partitioned(HYDRO_DIR, fmt="csv")
+        if not df.empty:
+            df["date"] = pd.to_datetime(df["date"], utc=True)
+        return df
     try:
         import streamlit as st
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _load():
-            if os.path.exists(HYDRO_CSV):
-                df = pd.read_csv(HYDRO_CSV, parse_dates=["date"])
-                df["date"] = pd.to_datetime(df["date"], utc=True)
-                return df
-            return pd.DataFrame()
-        return _load()
+        return st.cache_data(ttl=3600, show_spinner=False)(_load)()
     except ImportError:
-        if os.path.exists(HYDRO_CSV):
-            df = pd.read_csv(HYDRO_CSV, parse_dates=["date"])
-            df["date"] = pd.to_datetime(df["date"], utc=True)
-            return df
-        return pd.DataFrame()
+        return _load()

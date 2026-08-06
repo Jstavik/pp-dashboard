@@ -56,10 +56,11 @@ def fetch_entsog_flows(days: int = 90) -> pd.DataFrame:
 
 
 def load_entsog_history() -> pd.DataFrame:
-    parquet_path = "data/history/entsog_all_flows.parquet"
+    from data.partitioned_store import read_partitioned
+    entsog_flows_dir = "data/history/entsog_flows"
     def _load():
-        if os.path.exists(parquet_path):
-            df = pd.read_parquet(parquet_path)
+        df = read_partitioned(entsog_flows_dir, fmt="parquet")
+        if not df.empty:
             df["date"] = pd.to_datetime(df["date"], utc=True)
             return df
         return fetch_entsog_flows(days=90)

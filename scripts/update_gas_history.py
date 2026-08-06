@@ -10,6 +10,7 @@ from data.entsog_capacity import update_capacity
 from data.lng import update_lng
 from data.gassco import update_gassco
 from data.dap_europe import DAP_COUNTRIES
+from data.partitioned_store import upsert_partitioned, last_date_partitioned
 from config import (
     ENTSOE_TOKEN, ENTSOE_OUTAGE_REVISION_WINDOW_DAYS,
     HU_GENERATION_CHUNK_DAYS, HU_GENERATION_CHUNK_RETRIES,
@@ -18,14 +19,18 @@ from config import (
 
 # ENTSO-G aggregateddata API sahá do 2020, dříve není dostupné
 HISTORY_START  = date(2020, 1, 1)
-PARQUET_PATH   = "data/history/entsog_all_flows.parquet"
+# Měsíčně partitionované úložiště (viz data/partitioned_store.py) — staré
+# monolitické soubory (entsog_all_flows.parquet, gie_all_storage.csv,
+# hydro_reservoirs.csv) zůstávají v repu jako needitovaný fallback, appka
+# i update funkce už čtou/píšou jen do těchto adresářů.
+ENTSOG_FLOWS_DIR = "data/history/entsog_flows"
 GIE_CSV_PATH   = "data/history/gie_cz_storage.csv"
-GIE_ALL_CSV    = "data/history/gie_all_storage.csv"
+GIE_ALL_DIR    = "data/history/gie_all_storage"
 GIE_KEY        = "628043ec28b2f2395a95f5adad7ec983"
 COUNTRIES_GIE  = ["AT", "BE", "CZ", "DE", "FR", "HR", "HU", "IT", "LV", "NL", "PL", "PT", "RO", "RS", "SK", "ES", "UA"]
 EU_CODE        = "EU"
 
-HYDRO_CSV      = "data/history/hydro_reservoirs.csv"
+HYDRO_DIR      = "data/history/hydro_reservoirs"
 HYDRO_COUNTRIES = [
     "FR", "AT", "CH", "ES", "PT", "IT", "NO", "SE", "FI",
     "RO", "BG", "GR", "HR", "SI", "RS", "ME", "MK", "AL", "LT", "LV",
@@ -81,14 +86,15 @@ def fetch_all_pages(from_date: date, to_date: date) -> pd.DataFrame:
 
 
 def update_entsog():
+    """ENTSO-G fyzické toky — měsíčně partitionované úložiště (viz
+    data/partitioned_store.py). Přepíše jen měsíce dotčené novým stahovaným
+    oknem, starší uzavřené měsíce zůstanou v gitu beze změny."""
     os.makedirs("data/history", exist_ok=True)
 
-    last_date = None
-    if os.path.exists(PARQUET_PATH):
-        _dates    = pd.read_parquet(PARQUET_PATH, columns=["date"])
-        last_date = pd.to_datetime(_dates["date"]).max().date()
-        start     = last_date - timedelta(days=7)
-        print(f"Existující data do {last_date}, stahuji od {start}")
+    last_date = last_date_partitioned(ENTSOG_FLOWS_DIR, "date", "parquet")
+    if last_date is not None:
+        start = last_date.date() - timedelta(days=7)
+        print(f"Existující data do {last_date.date()}, stahuji od {start}")
     else:
         start = HISTORY_START
         print(f"Nový soubor, stahuji od {start}")
@@ -111,24 +117,14 @@ def update_entsog():
         return
 
     new_data = pd.concat(frames, ignore_index=True)
+    key_cols = ["date", "countryKey", "directionKey",
+                "adjacentSystemsKey", "pointsNames"]
+    key_cols = [c for c in key_cols if c in new_data.columns]
 
-    if last_date is not None and os.path.exists(PARQUET_PATH):
-        existing = pd.read_parquet(PARQUET_PATH)
-        cutoff   = pd.Timestamp(last_date) - pd.Timedelta(days=8)
-        cutoff   = cutoff.tz_localize("UTC") if cutoff.tzinfo is None else cutoff
-        existing = existing[pd.to_datetime(existing["date"], utc=True) < cutoff]
-        df_final = pd.concat([existing, new_data], ignore_index=True)
-        key_cols = ["date", "countryKey", "directionKey",
-                    "adjacentSystemsKey", "pointsNames"]
-        key_cols = [c for c in key_cols if c in df_final.columns]
-        df_final = df_final.drop_duplicates(subset=key_cols, keep="last")
-    else:
-        df_final = new_data
-
-    df_final = df_final.sort_values("date").reset_index(drop=True)
-    df_final.to_parquet(PARQUET_PATH, index=False)
-    size_mb  = os.path.getsize(PARQUET_PATH) / 1024 / 1024
-    print(f"Uloženo {len(df_final)} řádků → {PARQUET_PATH} ({size_mb:.1f} MB)")
+    touched = upsert_partitioned(new_data, ENTSOG_FLOWS_DIR, "date", key_cols, fmt="parquet")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"ENTSO-G: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {ENTSOG_FLOWS_DIR}/")
 
 
 
@@ -177,50 +173,47 @@ def fetch_gie_all_countries() -> pd.DataFrame:
     combined = pd.concat(all_frames, ignore_index=True)
     combined["gasDayStart"] = pd.to_datetime(combined["gasDayStart"])
 
+    # GIE AGSI API vrací číselná pole nekonzistentně jako JSON číslo nebo
+    # string (např. 50.0 vs "50.0000") — beze sjednocení na float by tahle
+    # reprezentační odchylka (ne skutečná změna dat) rozbíjela detekci
+    # "obsah beze změny" v upsert_partitioned a odstávky by se v gitu
+    # zbytečně přepisovaly při každém běhu.
     for col in ["full", "gasInStorage", "injection", "withdrawal",
                 "netWithdrawal", "workingGasVolume", "trend",
-                "injectionCapacity", "withdrawalCapacity"]:
+                "injectionCapacity", "withdrawalCapacity",
+                "consumption", "consumptionFull"]:
         if col in combined.columns:
             combined[col] = pd.to_numeric(
                 combined[col].astype(str).str.replace(",", "."),
                 errors="coerce",
             )
+
+    # "info" je nepoužívaný list/blob sloupec (vždy [] v praxi) — přes CSV
+    # round-trip se nestabilně mění mezi listem a stringem "[]", stejný
+    # problém jako výše. Nikde v appce se nečte, zahazujeme.
+    combined = combined.drop(columns=["info"], errors="ignore")
+
     return combined.sort_values(["country_code", "gasDayStart"])
 
 
 def update_gie_all():
+    """GIE storage všechny země — měsíčně partitionované úložiště.
+
+    fetch_gie_all_countries() bohužel vždy stahuje CELOU historii (GIE AGSI
+    API nemá parametr pro časové okno) — stará uzavřená data se tedy
+    přeposílají znovu při každém běhu. upsert_partitioned ale díky kontrole
+    "obsah beze změny → nepřepisovat" nechá uzavřené měsíce netknuté."""
     os.makedirs("data/history", exist_ok=True)
-
-    if os.path.exists(GIE_ALL_CSV):
-        existing = pd.read_csv(GIE_ALL_CSV, parse_dates=["gasDayStart"])
-        last_date = existing["gasDayStart"].max().date()
-        print(f"GIE all: existující data do {last_date}")
-        cutoff = pd.Timestamp(last_date) - pd.Timedelta(days=14)
-        existing = existing[existing["gasDayStart"] < cutoff]
-    else:
-        existing = pd.DataFrame()
-        print("GIE all: nový soubor")
-
     new_data = fetch_gie_all_countries()
     if new_data.empty:
         print("GIE all: žádná data")
         return
 
-    if not existing.empty:
-        combined = pd.concat([existing, new_data], ignore_index=True)
-        combined = combined.drop_duplicates(
-            subset=["country_code", "gasDayStart"], keep="last"
-        )
-    else:
-        combined = new_data
-
-    combined = combined.sort_values(
-        ["country_code", "gasDayStart"]
-    ).reset_index(drop=True)
-    combined.to_csv(GIE_ALL_CSV, index=False)
-
-    size_kb = os.path.getsize(GIE_ALL_CSV) / 1024
-    print(f"GIE all: uloženo {len(combined)} řádků ({size_kb:.0f} KB)")
+    touched = upsert_partitioned(new_data, GIE_ALL_DIR, "gasDayStart",
+                                   ["country_code", "gasDayStart"], fmt="csv")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"GIE all: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {GIE_ALL_DIR}/")
 
 
 def update_hydro():
@@ -231,14 +224,12 @@ def update_hydro():
     os.makedirs("data/history", exist_ok=True)
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 
-    if os.path.exists(HYDRO_CSV):
-        existing  = pd.read_csv(HYDRO_CSV, parse_dates=["date"])
-        last_date = existing["date"].max()
-        start     = last_date - timedelta(days=30)
+    last_date = last_date_partitioned(HYDRO_DIR, "date", "csv")
+    if last_date is not None:
+        start = last_date - timedelta(days=30)
         print(f"Hydro: existující data do {last_date.date()}")
     else:
-        existing = pd.DataFrame()
-        start    = date(2020, 1, 1)
+        start = date(2020, 1, 1)
         print("Hydro: nový soubor")
 
     start_raw = pd.Timestamp(start)
@@ -270,21 +261,10 @@ def update_hydro():
         return
 
     new_data = pd.concat(frames, ignore_index=True)
-
-    if not existing.empty:
-        combined = pd.concat([existing, new_data], ignore_index=True)
-        combined = combined.drop_duplicates(
-            subset=["date", "country"], keep="last"
-        )
-    else:
-        combined = new_data
-
-    combined = combined.sort_values(
-        ["country", "date"]
-    ).reset_index(drop=True)
-    combined.to_csv(HYDRO_CSV, index=False)
-    size_kb = os.path.getsize(HYDRO_CSV) / 1024
-    print(f"Hydro: uloženo {len(combined)} řádků ({size_kb:.0f} KB)")
+    touched = upsert_partitioned(new_data, HYDRO_DIR, "date", ["date", "country"], fmt="csv")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"Hydro: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {HYDRO_DIR}/")
 
 
 def update_dap_europe():
@@ -292,7 +272,7 @@ def update_dap_europe():
     from concurrent.futures import ThreadPoolExecutor, as_completed
     print("\n=== DAP Europe ===")
 
-    DAP_PATH = "data/history/dap_europe.parquet"
+    DAP_DIR = "data/history/dap_europe"
 
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 
@@ -300,14 +280,9 @@ def update_dap_europe():
     # dnešek je kompletní den dat a musí být celý zahrnutý v dotazu.
     end = pd.Timestamp.now(tz="Europe/Prague").normalize() + pd.Timedelta(days=1)
 
-    df_existing = None
-    existing_dates = set()
-    if os.path.exists(DAP_PATH):
-        df_existing = pd.read_parquet(DAP_PATH)
-        df_existing["date"] = pd.to_datetime(df_existing["date"]).dt.date
-        existing_dates = set(df_existing["date"].unique())
-        last_existing = df_existing["date"].max()
-        start = pd.Timestamp(last_existing, tz="Europe/Prague") - pd.Timedelta(days=1)
+    last_existing = last_date_partitioned(DAP_DIR, "date", "parquet")
+    if last_existing is not None:
+        start = pd.Timestamp(last_existing.date(), tz="Europe/Prague") - pd.Timedelta(days=1)
     else:
         start = end - pd.Timedelta(days=3)
 
@@ -358,20 +333,12 @@ def update_dap_europe():
         return
 
     df_new = pd.DataFrame(results)
-    today_date = df_new["date"].max()
-
-    if today_date in existing_dates:
-        print(f"DAP Europe: data pro {today_date} už existují, skip")
+    touched = upsert_partitioned(df_new, DAP_DIR, "date", ["date", "cc"], fmt="parquet")
+    written = [(m, n) for m, n, w in touched if w]
+    if not written:
+        print("DAP Europe: data už aktuální, beze změny")
         return
-
-    if df_existing is not None:
-        df_final = pd.concat([df_existing, df_new], ignore_index=True)
-        df_final = df_final.drop_duplicates(subset=["date", "cc"], keep="last")
-    else:
-        df_final = df_new
-
-    df_final.to_parquet(DAP_PATH, index=False)
-    print(f"DAP Europe: {len(df_new)} zemí → {DAP_PATH}")
+    print(f"DAP Europe: {len(df_new)} zemí, {len(written)} přepsaný měsíc → {DAP_DIR}/")
 
 
 def update_nuclear_fr_generation():

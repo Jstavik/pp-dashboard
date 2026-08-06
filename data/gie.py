@@ -1,7 +1,9 @@
 import os
 import pandas as pd
 
-GIE_ALL_CSV = "data/history/gie_all_storage.csv"
+from data.partitioned_store import read_partitioned
+
+GIE_ALL_DIR = "data/history/gie_all_storage"
 GIE_KEY     = "628043ec28b2f2395a95f5adad7ec983"
 
 VARIABLES = {
@@ -24,16 +26,14 @@ FIXED_COUNTRIES = [
 
 
 def load_gie_all() -> pd.DataFrame:
-    """Načte GIE data ze souboru. Fallback na prázdný DataFrame."""
+    """Načte GIE data z měsíčně partitionovaného úložiště. Fallback na prázdný DataFrame."""
+    def _load():
+        df = read_partitioned(GIE_ALL_DIR, fmt="csv")
+        if not df.empty:
+            df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
+        return df
     try:
         import streamlit as st
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _load():
-            if os.path.exists(GIE_ALL_CSV):
-                return pd.read_csv(GIE_ALL_CSV, parse_dates=["gasDayStart"])
-            return pd.DataFrame()
-        return _load()
+        return st.cache_data(ttl=3600, show_spinner=False)(_load)()
     except ImportError:
-        if os.path.exists(GIE_ALL_CSV):
-            return pd.read_csv(GIE_ALL_CSV, parse_dates=["gasDayStart"])
-        return pd.DataFrame()
+        return _load()

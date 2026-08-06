@@ -1,8 +1,10 @@
 import requests, os, time
 import pandas as pd
 
+from data.partitioned_store import read_partitioned, upsert_partitioned
+
 ALSI_KEY = "628043ec28b2f2395a95f5adad7ec983"
-LNG_CSV  = "data/history/lng_storage.csv"
+LNG_DIR  = "data/history/lng_storage"
 
 # Přidej nové země sem pokud ALSI přidá nové
 COUNTRIES_ALSI = [
@@ -107,37 +109,21 @@ def fetch_lng_all() -> pd.DataFrame:
 
 
 def update_lng():
+    """LNG terminály — měsíčně partitionované úložiště (viz
+    data/partitioned_store.py). fetch_lng_all() vždy stahuje celou historii
+    (ALSI API nemá časové okno) — upsert_partitioned uzavřené měsíce, co se
+    obsahem nezměnily, nechá netknuté."""
     os.makedirs("data/history", exist_ok=True)
-
-    if os.path.exists(LNG_CSV):
-        existing  = pd.read_csv(LNG_CSV, parse_dates=["gasDayStart"])
-        last_date = existing["gasDayStart"].max().date()
-        cutoff    = pd.Timestamp(last_date) - pd.Timedelta(days=14)
-        existing  = existing[existing["gasDayStart"] < cutoff]
-        print(f"LNG ALSI: existující data do {last_date}, stahuji přírůstek")
-    else:
-        existing = pd.DataFrame()
-        print("LNG ALSI: nový soubor, stahuji vše")
-
     new_data = fetch_lng_all()
     if new_data.empty:
         print("LNG ALSI: žádná data")
         return
 
-    if not existing.empty:
-        combined = pd.concat([existing, new_data], ignore_index=True)
-        combined = combined.drop_duplicates(
-            subset=["gasDayStart", "country_code"], keep="last"
-        )
-    else:
-        combined = new_data
-
-    combined = combined.sort_values(
-        ["country_code", "gasDayStart"]
-    ).reset_index(drop=True)
-    combined.to_csv(LNG_CSV, index=False)
-    size_kb = os.path.getsize(LNG_CSV) / 1024
-    print(f"LNG ALSI: {len(combined)} řádků → {LNG_CSV} ({size_kb:.0f} KB)")
+    touched = upsert_partitioned(new_data, LNG_DIR, "gasDayStart",
+                                   ["gasDayStart", "country_code"], fmt="csv")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"LNG ALSI: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {LNG_DIR}/")
 
 
 def load_lng() -> pd.DataFrame:
@@ -145,11 +131,13 @@ def load_lng() -> pd.DataFrame:
         import streamlit as st
         @st.cache_data(ttl=3600, show_spinner=False)
         def _load():
-            if os.path.exists(LNG_CSV):
-                return pd.read_csv(LNG_CSV, parse_dates=["gasDayStart"])
-            return pd.DataFrame()
+            df = read_partitioned(LNG_DIR, fmt="csv")
+            if not df.empty:
+                df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
+            return df
         return _load()
     except ImportError:
-        if os.path.exists(LNG_CSV):
-            return pd.read_csv(LNG_CSV, parse_dates=["gasDayStart"])
-        return pd.DataFrame()
+        df = read_partitioned(LNG_DIR, fmt="csv")
+        if not df.empty:
+            df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
+        return df
