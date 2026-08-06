@@ -220,17 +220,27 @@ C_YEAR_SEASONALITY_ALT = "#6A1B9A"
 NUCLEAR_FR_CF_WINDOW_DAYS = 30
 
 # Okno zpětného stahování odstávek (rolling-window refetch) — revize starší
-# než tohle se prakticky nemění, takže update_*_outages() přepisuje jen
-# tuhle část a starší záznamy v parquetu nechává beze změny. Sdílené mezi
-# FR i HU — viz scripts/update_gas_history.py::update_nuclear_fr_outages,
-# update_hu_outages
+# než tohle se prakticky nemění, takže update_outages(country) přepisuje
+# jen tuhle část a starší záznamy v outages.parquet nechává beze změny.
+# Sdílené napříč všemi zeměmi.
 ENTSOE_OUTAGE_REVISION_WINDOW_DAYS = 14
 
-# Chunkování backfillu query_generation("HU", ...) — ENTSO-E vrací
+# Chunkování backfillu query_generation(country, ...) — ENTSO-E vrací
 # 503/504 na širokých rozsazích, proto se stahuje po menších oknech
-# s retry — viz scripts/update_gas_history.py::update_hu_generation
-HU_GENERATION_CHUNK_DAYS = 30
-HU_GENERATION_CHUNK_RETRIES = 3
+# s retry — viz scripts/update_gas_history.py::update_generation
+GENERATION_CHUNK_DAYS = 30
+GENERATION_CHUNK_RETRIES = 3
+
+# ── OBECNÁ DATOVÁ VRSTVA — ZEMĚ ──────────────────────────────────
+# Přidání nové země = jeden řádek sem (+ časová zóna níž), nic jiného —
+# viz data/generation.py, data/outages.py,
+# scripts/update_gas_history.py::update_generation/update_outages
+COUNTRIES = ["FR", "HU"]
+
+COUNTRY_TIMEZONES = {
+    "FR": "Europe/Paris",
+    "HU": "Europe/Budapest",
+}
 
 
 # ── SDÍLENÉ CHART HELPERY ────────────────────────────────────────

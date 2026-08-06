@@ -13,8 +13,8 @@ from data.dap_europe import DAP_COUNTRIES
 from data.partitioned_store import upsert_partitioned, last_date_partitioned
 from config import (
     ENTSOE_TOKEN, ENTSOE_OUTAGE_REVISION_WINDOW_DAYS,
-    HU_GENERATION_CHUNK_DAYS, HU_GENERATION_CHUNK_RETRIES,
-    PSR_CODE_BY_SOURCE_TYPE,
+    GENERATION_CHUNK_DAYS, GENERATION_CHUNK_RETRIES,
+    PSR_CODE_BY_SOURCE_TYPE, COUNTRIES, COUNTRY_TIMEZONES,
 )
 
 # ENTSO-G aggregateddata API sahá do 2020, dříve není dostupné
@@ -458,8 +458,8 @@ def update_hu_generation():
     """Výroba HU podle zdroje (ENTSO-E query_generation, psr_type=None) →
     long formát parquet (date, source_type, psr_code, mw).
 
-    Stahuje po HU_GENERATION_CHUNK_DAYS-denních chuncích s
-    HU_GENERATION_CHUNK_RETRIES pokusy na chunk — ENTSO-E vrací 503/504 na
+    Stahuje po GENERATION_CHUNK_DAYS-denních chuncích s
+    GENERATION_CHUNK_RETRIES pokusy na chunk — ENTSO-E vrací 503/504 na
     širokých rozsazích. Append-only vzor jako update_nuclear_fr_generation():
     při existujícím parquetu stahuje jen od last_date (s pár dny přesahu
     pro jistotu), jinak celý backfill od HISTORY_START."""
@@ -485,17 +485,17 @@ def update_hu_generation():
     frames = []
     cur = start
     while cur < end:
-        chunk_end = min(cur + pd.Timedelta(days=HU_GENERATION_CHUNK_DAYS), end)
-        for attempt in range(1, HU_GENERATION_CHUNK_RETRIES + 1):
+        chunk_end = min(cur + pd.Timedelta(days=GENERATION_CHUNK_DAYS), end)
+        for attempt in range(1, GENERATION_CHUNK_RETRIES + 1):
             try:
                 raw = client.query_generation("HU", start=cur, end=chunk_end, psr_type=None)
                 frames.append(_melt_hu_generation(raw))
                 print(f"  {cur.date()} → {chunk_end.date()}: OK")
                 break
             except Exception as e:
-                print(f"  {cur.date()} → {chunk_end.date()}: pokus {attempt}/{HU_GENERATION_CHUNK_RETRIES} "
+                print(f"  {cur.date()} → {chunk_end.date()}: pokus {attempt}/{GENERATION_CHUNK_RETRIES} "
                       f"selhal — {str(e)[:80]}")
-                if attempt < HU_GENERATION_CHUNK_RETRIES:
+                if attempt < GENERATION_CHUNK_RETRIES:
                     time.sleep(5)
         cur = chunk_end
         time.sleep(1)
@@ -568,8 +568,155 @@ def update_hu_outages():
           f"+ {len(frozen)} beze změny z parquetu → {len(combined)} celkem → {PATH}")
 
 
+def _melt_generation(df_wide: pd.DataFrame, country: str) -> pd.DataFrame:
+    """Wide/MultiIndex df z query_generation(country, ..., psr_type=None) →
+    long formát (date, country, source_type, psr_code, mw). Zachovává jen
+    sloupce 'Actual Aggregated' (zahazuje 'Actual Consumption', např. u
+    přečerpávání). Obecná verze data/hu_generation.py::_melt_hu_generation
+    z kroku 1 — krok 2 nahrazuje per-country funkce touhle jednou."""
+    cols = ["date", "country", "source_type", "psr_code", "mw"]
+    if df_wide.empty:
+        return pd.DataFrame(columns=cols)
+
+    agg_cols = [c for c in df_wide.columns if c[1] == "Actual Aggregated"]
+    df = df_wide[agg_cols].copy()
+    df.columns = [c[0] for c in agg_cols]
+    df.index.name = "date"
+
+    long = df.reset_index().melt(id_vars="date", var_name="source_type", value_name="mw")
+    long = long.dropna(subset=["mw"])
+
+    unmapped = sorted(set(long["source_type"]) - set(PSR_CODE_BY_SOURCE_TYPE))
+    if unmapped:
+        print(f"    VAROVÁNÍ: nenamapované source_type v PSR_CODE_BY_SOURCE_TYPE ({country}): {unmapped}")
+
+    long["country"] = country
+    long["psr_code"] = long["source_type"].map(PSR_CODE_BY_SOURCE_TYPE)
+    return long[cols]
+
+
+def update_generation(country: str):
+    """Výroba podle zdroje pro danou zemi (ENTSO-E query_generation,
+    psr_type=None) → sjednocené partitionované úložiště
+    data/history/generation/<country>/{YYYY-MM}.parquet.
+
+    Krok 2 obecné datové vrstvy — nahrazuje postupně
+    update_nuclear_fr_generation/update_hu_generation (ty zatím běží dál
+    a udržují staré soubory jako fallback, dokud nová appka není ověřená
+    — krok 4). Stahuje po GENERATION_CHUNK_DAYS chuncích s
+    GENERATION_CHUNK_RETRIES pokusy (ENTSO-E padá na 503/504 na širokých
+    rozsazích) — vzor z update_hu_generation."""
+    from entsoe import EntsoePandasClient
+    import pandas as pd, time
+    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+    tz = COUNTRY_TIMEZONES[country]
+    base_dir = f"data/history/generation/{country}"
+
+    last_date = last_date_partitioned(base_dir, "date", "parquet")
+    if last_date is not None:
+        start = last_date.tz_convert(tz) - pd.Timedelta(days=3)
+        print(f"Generation {country}: existující data do {last_date.date()}, stahuji od {start.date()}")
+    else:
+        start = pd.Timestamp(HISTORY_START, tz=tz)
+        print(f"Generation {country}: nový soubor, plný backfill od {start.date()}")
+
+    end = pd.Timestamp.now(tz=tz) + pd.Timedelta(days=1)
+
+    frames = []
+    cur = start
+    while cur < end:
+        chunk_end = min(cur + pd.Timedelta(days=GENERATION_CHUNK_DAYS), end)
+        for attempt in range(1, GENERATION_CHUNK_RETRIES + 1):
+            try:
+                raw = client.query_generation(country, start=cur, end=chunk_end, psr_type=None)
+                frames.append(_melt_generation(raw, country))
+                print(f"  {country} {cur.date()} → {chunk_end.date()}: OK")
+                break
+            except Exception as e:
+                print(f"  {country} {cur.date()} → {chunk_end.date()}: pokus {attempt}/{GENERATION_CHUNK_RETRIES} "
+                      f"selhal — {str(e)[:80]}")
+                if attempt < GENERATION_CHUNK_RETRIES:
+                    time.sleep(5)
+        cur = chunk_end
+        time.sleep(1)
+
+    if not frames:
+        print(f"Generation {country}: žádná nová data")
+        return
+    new_data = pd.concat(frames, ignore_index=True)
+    if new_data.empty:
+        print(f"Generation {country}: žádná nová data")
+        return
+
+    touched = upsert_partitioned(new_data, base_dir, "date", ["date", "source_type"], fmt="parquet")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"Generation {country}: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {base_dir}/")
+
+
+def update_outages(country: str):
+    """Odstávky pro danou zemi (ENTSO-E unavailability) — BEZ filtru na
+    plant_type, všechny typy zdrojů (stejně jako HU v kroku 1, ne jen
+    jádro jako u staré FR verze). Rolling window
+    [now - ENTSOE_OUTAGE_REVISION_WINDOW_DAYS, next_year_end], merge do
+    JEDNOHO sdíleného data/history/outages.parquet (víc zemí ve stejném
+    souboru — na rozdíl od per-country partitioningu u výroby, odstávky
+    se revidují, denní/country split nedává smysl, viz krok 0/krok 1).
+
+    Krok 2 obecné datové vrstvy — nahrazuje postupně
+    update_nuclear_fr_outages/update_hu_outages (ty zatím běží dál a
+    udržují staré soubory jako fallback, dokud nová appka není ověřená
+    — krok 4)."""
+    from entsoe import EntsoePandasClient
+    import pandas as pd, os
+    PATH = "data/history/outages.parquet"
+    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+    tz = COUNTRY_TIMEZONES[country]
+
+    now = pd.Timestamp.now(tz=tz)
+    fetch_start = now - pd.Timedelta(days=ENTSOE_OUTAGE_REVISION_WINDOW_DAYS)
+    next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz=tz)
+
+    df_out = client.query_unavailability_of_generation_units(
+        country, start=fetch_start, end=next_year_end, docstatus=None
+    ).copy()
+    df_out["nominal_power"] = pd.to_numeric(df_out["nominal_power"], errors="coerce").fillna(0)
+    df_out["avail_qty"] = pd.to_numeric(df_out["avail_qty"], errors="coerce").fillna(0)
+
+    latest = df_out.sort_values("revision").groupby(
+        ["production_resource_name", "start", "end"]
+    ).last().reset_index()
+    latest = latest[latest["docstatus"] != "Cancelled"]
+    latest["unavail_mw"] = latest["nominal_power"] - latest["avail_qty"]
+    latest["country"] = country
+    latest["start"] = pd.to_datetime(latest["start"], utc=True)
+    latest["end"] = pd.to_datetime(latest["end"], utc=True)
+
+    cols = ["country", "plant_type", "production_resource_name", "start", "end",
+            "unavail_mw", "nominal_power", "avail_qty", "docstatus", "businesstype"]
+    latest = latest[cols].reset_index(drop=True)
+
+    fetch_start_utc = fetch_start.tz_convert("UTC")
+
+    if os.path.exists(PATH):
+        existing = pd.read_parquet(PATH)
+        # zamrzlé: záznamy jiných zemí (netýká se tohohle běhu) + záznamy
+        # téhle země mimo stahované okno (odstávka skončila dřív)
+        frozen = existing[(existing["country"] != country) | (existing["end"] < fetch_start_utc)]
+    else:
+        frozen = latest.iloc[0:0]
+    combined = pd.concat([frozen, latest], ignore_index=True)
+
+    combined = combined.sort_values(["country", "production_resource_name", "start"]).reset_index(drop=True)
+    combined.to_parquet(PATH, index=False)
+    n_frozen_country = int((frozen["country"] == country).sum()) if not frozen.empty else 0
+    print(f"Outages {country}: {len(latest)} z API (okno {fetch_start.date()}→{next_year_end.date()}) "
+          f"+ {n_frozen_country} beze změny z {country} + {len(frozen) - n_frozen_country} ostatní země "
+          f"→ {len(combined)} celkem → {PATH}")
+
+
 if __name__ == "__main__":
-    for label, fn in [
+    runs = [
         ("ENTSO-G flows (všechny země)",      update_entsog),
         ("GIE storage — všechny země",        update_gie_all),
         ("Hydro reservoirs (ENTSO-E 16.1.D)", update_hydro),
@@ -577,11 +724,20 @@ if __name__ == "__main__":
         ("LNG terminály (GIE ALSI)",          update_lng),
         ("GASSCO nominace",                   update_gassco),
         ("DAP Europe choropleth",             update_dap_europe),
+        # Staré per-country zdroje (FR/HU) — dočasně běží dál souběžně
+        # s obecnou vrstvou níž, dokud není nová appka ověřená (krok 4),
+        # pak se smažou (staré update_* funkce i tenhle blok).
         ("Jaderná výroba FR (ENTSO-E)",        update_nuclear_fr_generation),
         ("Jaderné odstávky FR (ENTSO-E)",      update_nuclear_fr_outages),
         ("Výroba HU podle zdroje (ENTSO-E)",   update_hu_generation),
         ("Odstávky HU (ENTSO-E)",              update_hu_outages),
-    ]:
+    ]
+    # Obecná vrstva (krok 2) — přidání země = jeden řádek v config.COUNTRIES,
+    # žádná kopie funkce.
+    runs += [(f"Výroba {c} — obecná vrstva (ENTSO-E)", lambda c=c: update_generation(c)) for c in COUNTRIES]
+    runs += [(f"Odstávky {c} — obecná vrstva (ENTSO-E)", lambda c=c: update_outages(c)) for c in COUNTRIES]
+
+    for label, fn in runs:
         print(f"\n=== {label} ===")
         try:
             fn()
