@@ -2,7 +2,10 @@ import os
 import pandas as pd
 import streamlit as st
 
+from data.partitioned_store import read_snapshot
+
 OUTAGES_PATH = "data/history/outages.parquet"
+OUTAGES_SNAPSHOTS_DIR = "data/history/outages_snapshots"
 
 _EMPTY_ACTIVE_COLS = ["country", "plant_type", "production_resource_name", "start", "end",
                        "nominal_power", "avail_qty", "unavail_mw", "docstatus", "businesstype"]
@@ -52,3 +55,18 @@ def load_outages(country: str) -> dict:
     daily_by_type = pd.DataFrame(rows, columns=_EMPTY_DAILY_COLS)
 
     return {"active": active, "daily_by_type": daily_by_type, "now": now}
+
+
+@st.cache_data(ttl=3600)
+def load_outages_snapshot(country: str, days_back: int) -> pd.DataFrame:
+    """Denní snapshot odstávek pro danou zemi z před days_back dny — pro
+    charts.electricity_outages.fig_outages_delta. Čte
+    data/history/outages_snapshots/{YYYY-MM-DD}.parquet (zapisuje
+    scripts/update_gas_history.py::update_outages, jednou denně,
+    write-once). Prázdný DataFrame, pokud pro daný den snapshot ještě
+    neexistuje (historie snapshotů roste od nasazení dopředu)."""
+    day = pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=days_back)
+    df = read_snapshot(OUTAGES_SNAPSHOTS_DIR, day, fmt="parquet")
+    if df.empty:
+        return pd.DataFrame(columns=_EMPTY_ACTIVE_COLS)
+    return df[df["country"] == country].copy()

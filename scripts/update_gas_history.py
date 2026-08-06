@@ -10,7 +10,7 @@ from data.entsog_capacity import update_capacity
 from data.lng import update_lng
 from data.gassco import update_gassco
 from data.dap_europe import DAP_COUNTRIES
-from data.partitioned_store import upsert_partitioned, last_date_partitioned
+from data.partitioned_store import upsert_partitioned, last_date_partitioned, write_daily_snapshot
 from config import (
     ENTSOE_TOKEN, ENTSOE_OUTAGE_REVISION_WINDOW_DAYS,
     GENERATION_CHUNK_DAYS, GENERATION_CHUNK_RETRIES,
@@ -713,6 +713,12 @@ def update_outages(country: str):
     print(f"Outages {country}: {len(latest)} z API (okno {fetch_start.date()}→{next_year_end.date()}) "
           f"+ {n_frozen_country} beze změny z {country} + {len(frozen) - n_frozen_country} ostatní země "
           f"→ {len(combined)} celkem → {PATH}")
+
+    # Denní snapshot celého (všechny země) outages.parquet pro fig_outages_delta
+    # — write-once, no-op pokud dnešní snapshot už existuje (viz
+    # data/partitioned_store.py::write_daily_snapshot).
+    snap_written = write_daily_snapshot(combined, "data/history/outages_snapshots", fmt="parquet")
+    print(f"Outages snapshot: {'zapsán nový den' if snap_written else 'dnešní už existuje, beze změny'}")
 
 
 if __name__ == "__main__":

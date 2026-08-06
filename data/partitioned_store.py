@@ -42,6 +42,39 @@ def last_date_partitioned(base_dir: str, date_col: str, fmt: str = "parquet"):
     return pd.to_datetime(df[date_col], utc=True).max()
 
 
+def write_daily_snapshot(df: pd.DataFrame, base_dir: str, day: pd.Timestamp = None, fmt: str = "parquet") -> bool:
+    """Zapíše celý df jako denní snapshot base_dir/{YYYY-MM-DD}.<fmt> —
+    write-once, na rozdíl od upsert_partitioned se jednou zapsaný den UŽ
+    NIKDY nepřepisuje (žádný merge, žádná "obsah beze změny" kontrola).
+    Pokud dnešní soubor už existuje, no-op (vrátí False) — bezpečné volat
+    při každém scheduled běhu, zapíše se jen jednou za den.
+
+    Používá se pro rolling zdroje (odstávky), kde potřebujeme "jak to
+    vypadalo před N dny" bez závislosti na git historii (shallow clone na
+    produkci by to nemusel mít, navíc koliduje s budoucím úklidem historie).
+    """
+    day = (day or pd.Timestamp.now(tz="UTC")).normalize()
+    os.makedirs(base_dir, exist_ok=True)
+    path = os.path.join(base_dir, f"{day.strftime('%Y-%m-%d')}.{fmt}")
+    if os.path.exists(path):
+        return False
+    if fmt == "parquet":
+        df.to_parquet(path, index=False)
+    else:
+        df.to_csv(path, index=False)
+    return True
+
+
+def read_snapshot(base_dir: str, day: pd.Timestamp, fmt: str = "parquet") -> pd.DataFrame:
+    """Načte konkrétní denní snapshot base_dir/{YYYY-MM-DD}.<fmt>.
+    Prázdný DataFrame, pokud pro daný den snapshot neexistuje."""
+    day = pd.Timestamp(day).normalize()
+    path = os.path.join(base_dir, f"{day.strftime('%Y-%m-%d')}.{fmt}")
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    return pd.read_parquet(path) if fmt == "parquet" else pd.read_csv(path)
+
+
 def upsert_partitioned(
     new_data: pd.DataFrame,
     base_dir: str,
