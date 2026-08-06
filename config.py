@@ -242,6 +242,11 @@ COUNTRY_TIMEZONES = {
     "HU": "Europe/Budapest",
 }
 
+COUNTRY_NAMES = {
+    "FR": "🇫🇷 Francie",
+    "HU": "🇭🇺 Maďarsko",
+}
+
 
 # ── SDÍLENÉ CHART HELPERY ────────────────────────────────────────
 

@@ -1,3 +1,4 @@
+import glob
 import os
 import pandas as pd
 import streamlit as st
@@ -70,3 +71,26 @@ def load_outages_snapshot(country: str, days_back: int) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=_EMPTY_ACTIVE_COLS)
     return df[df["country"] == country].copy()
+
+
+@st.cache_data(ttl=3600)
+def list_available_snapshot_dates(country: str) -> list:
+    """Seřazený seznam dat (staré → nové), pro která existuje denní
+    snapshot odstávek obsahující data dané země
+    (data/history/outages_snapshots/{YYYY-MM-DD}.parquet).
+
+    Pro UI 'Porovnat s' selectbox — nabízí jen reálně dostupné dny, ne
+    abstraktní 'D-N' posun. Historie roste den po dni od nasazení, takže
+    tenhle seznam se sám prodlužuje s provozem."""
+    files = sorted(glob.glob(os.path.join(OUTAGES_SNAPSHOTS_DIR, "*.parquet")))
+    dates = []
+    for f in files:
+        day_str = os.path.basename(f).removesuffix(".parquet")
+        try:
+            day = pd.Timestamp(day_str, tz="UTC")
+        except ValueError:
+            continue
+        df = pd.read_parquet(f, columns=["country"])
+        if (df["country"] == country).any():
+            dates.append(day)
+    return dates

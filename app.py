@@ -74,6 +74,15 @@ from charts.hungary import (
     fig_hu_generation_stacked, fig_hu_outages_by_type, fig_hu_seasonality, fig_hu_outages_table,
 )
 
+# Krok 4 refaktoringu — obecná (country-parametrizovaná) vrstva, zatím jako
+# oddělená "🧪 Elektřina (nové)" sekce vedle staré. Nemazat staré importy/
+# bloky výš, dokud nová appka není vizuálně ověřená.
+from config import COUNTRIES, COUNTRY_TIMEZONES, COUNTRY_NAMES
+from data.generation import load_generation, available_source_types
+from data.outages import load_outages, load_outages_snapshot, list_available_snapshot_dates
+from charts.electricity_generation import fig_generation_stacked, fig_generation_ytd, fig_seasonality
+from charts.electricity_outages import fig_outages_table, fig_outlook, fig_outages_delta
+
 def data_status_row(sources: list) -> None:
     """Zobrazí řádek se stavem datových zdrojů."""
     parts = []
@@ -157,13 +166,14 @@ with st.sidebar:
     st.markdown("---")
     show_commodity = st.radio(
         "Komodita",
-        ["⚡ Elektřina", "🔵 Plyn", "📋 Report", "🔬 EE Odstávky"],
+        ["⚡ Elektřina", "🔵 Plyn", "📋 Report", "🔬 EE Odstávky", "🧪 Elektřina (nové)"],
         horizontal=False,
     )
     show_ee  = show_commodity == "⚡ Elektřina"
     show_gas = show_commodity == "🔵 Plyn"
     show_rep = show_commodity == "📋 Report"
     show_out = show_commodity == "🔬 EE Odstávky"
+    show_new = show_commodity == "🧪 Elektřina (nové)"
 
     st.markdown("---")
     st.markdown("### Zdroje dat")
@@ -1850,5 +1860,127 @@ elif show_out:
         st.markdown('<div class="section-title">Aktivní odstávky</div>',
                     unsafe_allow_html=True)
         st.dataframe(fig_hu_outages_table(data_hu), use_container_width=True, hide_index=True)
+
+elif show_new:
+    st.caption("🧪 Preview nové obecné (country-parametrizované) architektury — "
+               "staré sekce (⚡ Elektřina, 🔬 EE Odstávky) zůstávají beze změny vedle týhle.")
+    komodita_new = st.radio(
+        "Komodita", ["⚡ Elektřina", "🔵 Plyn", "📋 Report"],
+        horizontal=True, key="new_komodita",
+    )
+
+    if komodita_new == "🔵 Plyn":
+        st.info("Plyn zatím beze změny — obecná datová vrstva z tohohle refaktoringu "
+                "zatím pokrývá jen elektřinu (FR/HU). Viz existující sekce 🔵 Plyn v menu vlevo.")
+
+    elif komodita_new == "📋 Report":
+        st.info("Report — připravujeme obsah.")
+
+    else:  # ⚡ Elektřina
+        country = st.radio(
+            "Země", COUNTRIES, horizontal=True,
+            format_func=lambda c: COUNTRY_NAMES.get(c, c), key="new_country",
+        )
+        sekce = st.radio("Sekce", ["Výroba", "Odstávky"], horizontal=True, key="new_sekce")
+
+        if sekce == "Výroba":
+            with st.spinner(f"Načítám výrobu — {COUNTRY_NAMES.get(country, country)}..."):
+                df_gen = load_generation(country)
+
+            pohled = st.radio(
+                "Pohled", ["Teď/denní", "Letos", "Sezonnost"],
+                horizontal=True, key=f"gen_pohled_{country}",
+            )
+            tz = COUNTRY_TIMEZONES[country]
+
+            if pohled == "Teď/denní":
+                default_day = pd.Timestamp.now(tz=tz).date()
+                sel_day = st.date_input("Den", value=default_day, key=f"gen_day_{country}")
+                day_ts = pd.Timestamp(sel_day, tz=tz).tz_convert("UTC")
+                st.plotly_chart(fig_generation_stacked(df_gen, day_ts), use_container_width=True,
+                                config={"displayModeBar": False})
+
+            elif pohled == "Letos":
+                default_start = pd.Timestamp(year=pd.Timestamp.now(tz=tz).year, month=1, day=1, tz=tz).date()
+                sel_start = st.date_input("Od data", value=default_start, key=f"gen_start_{country}")
+                start_ts = pd.Timestamp(sel_start, tz=tz).tz_convert("UTC")
+                st.plotly_chart(fig_generation_ytd(df_gen, start_ts), use_container_width=True,
+                                config={"displayModeBar": False})
+
+            else:  # Sezonnost
+                sources = available_source_types(df_gen)
+                if sources:
+                    labels = {s: psr_lookup(s)[0] for s in sources}
+                    default_idx = sources.index("Nuclear") if "Nuclear" in sources else 0
+                    sel_source = st.selectbox(
+                        "Zdroj", sources, index=default_idx,
+                        format_func=lambda s: labels[s], key=f"gen_source_{country}",
+                    )
+                    chart_type = st.radio(
+                        "Typ grafu", ["Linie", "Plocha", "Sloupcový"],
+                        horizontal=True, key=f"gen_chart_type_{country}",
+                    )
+                    st.plotly_chart(fig_seasonality(df_gen, sel_source, chart_type),
+                                    use_container_width=True, config={"displayModeBar": False})
+                else:
+                    st.info("Zatím nejsou k dispozici data o výrobě.")
+
+        else:  # Odstávky
+            with st.spinner(f"Načítám odstávky — {COUNTRY_NAMES.get(country, country)}..."):
+                data_out = load_outages(country)
+
+            active = data_out["active"]
+            n_active     = len(active)
+            unavail_now  = float(active["unavail_mw"].sum()) if not active.empty else 0.0
+            n_unplanned  = (int(active["businesstype"].str.contains("Unplanned", na=False).sum())
+                              if not active.empty else 0)
+            n_types      = active["plant_type"].nunique() if not active.empty else 0
+
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Aktivních odstávek", n_active)
+            k2.metric("Nedostupno teď", f"{unavail_now:,.0f} MW")
+            k3.metric("Unplanned", n_unplanned)
+            k4.metric("Zasažené typy zdrojů", n_types)
+
+            st.markdown('<div class="section-title">Aktivní odstávky</div>', unsafe_allow_html=True)
+            plant_types_available = sorted(active["plant_type"].unique().tolist()) if not active.empty else []
+            sel_types = st.multiselect(
+                "Filtr typu zdroje", plant_types_available, default=plant_types_available,
+                format_func=lambda pt: psr_lookup(pt)[0], key=f"out_filter_{country}",
+            )
+            st.dataframe(fig_outages_table(data_out, sel_types or None),
+                        use_container_width=True, hide_index=True)
+
+            st.markdown('<div class="section-title">Výhled</div>', unsafe_allow_html=True)
+            days_forward = st.slider("Dní dopředu", min_value=7, max_value=500, value=30,
+                                      key=f"out_days_{country}")
+            st.plotly_chart(fig_outlook(data_out, days_forward), use_container_width=True,
+                            config={"displayModeBar": False})
+
+            st.markdown('<div class="section-title">Δ Srovnání s dřívějším snapshotem</div>',
+                        unsafe_allow_html=True)
+            available_dates = list_available_snapshot_dates(country)
+            if not available_dates:
+                st.caption("Zatím není k dispozici žádný uložený snapshot odstávek pro srovnání — "
+                           "objeví se po prvním scheduled běhu update_outages() (viz "
+                           "scripts/update_gas_history.py).")
+            else:
+                oldest = available_dates[0]
+                compare_date = st.selectbox(
+                    "Porovnat s", available_dates, index=0,
+                    format_func=lambda d: d.strftime("%d.%m.%Y"), key=f"out_compare_{country}",
+                )
+                today_utc = pd.Timestamp.now(tz="UTC").normalize()
+                days_back = (today_utc - compare_date).days
+                df_now = load_outages_snapshot(country, days_back=0)
+                df_compare = load_outages_snapshot(country, days_back=days_back)
+                st.plotly_chart(
+                    fig_outages_delta(df_now, df_compare, window_days=min(days_forward, 30),
+                                      compare_days_back=days_back),
+                    use_container_width=True, config={"displayModeBar": False},
+                )
+                full_available = oldest + pd.Timedelta(days=7)
+                st.caption(f"Historie odstávek dostupná od {oldest.strftime('%d.%m.%Y')} — "
+                           f"plné D-7 srovnání bude možné od {full_available.strftime('%d.%m.%Y')}.")
 
 st.session_state.iteration += 1
