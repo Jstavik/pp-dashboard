@@ -3,8 +3,9 @@ import pandas as pd
 import streamlit as st
 
 from config import GEN_STACK_ORDER, PSR_CODE_BY_SOURCE_TYPE
+from data.partitioned_store import read_partitioned
 
-HU_GENERATION_PATH = "data/history/hu_generation.parquet"
+HU_GENERATION_DIR = "data/history/hu_generation"
 HU_OUTAGES_PATH = "data/history/hu_outages.parquet"
 
 _EMPTY_GENERATION_COLS = ["date", "source_type", "psr_code", "mw", "year", "day_of_year"]
@@ -16,12 +17,13 @@ _EMPTY_DAILY_COLS = ["date", "plant_type", "unavail_mw"]
 @st.cache_data(ttl=3600)
 def load_hu_generation() -> pd.DataFrame:
     """Výroba HU podle zdroje — long formát (date, source_type, psr_code, mw)
-    z parquet cache (scripts/update_gas_history.py::update_hu_generation),
-    doplněné o year/day_of_year pro sezonní graf."""
-    if not os.path.exists(HU_GENERATION_PATH):
-        return pd.DataFrame(columns=_EMPTY_GENERATION_COLS)
+    z měsíčně partitionovaného úložiště (viz data/partitioned_store.py),
+    doplněné o year/day_of_year pro sezonní graf.
 
-    df = pd.read_parquet(HU_GENERATION_PATH)
+    Starý fallback dashboard (sub_hu v app.py) — obecná vrstva pro HU už
+    žije v data/generation.py, tohle zůstává jen dokud sub_hu neni
+    smazaný (krok 4 refaktoringu)."""
+    df = read_partitioned(HU_GENERATION_DIR, fmt="parquet")
     if df.empty:
         return pd.DataFrame(columns=_EMPTY_GENERATION_COLS)
 

@@ -3,8 +3,9 @@ from entsoe import EntsoePandasClient
 import pandas as pd
 import streamlit as st
 from config import ENTSOE_TOKEN
+from data.partitioned_store import read_partitioned, upsert_partitioned
 
-NUCLEAR_FR_GEN_PATH = "data/history/nuclear_fr_generation.parquet"
+NUCLEAR_FR_GEN_DIR = "data/history/nuclear_fr_generation"
 NUCLEAR_FR_OUT_PATH = "data/history/nuclear_fr_outages.parquet"
 
 _EMPTY_ACTIVE_COLS = ["production_resource_name", "start", "end", "nominal_power",
@@ -87,12 +88,15 @@ def load_nuclear_fr() -> dict:
 
 @st.cache_data(ttl=86400)
 def load_nuclear_fr_generation() -> pd.DataFrame:
+    """Jaderná výroba FR — long formát (date, nuclear_mw, year, day_of_year)
+    z měsíčně partitionovaného úložiště (viz data/partitioned_store.py).
+    Fallback: pokud cache chybí nebo nemá aktuální rok, dotáhne ho živě
+    z ENTSO-E a zapíše (stejné chování jako předtím, jen nová vrstva)."""
     current_year = pd.Timestamp.now().year
 
-    if os.path.exists(NUCLEAR_FR_GEN_PATH):
-        df_cached = pd.read_parquet(NUCLEAR_FR_GEN_PATH)
-        if not df_cached.empty and df_cached.index.max().year == current_year:
-            return df_cached
+    df_cached = read_partitioned(NUCLEAR_FR_GEN_DIR, fmt="parquet")
+    if not df_cached.empty and df_cached["date"].max().year == current_year:
+        return df_cached
 
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
     results = []
@@ -102,14 +106,16 @@ def load_nuclear_fr_generation() -> pd.DataFrame:
             end = pd.Timestamp(f"{year}-12-31", tz="Europe/Paris")
             df = client.query_generation("FR", start=start, end=end, psr_type="B14")
             df.columns = ["nuclear_mw"]
+            df.index.name = "date"
+            df = df.reset_index()
             df["year"] = year
-            df["day_of_year"] = df.index.tz_convert("Europe/Paris").day_of_year
+            df["day_of_year"] = df["date"].dt.tz_convert("Europe/Paris").day_of_year
             results.append(df)
         except Exception as e:
             print(f"FR generation {year}: {e}")
-    df_result = pd.concat(results) if results else pd.DataFrame()
+    df_result = pd.concat(results, ignore_index=True) if results else pd.DataFrame()
 
     if not df_result.empty:
-        df_result.to_parquet(NUCLEAR_FR_GEN_PATH)
+        upsert_partitioned(df_result, NUCLEAR_FR_GEN_DIR, "date", ["date"], fmt="parquet")
 
     return df_result

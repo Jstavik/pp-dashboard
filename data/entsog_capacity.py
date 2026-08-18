@@ -1,7 +1,9 @@
 import requests, time, os
 import pandas as pd
 
-CAPACITY_PARQUET = "data/history/entsog_capacity.parquet"
+from data.partitioned_store import read_partitioned, upsert_partitioned
+
+CAPACITY_DIR = "data/history/entsog_capacity"
 
 # Přidej nové hraniční body sem — pointLabel musí přesně odpovídat ENTSO-G transparency platformě
 GAS_KEY_POINTS = {
@@ -110,6 +112,11 @@ def fetch_point_capacity(point_label: str) -> list:
 
 
 def update_capacity():
+    """Kapacity ENTSO-G hraničních bodů — měsíčně partitionované úložiště
+    (krok 0 vzor). fetch_point_capacity() vždy stahuje celou dostupnou
+    historii/výhled pro každý bod (ENTSO-G API nemá časové okno) —
+    upsert_partitioned díky kontrole "obsah beze změny → nepřepisovat"
+    nechá uzavřené měsíce netknuté."""
     os.makedirs("data/history", exist_ok=True)
     all_records = []
     for group_name, labels in GAS_KEY_POINTS.items():
@@ -138,23 +145,26 @@ def update_capacity():
             (c for tso, c in TSO_COUNTRY.items()
              if tso.lower() in str(x).lower()), "??")
     )
-    df.to_parquet(CAPACITY_PARQUET, index=False)
-    print(f"Kapacity: {len(df)} řádků → {CAPACITY_PARQUET}")
+
+    # dedup na celý řádek, ne jen "id": stejný bod se legitimně objevuje
+    # pod víc group_name (ENTSOG label matching je fuzzy — "Baumgarten"
+    # chytí i "Baumgarten (Gas Connect Austria)"), takže "id" samo o sobě
+    # NENÍ unikátní klíč — ověřeno na živých datech (143 id-duplicit, ale
+    # jen 89 z nich bylo doopravdy stejný řádek na 100 %).
+    touched = upsert_partitioned(df, CAPACITY_DIR, "periodFrom_dt", list(df.columns), fmt="parquet")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"Kapacity: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {CAPACITY_DIR}/")
 
 
 def load_capacity() -> pd.DataFrame:
+    def _load():
+        return read_partitioned(CAPACITY_DIR, fmt="parquet")
     try:
         import streamlit as st
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _load():
-            if os.path.exists(CAPACITY_PARQUET):
-                return pd.read_parquet(CAPACITY_PARQUET)
-            return pd.DataFrame()
-        return _load()
+        return st.cache_data(ttl=3600, show_spinner=False)(_load)()
     except ImportError:
-        if os.path.exists(CAPACITY_PARQUET):
-            return pd.read_parquet(CAPACITY_PARQUET)
-        return pd.DataFrame()
+        return _load()
 
 
 def expand_capacity(df_raw: pd.DataFrame, target_dates: list) -> pd.DataFrame:

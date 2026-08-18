@@ -342,38 +342,37 @@ def update_dap_europe():
 
 
 def update_nuclear_fr_generation():
+    """Jaderná výroba FR (ENTSO-E query_generation, psr_type=B14) →
+    měsíčně partitionované úložiště (krok 0 vzor) —
+    data/history/nuclear_fr_generation/{YYYY-MM}.parquet."""
     from entsoe import EntsoePandasClient
-    import pandas as pd, os
-    PATH = "data/history/nuclear_fr_generation.parquet"
+    import pandas as pd
+    GEN_DIR = "data/history/nuclear_fr_generation"
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+    tz = "Europe/Paris"
 
-    if os.path.exists(PATH):
-        existing = pd.read_parquet(PATH)
-        last_date = existing.index.max()
-        # Stáhnout jen od posledního data
-        start = last_date.normalize()
-        end = pd.Timestamp.now(tz="Europe/Paris") + pd.Timedelta(days=1)
-        if start.date() >= pd.Timestamp.now().date():
-            print(f"Nuclear FR gen: aktuální, skip")
+    last_date = last_date_partitioned(GEN_DIR, "date", "parquet")
+    if last_date is not None:
+        start = last_date.tz_convert(tz).normalize()
+        if start.date() >= pd.Timestamp.now(tz=tz).date():
+            print("Nuclear FR gen: aktuální, skip")
             return
     else:
-        existing = None
-        start = pd.Timestamp("2020-01-01", tz="Europe/Paris")
-        end = pd.Timestamp.now(tz="Europe/Paris") + pd.Timedelta(days=1)
+        start = pd.Timestamp("2020-01-01", tz=tz)
+    end = pd.Timestamp.now(tz=tz) + pd.Timedelta(days=1)
 
     df_new = client.query_generation("FR", start=start, end=end, psr_type="B14")
     df_new.columns = ["nuclear_mw"]
-    df_new["year"] = df_new.index.tz_convert("Europe/Paris").year
-    df_new["day_of_year"] = df_new.index.tz_convert("Europe/Paris").day_of_year
+    df_new.index.name = "date"
+    df_new = df_new.reset_index()
+    local = df_new["date"].dt.tz_convert(tz)
+    df_new["year"] = local.year
+    df_new["day_of_year"] = local.day_of_year
 
-    if existing is not None:
-        df_final = pd.concat([existing, df_new])
-        df_final = df_final[~df_final.index.duplicated(keep="last")]
-    else:
-        df_final = df_new
-
-    df_final.to_parquet(PATH)
-    print(f"Nuclear FR gen: {len(df_new)} nových hodnot → {PATH}")
+    touched = upsert_partitioned(df_new, GEN_DIR, "date", ["date"], fmt="parquet")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"Nuclear FR gen: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {GEN_DIR}/")
 
 
 def update_nuclear_fr_outages():
@@ -460,23 +459,20 @@ def update_hu_generation():
 
     Stahuje po GENERATION_CHUNK_DAYS-denních chuncích s
     GENERATION_CHUNK_RETRIES pokusy na chunk — ENTSO-E vrací 503/504 na
-    širokých rozsazích. Append-only vzor jako update_nuclear_fr_generation():
-    při existujícím parquetu stahuje jen od last_date (s pár dny přesahu
+    širokých rozsazích. Měsíčně partitionované úložiště (krok 0 vzor) —
+    při existujících datech stahuje jen od last_date (s pár dny přesahu
     pro jistotu), jinak celý backfill od HISTORY_START."""
     from entsoe import EntsoePandasClient
-    import pandas as pd, os, time
-    PATH = "data/history/hu_generation.parquet"
+    import pandas as pd, time
+    GEN_DIR = "data/history/hu_generation"
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
     tz = "Europe/Budapest"
 
-    if os.path.exists(PATH):
-        existing = pd.read_parquet(PATH)
-        existing["date"] = pd.to_datetime(existing["date"], utc=True)
-        last_date = existing["date"].max()
+    last_date = last_date_partitioned(GEN_DIR, "date", "parquet")
+    if last_date is not None:
         start = last_date.tz_convert(tz) - pd.Timedelta(days=3)
         print(f"HU gen: existující data do {last_date.date()}, stahuji od {start.date()}")
     else:
-        existing = None
         start = pd.Timestamp(HISTORY_START, tz=tz)
         print(f"HU gen: nový soubor, plný backfill od {start.date()}")
 
@@ -508,18 +504,11 @@ def update_hu_generation():
     if new_data.empty:
         print("HU gen: žádná nová data")
         return
-    new_data["date"] = pd.to_datetime(new_data["date"], utc=True)
 
-    if existing is not None:
-        combined = pd.concat([existing, new_data], ignore_index=True)
-        combined = combined.drop_duplicates(subset=["date", "source_type"], keep="last")
-    else:
-        combined = new_data
-
-    combined = combined.sort_values(["date", "source_type"]).reset_index(drop=True)
-    combined.to_parquet(PATH, index=False)
-    years = sorted(combined["date"].dt.year.unique())
-    print(f"HU gen: uloženo {len(combined)} řádků, roky {years[0]}-{years[-1]} → {PATH}")
+    touched = upsert_partitioned(new_data, GEN_DIR, "date", ["date", "source_type"], fmt="parquet")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"HU gen: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {GEN_DIR}/")
 
 
 def update_hu_outages():

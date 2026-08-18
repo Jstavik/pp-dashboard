@@ -97,23 +97,41 @@ def upsert_partitioned(
     os.makedirs(base_dir, exist_ok=True)
 
     new_data = new_data.copy()
-    new_data[date_col] = pd.to_datetime(new_data[date_col], utc=True)
-    months = new_data[date_col].dt.strftime("%Y-%m")
+    # Měsíční klíč pro groupby se počítá do samostatné (nepersistované)
+    # Series — new_data[date_col] se NIKDY nepřepisuje. Zápis musí zachovat
+    # PŮVODNÍ dtype volajícího (parquet round-trip je beze ztráty; některé
+    # zdroje mají date_col jako obyčejné date objekty, ne Timestamp — např.
+    # entsog_capacity periodFrom_dt, dap_europe "date" — a downstream kód
+    # je tak i porovnává. Přepsání na tz-aware Timestamp by je tiše rozbilo).
+    month_key = pd.to_datetime(new_data[date_col], utc=True)
+    months = month_key.dt.strftime("%Y-%m")
 
     reader = pd.read_parquet if fmt == "parquet" else pd.read_csv
     touched = []
 
     for month, grp_new in new_data.groupby(months):
+        # dedup uvnitř samotného new_data batche — bez tohohle by se
+        # duplicity vyskytující se přímo v jednom fetchi (ne jen mezi
+        # existing/latest) zapsaly beze změny do NOVÉHO měsíčního
+        # souboru (větev "existing is None" níž new_data jinak nijak
+        # nefiltruje). Ověřeno na entsog_capacity — API vrací pravé
+        # duplicitní řádky v rámci jednoho stažení.
+        grp_new = grp_new.drop_duplicates(subset=dedup_subset, keep="last")
         path = os.path.join(base_dir, f"{month}.{fmt}")
 
         if os.path.exists(path):
             existing = reader(path)
-            # CSV round-trip ztrácí dtype (date_col se vrátí jako string) —
-            # bez sjednocení na Timestamp by drop_duplicates/equals tiše
-            # selhávaly na mixed-dtype sloupci a duplicity by se hromadily
-            # při každém běhu. Parquet dtype zachovává, ale sjednocení
-            # neškodí a chová se stejně pro oba formáty.
-            existing[date_col] = pd.to_datetime(existing[date_col], utc=True)
+            if fmt == "csv":
+                # CSV round-trip ztrácí dtype (date_col se vrátí jako
+                # string) — bez sjednocení na Timestamp by
+                # drop_duplicates/equals tiše selhávaly na mixed-dtype
+                # sloupci a duplicity by se hromadily při každém běhu.
+                # Parquet dtype zachovává beze ztráty, takže tohle
+                # potřebuje jen CSV — jinak by se přepsal i zdrojům, kde
+                # na přesném dtype date_col záleží downstream.
+                existing[date_col] = pd.to_datetime(existing[date_col], utc=True)
+                grp_new = grp_new.copy()
+                grp_new[date_col] = pd.to_datetime(grp_new[date_col], utc=True)
             combined = pd.concat([existing, grp_new], ignore_index=True)
             combined = combined.drop_duplicates(subset=dedup_subset, keep="last")
         else:
