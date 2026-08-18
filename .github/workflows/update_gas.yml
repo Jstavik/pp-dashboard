@@ -1,9 +1,11 @@
 name: Update gas history
 
 on:
-  schedule:
-    - cron: "0 4 * * *"   # 6:00 CEST (4:00 UTC)
-    - cron: "0 15 * * *"  # 17:00 CEST (15:00 UTC)
+  # schedule dočasně vypnutý — probíhá git-filter-repo přepis historie
+  # (bobtnání .git z GIE bugu v kroku 0). Znovu zapnout až po potvrzeném
+  # force-push, ať scheduled run nespustí uprostřed přepisu.
+  # - cron: "0 4 * * *"   # 6:00 CEST (4:00 UTC)
+  # - cron: "0 15 * * *"  # 17:00 CEST (15:00 UTC)
   workflow_dispatch:        # možnost spustit ručně
 
 jobs:
