@@ -232,19 +232,36 @@ GENERATION_CHUNK_DAYS = 30
 GENERATION_CHUNK_RETRIES = 3
 
 # ── OBECNÁ DATOVÁ VRSTVA — ZEMĚ ──────────────────────────────────
-# Přidání nové země = jeden řádek sem (+ časová zóna níž), nic jiného —
-# viz data/generation.py, data/outages.py,
+# Přidání nové země = jeden řádek sem (+ časová zóna a jméno níž), nic
+# jiného — viz data/generation.py, data/outages.py,
 # scripts/update_gas_history.py::update_generation/update_outages
-COUNTRIES = ["FR", "HU"]
+#
+# POZOR Německo: ENTSO-E má pro "DE" i "DE_LU" oba platné Area kódy, ale
+# vrací JINÁ data — "DE" je zastaralá samostatná německá zóna (do 2018),
+# "DE_LU" je současná sloučená DE+LU bidding zóna, kterou ENTSO-E dnes
+# skutečně publikuje. query_unavailability_of_generation_units("DE", ...)
+# navíc rovnou spadne (empty error). Proto DE_LU, ne DE — stejný kód už
+# používá DAP_COUNTRIES v data/dap_europe.py.
+COUNTRIES = ["FR", "HU", "CZ", "DE_LU", "PL", "AT", "SK"]
 
 COUNTRY_TIMEZONES = {
-    "FR": "Europe/Paris",
-    "HU": "Europe/Budapest",
+    "FR":    "Europe/Paris",
+    "HU":    "Europe/Budapest",
+    "CZ":    "Europe/Prague",
+    "DE_LU": "Europe/Berlin",
+    "PL":    "Europe/Warsaw",
+    "AT":    "Europe/Vienna",
+    "SK":    "Europe/Bratislava",
 }
 
 COUNTRY_NAMES = {
-    "FR": "🇫🇷 Francie",
-    "HU": "🇭🇺 Maďarsko",
+    "FR":    "🇫🇷 Francie",
+    "HU":    "🇭🇺 Maďarsko",
+    "CZ":    "🇨🇿 Česko",
+    "DE_LU": "🇩🇪 Německo",
+    "PL":    "🇵🇱 Polsko",
+    "AT":    "🇦🇹 Rakousko",
+    "SK":    "🇸🇰 Slovensko",
 }
 
 

@@ -706,6 +706,16 @@ def update_outages(country: str):
     else:
         frozen = latest.iloc[0:0]
     combined = pd.concat([frozen, latest], ignore_index=True)
+    # Pojistka proti reálně pozorovanému jevu: ENTSO-E občas vrací i
+    # záznamy dávno uzavřených odstávek (end hluboko před fetch_start),
+    # i když o ně query start/end okno vůbec nežádá. Takový záznam je
+    # zároveň v "frozen" (end < fetch_start, correctly preserved) i v
+    # "latest" (API ho znovu vrátilo) → beze slitování by se hromadil
+    # o 1 kopii při každém běhu. V produkci takhle nabujel jeden řádek
+    # (FR/PROVENCE 4) na 32 kopií za ~2 týdny dvou běhů denně, než jsme
+    # na to přišli — vyčištěno + tahle pojistka to natrvalo drží na 1.
+    combined = combined.drop_duplicates(
+        subset=["country", "production_resource_name", "start", "end"], keep="last")
 
     combined = combined.sort_values(["country", "production_resource_name", "start"]).reset_index(drop=True)
     combined.to_parquet(PATH, index=False)
