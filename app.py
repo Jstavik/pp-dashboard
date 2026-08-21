@@ -39,10 +39,14 @@ from charts.lng import (
     fig_lng_monthly_bars,
     fig_lng_storage_seasonality,
 )
-from data.gassco import load_gassco, fetch_gassco_umm
+from data.gassco import (
+    load_gassco, load_gassco_umm, load_gassco_umm_snapshot,
+    list_available_umm_snapshot_dates, _latest_per_base_id, compute_umm_delta,
+)
 from charts.gassco import (
     fig_gassco_kpi, fig_gassco_timeseries,
-    fig_gassco_seasonality, fig_gassco_umm,
+    fig_gassco_seasonality, fig_gassco_umm_active, fig_gassco_umm_cancelled,
+    fig_gassco_umm_outlook, fig_gassco_umm_delta,
 )
 from charts.imbalance import (
     parse_imbalance,
@@ -1581,17 +1585,56 @@ elif show_gas:
                 )
 
                 st.markdown("---")
+                st.markdown("#### UMM zprávy (odstávky polí)")
 
-                st.markdown("#### Aktivní UMM zprávy (odstávky polí)")
-                with st.spinner("Načítám UMM..."):
-                    df_umm_live = fetch_gassco_umm()
-                if not df_umm_live.empty:
+                df_umm_all = load_gassco_umm()
+                if df_umm_all.empty:
+                    st.info("GASSCO UMM data nejsou dostupná.")
+                else:
+                    umm_latest = _latest_per_base_id(df_umm_all)
+                    now_ts = pd.Timestamp.now(tz="UTC")
+                    umm_active = umm_latest[
+                        (umm_latest["eventStatus"] != "Dismissed")
+                        & (umm_latest["eventStop"] >= now_ts)
+                    ]
+
+                    st.plotly_chart(fig_gassco_umm_active(umm_active), use_container_width=True)
+
+                    cancel_days = st.slider("Zrušené za posledních N dní", min_value=1,
+                                             max_value=90, value=14, key="umm_cancel_days")
+                    cancel_since = now_ts - pd.Timedelta(days=cancel_days)
+                    umm_cancelled = umm_latest[
+                        (umm_latest["eventStatus"] == "Dismissed")
+                        & (umm_latest["publicationDateTime"] >= cancel_since)
+                    ]
                     st.plotly_chart(
-                        fig_gassco_umm(df_umm_live),
+                        fig_gassco_umm_cancelled(umm_cancelled, cancel_since.strftime("%d.%m.%Y")),
                         use_container_width=True,
                     )
-                else:
-                    st.info("Žádné aktivní UMM zprávy.")
+
+                    st.markdown('<div class="section-title">Výhled</div>', unsafe_allow_html=True)
+                    umm_days_forward = st.slider("Dní dopředu", min_value=7, max_value=500,
+                                                  value=60, key="umm_outlook_days")
+                    st.plotly_chart(
+                        fig_gassco_umm_outlook(umm_active, umm_days_forward),
+                        use_container_width=True,
+                    )
+
+                    st.markdown('<div class="section-title">Δ Srovnání s dřívějším snapshotem</div>',
+                                unsafe_allow_html=True)
+                    umm_available_dates = list_available_umm_snapshot_dates()
+                    if not umm_available_dates:
+                        st.caption("Zatím není k dispozici žádný uložený snapshot UMM zpráv pro "
+                                   "srovnání — objeví se po prvním scheduled běhu update_gassco_umm().")
+                    else:
+                        umm_compare_date = st.selectbox(
+                            "Porovnat s", umm_available_dates, index=0,
+                            format_func=lambda d: d.strftime("%d.%m.%Y"), key="umm_compare",
+                        )
+                        umm_days_back = (now_ts.normalize() - umm_compare_date).days
+                        df_umm_past = load_gassco_umm_snapshot(umm_days_back)
+                        umm_delta = compute_umm_delta(df_umm_all, df_umm_past)
+                        st.plotly_chart(fig_gassco_umm_delta(umm_delta), use_container_width=True)
 
         with tab_hist:
             point_sel = st.selectbox(

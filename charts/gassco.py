@@ -1,8 +1,9 @@
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
 from plotly.subplots import make_subplots
 from datetime import timedelta
-from config import year_color, MONTH_TICKS
+from config import year_color, MONTH_TICKS, _base_layout
 
 
 def fig_gassco_kpi(df: pd.DataFrame) -> go.Figure:
@@ -201,13 +202,18 @@ def fig_gassco_seasonality(
     return fig
 
 
-def fig_gassco_umm(df_umm: pd.DataFrame) -> go.Figure:
+def _umm_table(df_umm: pd.DataFrame, title: str) -> go.Figure:
+    """Generická tabulka UMM zpráv — používá se pro aktivní i zrušené
+    pohledy (fig_gassco_umm_active/fig_gassco_umm_cancelled), stejný
+    layout, jiný vstupní (už předfiltrovaný) dataframe a titulek."""
     if df_umm.empty:
-        return go.Figure()
+        fig = go.Figure()
+        fig.update_layout(height=120, margin=dict(l=0, r=0, t=30, b=0), title=title)
+        return fig
 
-    cols = ["affectedAsset", "eventStatus", "eventType",
-            "techCapacity", "unavailCapacity", "unit",
-            "eventStart", "eventStop", "reason"]
+    cols = ["affectedAsset", "eventStatus", "eventType", "unavailabilityType",
+            "technicalCapacity", "availableCapacity", "unavailableCapacity", "unitMeasure",
+            "eventStart", "eventStop", "unavailabilityReason"]
     cols = [c for c in cols if c in df_umm.columns]
     sub  = df_umm[cols].fillna("")
 
@@ -215,13 +221,15 @@ def fig_gassco_umm(df_umm: pd.DataFrame) -> go.Figure:
     for c in cols:
         label = (c.replace("eventStatus", "Status")
                   .replace("eventType", "Type")
+                  .replace("unavailabilityType", "Plán/Neplán")
                   .replace("eventStart", "Start")
                   .replace("eventStop", "Stop")
-                  .replace("techCapacity", "Tech cap")
-                  .replace("unavailCapacity", "Unavail cap")
+                  .replace("technicalCapacity", "Tech cap")
+                  .replace("availableCapacity", "Dostupná")
+                  .replace("unavailableCapacity", "Nedostupná")
                   .replace("affectedAsset", "Asset")
-                  .replace("unit", "Unit")
-                  .replace("reason", "Reason"))
+                  .replace("unitMeasure", "Jednotka")
+                  .replace("unavailabilityReason", "Důvod"))
         header_labels.append(label)
 
     row_colors = [["#F5F5F5", "white"][i % 2] for i in range(len(sub))]
@@ -243,6 +251,114 @@ def fig_gassco_umm(df_umm: pd.DataFrame) -> go.Figure:
     fig.update_layout(
         height=max(200, len(sub) * 35 + 60),
         margin=dict(l=0, r=0, t=30, b=0),
-        title="Aktivní UMM zprávy (odstávky polí)",
+        title=title,
     )
+    return fig
+
+
+def fig_gassco_umm_active(df_active: pd.DataFrame) -> go.Figure:
+    return _umm_table(df_active, "Aktivní UMM zprávy (odstávky polí)")
+
+
+def fig_gassco_umm_cancelled(df_cancelled: pd.DataFrame, since_label: str = "") -> go.Figure:
+    title = f"Zrušené UMM zprávy{f' od {since_label}' if since_label else ''}"
+    return _umm_table(df_cancelled, title)
+
+
+def _expand_daily(df: pd.DataFrame, days: pd.DatetimeIndex) -> pd.DataFrame:
+    """Rozšíří UMM řádky (eventStart/eventStop, jeden řádek = jedno okno
+    odstávky) na denní řádky pro outlook graf — analogie k
+    charts/electricity_outages.py::_daily_unavail_by_block, ale po assetu
+    místo bloku a přes výrazně řidší data (jednotky událostí, ne stovky)."""
+    records = []
+    for _, row in df.iterrows():
+        start, stop = row.get("eventStart"), row.get("eventStop")
+        if pd.isna(start) or pd.isna(stop):
+            continue
+        mask = (days >= start.normalize()) & (days <= stop.normalize())
+        val = row.get("unavailableCapacity_GWh") or 0
+        asset = row.get("affectedAsset") or "?"
+        for d in days[mask]:
+            records.append({"date": d, "affectedAsset": asset, "unavailableCapacity_GWh": val})
+    return pd.DataFrame(records)
+
+
+def fig_gassco_umm_outlook(df_active: pd.DataFrame, days_forward: int = 60) -> go.Figure:
+    """Výhled nedostupné kapacity podle assetu — analogie k fig_outlook
+    u elektřinových odstávek. Bere df_active PŘED filtrem na eventStop
+    >= teď (chceme i budoucí, zatím neaktivní odstávky uvnitř okna)."""
+    fig = go.Figure()
+    if df_active.empty:
+        return _base_layout(fig, height=320)
+
+    now = pd.Timestamp.now(tz="UTC").normalize()
+    days = pd.date_range(now, now + pd.Timedelta(days=days_forward), freq="D")
+    daily = _expand_daily(df_active, days)
+    if daily.empty:
+        return _base_layout(fig, height=320)
+
+    wide = daily.pivot_table(index="date", columns="affectedAsset",
+                              values="unavailableCapacity_GWh", aggfunc="sum").fillna(0)
+    palette = px.colors.qualitative.Set2
+    for i, asset in enumerate(sorted(wide.columns)):
+        series = wide[asset]
+        if series.sum() <= 0:
+            continue
+        color = palette[i % len(palette)]
+        fig.add_trace(go.Scatter(
+            x=wide.index, y=series.values, stackgroup="out", name=asset,
+            line=dict(width=0, color=color),
+            hovertemplate=f"{asset}: %{{y:.2f}} GWh/d<extra></extra>",
+        ))
+
+    _base_layout(fig, height=320, margin_l=55)
+    fig.update_layout(title=f"Výhled nedostupné kapacity — {days_forward} dní dopředu [GWh/d]",
+                       hovermode="x unified")
+    fig.update_xaxes(title_text="Datum")
+    fig.update_yaxes(title_text="GWh/d")
+    return fig
+
+
+def fig_gassco_umm_delta(delta: dict) -> go.Figure:
+    """Tabulka 3 kategorií změn (nové/zrušené/změněné) z
+    data/gassco.py::compute_umm_delta — jeden sloupec navíc oproti
+    _umm_table s kategorií, jinak stejný vzhled."""
+    frames = []
+    for cat, label in [("new", "🆕 Nové"), ("cancelled", "❌ Zrušené"), ("changed", "✏️ Změněné")]:
+        df = delta.get(cat)
+        if df is not None and not df.empty:
+            sub = df.copy()
+            sub["Kategorie"] = label
+            frames.append(sub)
+
+    if not frames:
+        fig = go.Figure()
+        fig.update_layout(height=120, margin=dict(l=0, r=0, t=30, b=0),
+                           title="Žádné změny za sledované období")
+        return fig
+
+    combined = pd.concat(frames, ignore_index=True)
+    cols = ["Kategorie", "affectedAsset", "eventStatus", "revision",
+            "eventStart", "eventStop", "unavailableCapacity"]
+    cols = [c for c in cols if c in combined.columns]
+    sub = combined[cols].fillna("")
+
+    header_labels = [c.replace("affectedAsset", "Asset")
+                       .replace("eventStatus", "Status")
+                       .replace("revision", "Revize")
+                       .replace("eventStart", "Start")
+                       .replace("eventStop", "Stop")
+                       .replace("unavailableCapacity", "Nedostupná kapacita")
+                     for c in cols]
+    row_colors = [["#F5F5F5", "white"][i % 2] for i in range(len(sub))]
+
+    fig = go.Figure(go.Table(
+        header=dict(values=header_labels, fill_color="#1565C0",
+                    font=dict(color="white", size=11), align="left"),
+        cells=dict(values=[sub[c] for c in cols],
+                   fill_color=[row_colors] * len(cols), align="left", font=dict(size=10)),
+    ))
+    fig.update_layout(height=max(200, len(sub) * 35 + 60),
+                       margin=dict(l=0, r=0, t=30, b=0),
+                       title="Δ Změny (nové / zrušené / změněné)")
     return fig
