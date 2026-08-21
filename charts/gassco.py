@@ -202,6 +202,21 @@ def fig_gassco_seasonality(
     return fig
 
 
+_DATETIME_COLS = ("eventStart", "eventStop", "publicationDateTime", "updated")
+
+
+def _fmt_datetime_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Naformátuje datetime sloupce na string PŘED vložením do go.Table —
+    syrové Timestamp objekty v cells.values fungují v interaktivním
+    Streamlit renderu (plotly.js si s nimi poradí), ale kaleido (statický
+    export do PNG) je JSON-serializuje a na Timestamp spadne."""
+    df = df.copy()
+    for c in _DATETIME_COLS:
+        if c in df.columns:
+            df[c] = pd.to_datetime(df[c], utc=True, errors="coerce").dt.strftime("%d.%m.%Y %H:%M")
+    return df
+
+
 def _umm_table(df_umm: pd.DataFrame, title: str) -> go.Figure:
     """Generická tabulka UMM zpráv — používá se pro aktivní i zrušené
     pohledy (fig_gassco_umm_active/fig_gassco_umm_cancelled), stejný
@@ -215,7 +230,7 @@ def _umm_table(df_umm: pd.DataFrame, title: str) -> go.Figure:
             "technicalCapacity", "availableCapacity", "unavailableCapacity", "unitMeasure",
             "eventStart", "eventStop", "unavailabilityReason"]
     cols = [c for c in cols if c in df_umm.columns]
-    sub  = df_umm[cols].fillna("")
+    sub  = _fmt_datetime_cols(df_umm)[cols].fillna("")
 
     header_labels = []
     for c in cols:
@@ -280,7 +295,14 @@ def _expand_daily(df: pd.DataFrame, days: pd.DatetimeIndex) -> pd.DataFrame:
         asset = row.get("affectedAsset") or "?"
         for d in days[mask]:
             records.append({"date": d, "affectedAsset": asset, "unavailableCapacity_GWh": val})
-    return pd.DataFrame(records)
+    out = pd.DataFrame(records)
+    if not out.empty:
+        # bez tohohle zůstane "date" jako object dtype plný Timestamp
+        # skalárů (ne datetime64) — plotly to v interaktivním Streamlit
+        # renderu zvládne, ale kaleido (statický PNG export) na syrový
+        # Timestamp v ose x spadne s "Type is not JSON serializable".
+        out["date"] = pd.to_datetime(out["date"], utc=True)
+    return out
 
 
 def fig_gassco_umm_outlook(df_active: pd.DataFrame, days_forward: int = 60) -> go.Figure:
@@ -299,6 +321,11 @@ def fig_gassco_umm_outlook(df_active: pd.DataFrame, days_forward: int = 60) -> g
 
     wide = daily.pivot_table(index="date", columns="affectedAsset",
                               values="unavailableCapacity_GWh", aggfunc="sum").fillna(0)
+    # tz-aware DatetimeIndex.to_numpy() spadne do object dtype (pole
+    # Timestamp skalárů — numpy datetime64 neumí tz) — přesně to, na
+    # čem kaleido (statický export) padá s "Type is not JSON
+    # serializable". Denní granularita tuhle přesnost stejně nepotřebuje.
+    wide.index = wide.index.tz_localize(None)
     palette = px.colors.qualitative.Set2
     for i, asset in enumerate(sorted(wide.columns)):
         series = wide[asset]
@@ -341,7 +368,7 @@ def fig_gassco_umm_delta(delta: dict) -> go.Figure:
     cols = ["Kategorie", "affectedAsset", "eventStatus", "revision",
             "eventStart", "eventStop", "unavailableCapacity"]
     cols = [c for c in cols if c in combined.columns]
-    sub = combined[cols].fillna("")
+    sub = _fmt_datetime_cols(combined)[cols].fillna("")
 
     header_labels = [c.replace("affectedAsset", "Asset")
                        .replace("eventStatus", "Status")

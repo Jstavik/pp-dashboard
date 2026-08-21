@@ -73,80 +73,52 @@ def _remit_name(el, remit_ns: str, common_ns: str) -> str:
     return (name_el.text or "").strip() if name_el is not None else ""
 
 
+_XLEXPORT_COLUMNS = {
+    ("Message ID", "Unnamed: 0_level_1"):              "messageId",
+    ("Affected Asset or Unit", "Unnamed: 1_level_1"):   "affectedAsset",
+    ("Event Status", "Unnamed: 2_level_1"):             "eventStatus",
+    ("Type of unavailability", "Unnamed: 3_level_1"):   "unavailabilityType",
+    ("Type of event", "Unnamed: 4_level_1"):            "eventType",
+    ("Publication date/time", "Unnamed: 5_level_1"):    "publicationDateTime",
+    ("Event", "Start"):                                 "eventStart",
+    ("Event", "Stop"):                                  "eventStop",
+    ("Unit of Meassurement", "Unnamed: 8_level_1"):     "unitMeasure",
+    ("Capacity", "Technical"):                          "technicalCapacity",
+    ("Capacity", "Available"):                          "availableCapacity",
+    ("Capacity", "Unavailable"):                        "unavailableCapacity",
+    ("Reason for the unavailability", "Unnamed: 12_level_1"): "unavailabilityReason",
+    ("Remarks", "Unnamed: 13_level_1"):                 "remarks",
+    ("Balancing Zone", "Unnamed: 14_level_1"):          "balancingZone",
+    ("Market Participant", "Unnamed: 15_level_1"):      "marketParticipant",
+    ("Market Participant Code", "Unnamed: 16_level_1"): "marketParticipantCode",
+    ("Affected Asset or Unit EIC Code", "Unnamed: 17_level_1"): "affectedAssetEicCode",
+}
+
+
 def fetch_gassco_umm() -> pd.DataFrame:
-    """REMIT UMM zprávy (odstávky polí) z /atom.xml — feed vrací jen
-    AKTUÁLNÍ stav (poslední revize + nedávno zrušené), ne plnou historii;
-    tu si stavíme sami opakovaným voláním, viz update_gassco_umm().
+    """REMIT UMM zprávy (odstávky polí) — /xlexport (kompletní aktuální
+    stav, ne přírůstek). Nahrazuje dřívější /atom.xml, který se ukázal
+    být rolling feed posledně AKTUALIZOVANÝCH zpráv (9 záznamů), ne
+    kompletní seznam platných odstávek — ověřeno živě: /xlexport dává
+    129 záznamů vs. 9 z atom.xml, včetně právě probíhajících a
+    nejbližších odstávek, co atom.xml chybělo úplně (0 v okně 30 dní).
 
-    Pozor na skutečnou XML strukturu (ověřeno živě, dřívější verze měla
-    špatné cesty): unavailabilityType/publicationDateTime/capacity/
-    unavailabilityReason/affectedAsset/affectedUnit jsou SOUROZENCI
-    <event>, ne jeho potomci — <event> obsahuje jen eventStatus/eventType/
-    eventStart/eventStop. affectedAsset/affectedUnit navíc nesou jméno ve
-    vnořeném <ns2:name>, ne v přímém textu elementu."""
-    import xml.etree.ElementTree as ET
-
+    messageId formát je stejný jako u atom.xml (base_id/revision parsing
+    beze změny)."""
     try:
-        resp = requests.get(
-            "https://umm.gassco.no/atom.xml",
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10,
-        )
+        session = _get_session()
+        resp = session.get("https://umm.gassco.no/xlexport", timeout=20)
         if resp.status_code != 200:
             return pd.DataFrame()
 
-        root = ET.fromstring(resp.text)
-        ns        = {"atom": "http://www.w3.org/2005/Atom"}
-        remit_ns  = "http://www.acer.europa.eu/REMIT/REMITUMMGasSchema_V2.xsd"
-        common_ns = "http://www.acer.europa.eu/REMIT/REMITUMMCommonSchema_V1.xsd"
-
-        records = []
-        for entry in root.findall("atom:entry", ns):
-            title   = entry.findtext("atom:title", "", ns)
-            updated = entry.findtext("atom:updated", "", ns)
-            link    = entry.find("atom:link", ns)
-            href    = link.get("href") if link is not None else ""
-            summary = entry.findtext("atom:summary", "", ns)
-
-            rec = {"title": title, "updated": updated, "link": href}
-            if summary:
-                try:
-                    clean = summary.strip()
-                    if "<?xml" in clean:
-                        root_s = ET.fromstring(clean)
-                        umm_el = root_s.find(f"{{{remit_ns}}}UMM")
-                        if umm_el is not None:
-                            ev  = umm_el.find(f"{{{remit_ns}}}event")
-                            cap = umm_el.find(f"{{{remit_ns}}}capacity")
-                            asset = umm_el.find(f"{{{remit_ns}}}affectedAsset")
-                            unit_el = umm_el.find(f"{{{remit_ns}}}affectedUnit")
-
-                            rec["messageId"] = umm_el.findtext(f"{{{remit_ns}}}messageId", "")
-                            rec["unavailabilityType"]   = umm_el.findtext(f"{{{remit_ns}}}unavailabilityType", "")
-                            rec["publicationDateTime"]  = umm_el.findtext(f"{{{remit_ns}}}publicationDateTime", "")
-                            rec["unavailabilityReason"] = umm_el.findtext(f"{{{remit_ns}}}unavailabilityReason", "")
-                            rec["affectedAsset"] = _remit_name(asset, remit_ns, common_ns)
-                            rec["affectedUnit"]  = _remit_name(unit_el, remit_ns, common_ns)
-
-                            if ev is not None:
-                                rec["eventStatus"] = ev.findtext(f"{{{remit_ns}}}eventStatus", "")
-                                rec["eventType"]    = ev.findtext(f"{{{remit_ns}}}eventType", "")
-                                rec["eventStart"]   = ev.findtext(f"{{{remit_ns}}}eventStart", "")
-                                rec["eventStop"]    = ev.findtext(f"{{{remit_ns}}}eventStop", "")
-                            if cap is not None:
-                                rec["unitMeasure"]         = cap.findtext(f"{{{remit_ns}}}unitMeasure", "")
-                                rec["technicalCapacity"]   = cap.findtext(f"{{{remit_ns}}}technicalCapacity", "")
-                                rec["availableCapacity"]   = cap.findtext(f"{{{remit_ns}}}availableCapacity", "")
-                                rec["unavailableCapacity"] = cap.findtext(f"{{{remit_ns}}}unavailableCapacity", "")
-                except Exception:
-                    pass
-            records.append(rec)
-
-        df = pd.DataFrame(records)
-        if df.empty or "messageId" not in df.columns:
+        import io
+        raw = pd.read_excel(io.BytesIO(resp.content), header=[1, 2])
+        raw.columns = [_XLEXPORT_COLUMNS.get(tuple(c), c[0]) for c in raw.columns]
+        df = raw.dropna(subset=["messageId"]).reset_index(drop=True)
+        if df.empty:
             return df
 
-        df["messageId"] = df["messageId"].fillna("")
+        df["messageId"] = df["messageId"].astype(str)
         df["base_id"]   = df["messageId"].str.split("_").str[0]
         df["revision"]  = (
             df["messageId"].str.extract(r"(\d+)$")[0]
@@ -159,7 +131,7 @@ def fetch_gassco_umm() -> pd.DataFrame:
         for col in ("technicalCapacity", "availableCapacity", "unavailableCapacity"):
             if col in df.columns:
                 df[f"{col}_GWh"] = (df[col] * MSMM3_TO_GWH).where(is_mcm)
-        for col in ("eventStart", "eventStop", "publicationDateTime", "updated"):
+        for col in ("eventStart", "eventStop", "publicationDateTime"):
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], utc=True, errors="coerce")
         return df
@@ -221,31 +193,84 @@ def compute_umm_delta(df_now: pd.DataFrame, df_past: pd.DataFrame) -> dict:
     return {"new": novel, "cancelled": cancelled, "changed": changed}
 
 
+def compute_price_relevant_changes(df_now: pd.DataFrame, df_previous: pd.DataFrame,
+                                    capacity_change_threshold: float = 0.10) -> pd.DataFrame:
+    """Základ pro budoucí alerting (zatím jen výpočet — žádné posílání
+    zpráv, to přijde později). Staví na compute_umm_delta, ale filtruje
+    "změněné" jen na skutečně tržně relevantní revize: drobná revize
+    (posun data o den, zaokrouhlení publikačního času) není zajímavá,
+    zajímavá je jen změna OBJEMU nedostupné kapacity.
+
+    Práh: |Δ unavailableCapacity| / technicalCapacity > capacity_change_threshold
+    (default 0.10 = 10 %, konzultováno s uživatelem, laditelné parametrem
+    — ne natvrdo zabudované do logiky). Nové a zrušené odstávky se
+    vždy berou celé (žádný práh — objevení/zmizení odstávky je vždy
+    relevantní, na rozdíl od malé revize existující).
+
+    Vrací DataFrame se sloupcem change_type (new/cancelled/revised) a
+    capacity_change_pct (jen u revised, jinak NaN)."""
+    delta = compute_umm_delta(df_now, df_previous)
+
+    novel = delta["new"].copy()
+    if not novel.empty:
+        novel["change_type"] = "new"
+        novel["capacity_change_pct"] = pd.NA
+
+    cancelled = delta["cancelled"].copy()
+    if not cancelled.empty:
+        cancelled["change_type"] = "cancelled"
+        cancelled["capacity_change_pct"] = pd.NA
+
+    changed = delta["changed"]
+    revised_rows = []
+    if not changed.empty:
+        past_latest = _latest_per_base_id(df_previous)
+        past_by_id = past_latest.set_index("base_id") if not past_latest.empty else past_latest
+        for _, row in changed.iterrows():
+            bid = row["base_id"]
+            if past_by_id.empty or bid not in past_by_id.index:
+                continue
+            past_row = past_by_id.loc[bid]
+            tech = row.get("technicalCapacity") or 0
+            if not tech:
+                continue
+            delta_unavail = (row.get("unavailableCapacity") or 0) - (past_row.get("unavailableCapacity") or 0)
+            pct = abs(delta_unavail) / tech
+            if pct > capacity_change_threshold:
+                r = row.copy()
+                r["change_type"] = "revised"
+                r["capacity_change_pct"] = pct
+                revised_rows.append(r)
+    revised = pd.DataFrame(revised_rows) if revised_rows else changed.iloc[0:0].copy()
+
+    parts = [d for d in (novel, cancelled, revised) if not d.empty]
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
 def update_gassco_umm():
-    """REMIT UMM zprávy (odstávky polí GASSCO) — rolling soubor jako
-    outages.parquet (revize se dějí přirozeně, ne měsíční partitioning).
-    Dedup je jednodušší než u ENTSOG kapacity: messageId je jednou
-    publikovaný a NEMĚNNÝ (nová revize = nový messageId), takže stačí
-    drop_duplicates na messageId — žádné porovnávání lastUpdateDateTime.
+    """REMIT UMM zprávy (odstávky polí GASSCO) — /xlexport vrací VŽDY
+    kompletní aktuální stav (ne přírůstek/rolling feed jako dřívější
+    atom.xml), takže gassco_umm.parquet je teď prostý poslední snapshot,
+    ne akumulovaný merge — přepisuje se celý při každém běhu, žádný
+    merge s předchozí verzí není potřeba ani žádoucí (mohl by tam nechat
+    navždy viset messageId, co Gassco už ze svého exportu odstranil).
+
+    Historie napříč běhy (pro delta/alerting) se buduje přes denní
+    snapshoty (write_daily_snapshot) níž, ne přes tenhle soubor.
 
     KRITICKÉ (ověřeno přes ACER REMIT Q&A): eventStatus="Dismissed"
     znamená skutečné zrušení odstávky (návrat kapacity), ne rutinní
-    revizi — NIKDY se nezahazuje, ukládá se jako plnohodnotný záznam."""
+    revizi — je to plnohodnotný záznam v exportu, ne něco, co bychom
+    měli speciálně řešit při zápisu."""
     os.makedirs("data/history", exist_ok=True)
     new_data = fetch_gassco_umm()
     if new_data.empty:
         print("  GASSCO UMM: žádná data")
         return
 
-    if os.path.exists(GASSCO_UMM_PATH):
-        existing = pd.read_parquet(GASSCO_UMM_PATH)
-        combined = pd.concat([existing, new_data], ignore_index=True)
-    else:
-        combined = new_data
-    combined = combined.drop_duplicates(subset=["messageId"], keep="last")
-    combined = combined.sort_values(["base_id", "revision"]).reset_index(drop=True)
+    combined = new_data.sort_values(["base_id", "revision"]).reset_index(drop=True)
     combined.to_parquet(GASSCO_UMM_PATH, index=False)
-    print(f"  GASSCO UMM: {len(new_data)} z feedu → {len(combined)} celkem (revize) → {GASSCO_UMM_PATH}")
+    print(f"  GASSCO UMM: {len(combined)} řádků (kompletní stav) → {GASSCO_UMM_PATH}")
 
     snap_written = write_daily_snapshot(combined, GASSCO_UMM_SNAPSHOTS_DIR, fmt="parquet")
     print(f"  GASSCO UMM snapshot: {'zapsán nový den' if snap_written else 'dnešní už existuje'}")
