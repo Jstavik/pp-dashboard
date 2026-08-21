@@ -1613,12 +1613,40 @@ elif show_gas:
                     )
 
                     st.markdown('<div class="section-title">Výhled</div>', unsafe_allow_html=True)
-                    umm_days_forward = st.slider("Dní dopředu", min_value=7, max_value=500,
-                                                  value=60, key="umm_outlook_days")
-                    st.plotly_chart(
-                        fig_gassco_umm_outlook(umm_active, umm_days_forward),
-                        use_container_width=True,
+                    # Default/max slideru se odvozuje z dat, ne natvrdo — GASSCO
+                    # plánuje odstávky dlouho dopředu (řádově stovky dní, stejně
+                    # jako ENTSOG Firm Booked), takže pevný nízký default (dřív
+                    # 60) dělal graf v praxi skoro vždy prázdný.
+                    if not umm_active.empty:
+                        days_to_furthest_stop = int((umm_active["eventStop"] - now_ts).dt.days.max())
+                        umm_outlook_default = max(days_to_furthest_stop + 14, 30)
+                    else:
+                        umm_outlook_default = 90
+                    umm_outlook_max = max(umm_outlook_default * 2, 60)
+
+                    umm_days_forward = st.slider(
+                        "Dní dopředu", min_value=7, max_value=umm_outlook_max,
+                        value=umm_outlook_default, key="umm_outlook_days",
                     )
+
+                    outlook_cutoff = now_ts.normalize() + pd.Timedelta(days=umm_days_forward)
+                    umm_in_window = umm_active[umm_active["eventStart"] <= outlook_cutoff]
+                    if umm_in_window.empty:
+                        if not umm_active.empty:
+                            nearest_start = umm_active["eventStart"].min()
+                            days_to_nearest = (nearest_start.normalize() - now_ts.normalize()).days
+                            st.info(
+                                f"V příštích {umm_days_forward} dnech nejsou plánované žádné odstávky. "
+                                f"Nejbližší ({nearest_start.strftime('%d.%m.%Y')}) začíná za "
+                                f"{days_to_nearest} dní."
+                            )
+                        else:
+                            st.info("Žádné aktivní odstávky k zobrazení.")
+                    else:
+                        st.plotly_chart(
+                            fig_gassco_umm_outlook(umm_active, umm_days_forward),
+                            use_container_width=True,
+                        )
 
                     st.markdown('<div class="section-title">Δ Srovnání s dřívějším snapshotem</div>',
                                 unsafe_allow_html=True)
