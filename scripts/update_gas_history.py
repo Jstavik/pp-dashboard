@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 import os
 import time
-from data.entsog_capacity import update_capacity, update_cz_operational
+from data.entsog_capacity import update_capacity
 from data.lng import update_lng
 from data.gassco import update_gassco, update_gassco_umm
 from data.dap_europe import DAP_COUNTRIES
@@ -726,7 +726,6 @@ if __name__ == "__main__":
         ("GIE storage — všechny země",        update_gie_all),
         ("Hydro reservoirs (ENTSO-E 16.1.D)", update_hydro),
         ("Kapacity ENTSO-G",                  update_capacity),
-        ("ENTSOG CZ kapacita+nominace",       update_cz_operational),
         ("LNG terminály (GIE ALSI)",          update_lng),
         ("GASSCO nominace",                   update_gassco),
         ("GASSCO UMM (odstávky polí)",         update_gassco_umm),
