@@ -4,17 +4,16 @@ import pandas as pd
 
 from data.partitioned_store import read_partitioned, upsert_partitioned, last_date_partitioned
 
-OPERATIONAL_DIR = "data/history/entsog_cz_operational"
+OPERATIONAL_DIR = "data/history/entsog_eu_operational"
 
 # ENTSO-G /operationaldata BEZ pointKey/pointLabel filtru vrací najednou
 # všechny body Evropy (ověřeno: 415 bodů, 23050 řádků za jeden měsíc jen
-# pro Nomination). Filtrujeme až po stažení na operatorLabel == NET4GAS
-# (CZ TSO) — dává přesně hraniční body (Cieszyn, VIP Brandov, Lanžhot,
-# VIP Waidhaus) + CZ zásobníky (VGS ...), bez fragilního fuzzy matchování
-# jako u GAS_KEY_POINTS (ten je pro capacity endpoint, jeho labely se s
-# touhle datovou sadou vůbec nepotkávají — ověřeno).
+# pro Nomination). Ukládáme VŠECHNY body beze filtru — CZ/NET4GAS filtr
+# byl původně myšlený jen jako dočasné zúžení pro opravu pár anomálních
+# kvartálů a omylem se stal trvalým rozhodnutím ve finální vrstvě.
+# operatorKey (např. "CZ-TSO-0001") nese ISO kód země jako prefix — country
+# se z dat odvozuje downstream (UI), netřeba ho tady ukládat zvlášť.
 INDICATORS = "Nomination,Renomination"
-CZ_OPERATOR_LABEL = "NET4GAS"
 
 # ENTSO-G aggregateddata/operationaldata API sahá do 2020, dříve není dostupné.
 HISTORY_START = date(2020, 1, 1)
@@ -44,7 +43,7 @@ def fetch_operational_month(from_date: date, to_date: date) -> list:
     offset/limit stránkování to nijak nenaznačí.
 
     Síťovou/HTTP chybu NEPOLYKÁME — musí probublat ven a odlišit se od
-    legitimně prázdného měsíce (2020, kde NET4GAS skutečně nic nehlásí).
+    legitimně prázdného měsíce (2020, kde archiv skutečně nic nevrací).
     Tichým "return []" na chybu by se selhání v logu nerozeznalo od
     opravdové nuly (ověřeno na prvním běhu: lokální SSL chyba prošla jako
     "0 řádků" pro všech 80 měsíců včetně těch s daty).
@@ -80,7 +79,18 @@ def _process(rows: list) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
         return df
-    df = df[df["operatorLabel"] == CZ_OPERATOR_LABEL].copy()
+
+    # isNA==1 řádky (odstavené/nerelevantní body, vždy value=None) mají
+    # "id" navázané na jejich (statické) reportovací období, NE na
+    # periodFrom konkrétního dne — API tak vrací STEJNÉ id pro tenhle
+    # placeholder v každém měsíci, kdy se bod dotázal. Bez odfiltrování
+    # by "id" dedup v upsert_partitioned nerozeznal dva různé měsíce od
+    # sebe (ověřeno naživo: 146-770 kolidujících id mezi sousedními
+    # měsíci, ~38k napříč celým EU backfillem). Řádky s reálnou (i
+    # nulovou/None) denní hodnotou mají id vždy per-den unikátní — tohle
+    # se týká jen skutečných "not applicable" placeholderů.
+    if "isNA" in df.columns:
+        df = df[df["isNA"] != 1].copy()
     if df.empty:
         return df
 
@@ -106,11 +116,11 @@ def _log(log_path: str, line: str):
             f.write(line + "\n")
 
 
-def backfill_cz_operational(log_path: str = None, start: date = None, end: date = None):
+def backfill_eu_operational(log_path: str = None, start: date = None, end: date = None):
     """Jednorázový (resumable) backfill ENTSOG Nomination/Renomination pro
-    NET4GAS body, po měsících od start (default HISTORY_START) do end
-    (default dnešek). Přeskočí měsíce, které už mají partitioned soubor
-    (idempotentní resume po přerušení) — KROMĚ posledního (aktuálního,
+    VŠECHNY body Evropy (~415), po měsících od start (default HISTORY_START)
+    do end (default dnešek). Přeskočí měsíce, které už mají partitioned
+    soubor (idempotentní resume po přerušení) — KROMĚ posledního (aktuálního,
     ještě otevřeného) měsíce, ten se přefetchuje vždy."""
     import time as _time
     start = start or HISTORY_START
@@ -149,27 +159,48 @@ def backfill_cz_operational(log_path: str = None, start: date = None, end: date 
         elapsed = _time.time() - t0
 
         if df.empty:
-            _log(log_path, f"[{i}/{total}] {month_str}: 0 řádků NET4GAS ({elapsed:.1f}s)")
+            _log(log_path, f"[{i}/{total}] {month_str}: 0 řádků ({elapsed:.1f}s)")
             continue
+
+        n_raw = len(df)
+        n_unique = df["id"].nunique()
+        if n_unique != n_raw:
+            # Ojediněle pozorovaná přechodná nekonzistence živého API mezi
+            # stránkami (ověřeno: 1 z 4 opakovaných dotazů na stejný
+            # uzavřený měsíc vrátil ~7 % duplicitních id, ostatní 3 čistě).
+            # id je deterministický klíč ze všech polí (indicator+period+
+            # operator+point+direction+unit) — duplicitní id tedy nemůže
+            # nést jinou hodnotu, drop_duplicates(keep="last") v
+            # upsert_partitioned to řeší bezpečně. Loguje se jen jako
+            # viditelné varování pro zpětnou kontrolu.
+            _log(
+                log_path,
+                f"    ⚠ {month_str}: {n_raw - n_unique} duplicitních id v raw fetchi "
+                f"({n_raw} → {n_unique} unikátních) — API pagination nekonzistence, "
+                f"dedup bezpečně vyřešeno",
+            )
 
         touched = upsert_partitioned(df, OPERATIONAL_DIR, "periodFrom_dt", ["id"], fmt="parquet")
         written = [(mo, n) for mo, n, w in touched if w]
         n_total = sum(n for _, n in written) if written else len(df)
         by_ind = df["indicator"].value_counts().to_dict()
+        n_points = df["pointLabel"].nunique()
+        file_path = os.path.join(OPERATIONAL_DIR, f"{month_str}.parquet")
+        size_kb = os.path.getsize(file_path) / 1024 if os.path.exists(file_path) else 0
         _log(
             log_path,
-            f"[{i}/{total}] {month_str}: {n_total} řádků "
+            f"[{i}/{total}] {month_str}: {n_total} řádků, {n_points} bodů "
             f"(Nomination={by_ind.get('Nomination', 0)}, Renomination={by_ind.get('Renomination', 0)}) "
-            f"({elapsed:.1f}s)",
+            f"{size_kb:.0f} KB ({elapsed:.1f}s)",
         )
 
     _log(log_path, "=== Backfill hotovo ===")
 
 
-def update_cz_operational():
+def update_eu_operational():
     """Scheduled běh: přefetchuje jen posledních REVISION_WINDOW_MONTHS
     měsíců (Nomination/Renomination se v revizích mění, ne jen append) —
-    ne celou historii. Plný backfill viz scripts/backfill_entsog_cz_operational.py."""
+    ne celou historii. Plný backfill viz scripts/backfill_entsog_eu_operational.py."""
     os.makedirs(OPERATIONAL_DIR, exist_ok=True)
     today = date.today()
     y, m = today.year, today.month
@@ -191,17 +222,17 @@ def update_cz_operational():
             frames.append(df)
 
     if not frames:
-        print("ENTSOG CZ operational: žádná data")
+        print("ENTSOG EU operational: žádná data")
         return
 
     new_data = pd.concat(frames, ignore_index=True)
     touched = upsert_partitioned(new_data, OPERATIONAL_DIR, "periodFrom_dt", ["id"], fmt="parquet")
     written = [(mo, n) for mo, n, w in touched if w]
-    print(f"ENTSOG CZ operational: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+    print(f"ENTSOG EU operational: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
           f"({len(touched) - len(written)} beze změny) → {OPERATIONAL_DIR}/")
 
 
-def load_cz_operational() -> pd.DataFrame:
+def load_eu_operational() -> pd.DataFrame:
     def _load():
         return read_partitioned(OPERATIONAL_DIR, fmt="parquet")
     try:
@@ -209,3 +240,8 @@ def load_cz_operational() -> pd.DataFrame:
         return st.cache_data(ttl=3600, show_spinner=False)(_load)()
     except ImportError:
         return _load()
+
+
+# Dočasný alias — app.py zatím importuje load_cz_operational beze změny,
+# dokud UI (výběr země/bodu pro celou Evropu) není potvrzené a upravené.
+load_cz_operational = load_eu_operational
