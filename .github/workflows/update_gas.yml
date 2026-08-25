@@ -24,8 +24,8 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests pandas python-dateutil pyarrow entsoe-py streamlit
-
+        run: pip install requests pandas python-dateutil pyarrow entsoe-py streamlit openpyxl
+        
       - name: Run update script
         env:
           ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}
