@@ -38,14 +38,26 @@ HYDRO_COUNTRIES = [
 ]
 
 KEEP_COLS = [
-    "periodFrom", "countryKey", "countryLabel",
+    "periodFrom", "indicator", "countryKey", "countryLabel",
     "directionKey", "adjacentSystemsKey", "adjacentSystemsLabel",
     "pointsNames", "value", "unit", "flowStatus",
 ]
 
 
-def fetch_all_pages(from_date: date, to_date: date) -> pd.DataFrame:
-    """Stáhne všechny stránky pro dané období — všechny země."""
+def fetch_all_pages(from_date: date, to_date: date, indicator: str = "Physical Flow") -> pd.DataFrame:
+    """Stáhne všechny stránky pro dané období — všechny země, JEDEN
+    indikátor. KRITICKÉ: kombinace víc indikátorů v jednom
+    "indicator=A,B" dotazu tenhle endpoint TICHÉ, BEZE CHYBY zredukuje
+    na jeden — ověřeno naživo (Physical Flow+Allocation dohromady
+    vrátilo jen Allocation). Physical Flow a Allocation se proto vždy
+    fetchují ODDĚLENĚ (viz update_entsog/update_entsog_allocation),
+    stejný bug jako u /operationaldata (viz data/entsog_operational.py).
+
+    Druhé zjištění: endpoint na malý "limit" (zkoušeno limit=5) tiše
+    vrací 404 "No result found" místo dat nebo chyby parametru — limit
+    musí zůstat vysoký (2000), i pro krátká okna."""
+    import urllib.parse
+    ind_enc = urllib.parse.quote(indicator)
     all_rows = []
     offset   = 0
     limit    = 2000
@@ -54,7 +66,7 @@ def fetch_all_pages(from_date: date, to_date: date) -> pd.DataFrame:
         url = (
             "https://transparency.entsog.eu/api/v1/aggregateddata"
             f"?from={from_date}&to={to_date}"
-            "&indicator=Physical%20Flow&periodType=day"
+            f"&indicator={ind_enc}&periodType=day"
             f"&timezone=CET&limit={limit}&offset={offset}&format=json"
         )
         try:
@@ -118,13 +130,64 @@ def update_entsog():
         return
 
     new_data = pd.concat(frames, ignore_index=True)
-    key_cols = ["date", "countryKey", "directionKey",
+    key_cols = ["date", "indicator", "countryKey", "directionKey",
                 "adjacentSystemsKey", "pointsNames"]
     key_cols = [c for c in key_cols if c in new_data.columns]
 
     touched = upsert_partitioned(new_data, ENTSOG_FLOWS_DIR, "date", key_cols, fmt="parquet")
     written = [(m, n) for m, n, w in touched if w]
     print(f"ENTSO-G: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {ENTSOG_FLOWS_DIR}/")
+
+
+def update_entsog_allocation():
+    """ENTSO-G Allocation — STEJNÉ úložiště jako fyzické toky
+    (ENTSOG_FLOWS_DIR), rozlišeno sloupcem "indicator" (přidán do
+    key_cols v update_entsog() výš — bez něj by dedup smíchal Allocation
+    a Physical Flow řádky pro stejnou zemi/směr/den do jednoho a jeden
+    by tiše přepsal druhý).
+
+    Existující starší řádky (zapsané před touhle úpravou) sloupec
+    "indicator" nemají vůbec — po concat s novými daty budou mít
+    indicator=NaN, což je neškodné (nekoliduje s "Physical Flow" ani
+    "Allocation" v dedup klíči, žádná ztráta dat), jen retroaktivně
+    neoznačené. Doplnění zpětně by byla samostatná migrace, mimo scope
+    týhle změny."""
+    os.makedirs("data/history", exist_ok=True)
+
+    last_date = last_date_partitioned(ENTSOG_FLOWS_DIR, "date", "parquet")
+    if last_date is not None:
+        start = last_date.date() - timedelta(days=7)
+        print(f"Existující data do {last_date.date()}, stahuji Allocation od {start}")
+    else:
+        start = HISTORY_START
+        print(f"Nový soubor, stahuji Allocation od {start}")
+
+    frames  = []
+    current = start
+    today   = date.today()
+
+    while current <= today:
+        end = min(current + timedelta(days=6), today)
+        print(f"  Allocation {current} → {end} ...")
+        df_week = fetch_all_pages(current, end, indicator="Allocation")
+        if not df_week.empty:
+            frames.append(df_week)
+        current = end + timedelta(days=1)
+        time.sleep(0.5)
+
+    if not frames:
+        print("Žádná nová Allocation data.")
+        return
+
+    new_data = pd.concat(frames, ignore_index=True)
+    key_cols = ["date", "indicator", "countryKey", "directionKey",
+                "adjacentSystemsKey", "pointsNames"]
+    key_cols = [c for c in key_cols if c in new_data.columns]
+
+    touched = upsert_partitioned(new_data, ENTSOG_FLOWS_DIR, "date", key_cols, fmt="parquet")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"ENTSO-G Allocation: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
           f"({len(touched) - len(written)} beze změny) → {ENTSOG_FLOWS_DIR}/")
 
 
@@ -724,6 +787,7 @@ def update_outages(country: str):
 if __name__ == "__main__":
     runs = [
         ("ENTSO-G flows (všechny země)",      update_entsog),
+        ("ENTSO-G Allocation (všechny země)", update_entsog_allocation),
         ("GIE storage — všechny země",        update_gie_all),
         ("Hydro reservoirs (ENTSO-E 16.1.D)", update_hydro),
         ("Kapacity ENTSO-G",                  update_capacity),

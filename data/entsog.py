@@ -61,6 +61,15 @@ def load_entsog_history() -> pd.DataFrame:
     def _load():
         df = read_partitioned(entsog_flows_dir, fmt="parquet")
         if not df.empty:
+            # entsog_flows teď sdílí úložiště i s Allocation (viz
+            # scripts/update_gas_history.py::update_entsog_allocation) —
+            # BEZ tohohle filtru by se Allocation řádky namíchaly do
+            # fyzických toků a ticho rozbily/zdvojnásobily existující
+            # Mapa/Toky/Sezonnost grafy. "indicator" chybí jen u řádků
+            # zapsaných PŘED migrací (žádné už by neměly zbýt, ale
+            # .isin(["Physical Flow", NaN]) je bezpečná pojistka).
+            if "indicator" in df.columns:
+                df = df[df["indicator"].isin(["Physical Flow"]) | df["indicator"].isna()]
             df["date"] = pd.to_datetime(df["date"], utc=True)
             return df
         return fetch_entsog_flows(days=90)
