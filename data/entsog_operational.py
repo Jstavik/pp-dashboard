@@ -232,14 +232,29 @@ def backfill_history(indicators: list = None, log_path: str = None, start: date 
     for i, (year, month) in enumerate(months, 1):
         month_str = f"{year:04d}-{month:02d}"
         existing_path = os.path.join(OPERATIONAL_DIR, f"{month_str}.parquet")
+
+        # Resume je PER INDIKÁTOR, ne per soubor — víc indikátorů teď
+        # sdílí stejný měsíční soubor (konsolidovaná vrstva), takže
+        # "soubor existuje" už dávno platí pro každý měsíc (díky dřív
+        # zabackfillovaným Nomination/Renomination). Bez tyhle kontroly
+        # by backfill NOVÉHO indikátoru (GCV, Wobbe Index, ...) přeskočil
+        # úplně všechno — čte se jen sloupec "indicator" (levné, parquet
+        # column projection), ne celý soubor.
+        needed = indicators
         if os.path.exists(existing_path) and (year, month) != current_month:
-            _log(log_path, f"[{i}/{total}] {month_str}: přeskočeno, soubor už existuje")
-            continue
+            try:
+                existing_ind = set(pd.read_parquet(existing_path, columns=["indicator"])["indicator"].unique())
+            except Exception:
+                existing_ind = set()
+            needed = [ind for ind in indicators if ind not in existing_ind]
+            if not needed:
+                _log(log_path, f"[{i}/{total}] {month_str}: přeskočeno, všechny indikátory už v souboru")
+                continue
 
         t0 = _time.time()
         from_date, to_date = _month_bounds(year, month)
         frames, ind_errors = [], []
-        for indicator in indicators:
+        for indicator in needed:
             try:
                 rows = fetch_operational_month(from_date, to_date, indicator)
                 if rows:

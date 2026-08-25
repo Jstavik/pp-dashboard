@@ -727,7 +727,7 @@ if __name__ == "__main__":
         ("GIE storage — všechny země",        update_gie_all),
         ("Hydro reservoirs (ENTSO-E 16.1.D)", update_hydro),
         ("Kapacity ENTSO-G",                  update_capacity),
-        ("ENTSOG EU Nomination/Renomination", update_eu_operational),
+        ("ENTSOG EU operational (nom/reno/kapacita/interrupce/kvalita)", update_eu_operational),
         ("LNG terminály (GIE ALSI)",          update_lng),
         ("GASSCO nominace",                   update_gassco),
         ("GASSCO UMM (odstávky polí)",         update_gassco_umm),
