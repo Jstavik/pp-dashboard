@@ -259,9 +259,39 @@ def update_eu_operational():
           f"({len(touched) - len(written)} beze změny) → {OPERATIONAL_DIR}/")
 
 
+_CATEGORY_COLS = [
+    "indicator", "periodType", "operatorKey", "operatorLabel",
+    "pointKey", "pointLabel", "directionKey", "unit", "pointType",
+    "flowStatus", "country",
+]
+
+
 def load_eu_operational() -> pd.DataFrame:
+    """Načte celý EU dataset (68 partitioned souborů, ~1.5M řádků) a
+    přidá 'country' (viz country_from_operator_key).
+
+    Sloupce s malým počtem unikátních hodnot (indicator: 2, unit: 1,
+    directionKey: 2, operatorKey/pointLabel: ~500, ...) se převádí na
+    category dtype PŘÍMO TADY, uvnitř cachovaného _load() — ne až v
+    app.py při každém rerunu. Důvod: bez tohohle měl obyčejný
+    df.copy() (na přidání country sloupce) v app.py ArrayMemoryError
+    na konsolidaci ~190MB object-dtype bloku (ověřeno naživo) — plain
+    string sloupce opakované přes 1.5M řádků jsou v paměti řádově
+    dražší než jejich pár set unikátních hodnot. category dtype tohle
+    řeší už při jediném (cachovaném) načtení, downstream filtrování
+    (==, .unique(), groupby) funguje na category stejně jako na str.
+    id a periodFrom_dt/periodTo_dt zůstávají beze změny — id je skoro
+    unikátní na řádek (kategorizace by nepomohla) a date sloupce se
+    porovnávají (>=, <=) v grafech, což na category dtype není bezpečné."""
     def _load():
-        return read_partitioned(OPERATIONAL_DIR, fmt="parquet")
+        df = read_partitioned(OPERATIONAL_DIR, fmt="parquet")
+        if df.empty:
+            return df
+        df["country"] = df["operatorKey"].apply(country_from_operator_key)
+        for col in _CATEGORY_COLS:
+            if col in df.columns:
+                df[col] = df[col].astype("category")
+        return df
     try:
         import streamlit as st
         return st.cache_data(ttl=3600, show_spinner=False)(_load)()

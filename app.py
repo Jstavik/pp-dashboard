@@ -24,7 +24,7 @@ from data.entsog import load_entsog_history, _short_name
 from data.gie import load_gie_all, VARIABLES
 from data.hydro import load_hydro, HYDRO_COUNTRY_NAMES
 from data.entsog_capacity import load_capacity
-from data.entsog_operational import load_cz_operational, country_from_operator_key, EU_COUNTRY_NAMES
+from data.entsog_operational import load_cz_operational, EU_COUNTRY_NAMES
 from charts.gas import (
     fig_gas_point_history, fig_gas_map,
     fig_flow_timeseries, fig_flow_seasonality,
@@ -49,6 +49,7 @@ from charts.gassco import (
     fig_gassco_kpi, fig_gassco_timeseries,
     fig_gassco_seasonality, fig_gassco_umm_active, fig_gassco_umm_cancelled,
     fig_gassco_umm_outlook, fig_gassco_umm_delta,
+    fig_gassco_umm_delta_bars, fig_gassco_umm_delta_diff,
 )
 from charts.imbalance import (
     parse_imbalance,
@@ -1229,14 +1230,15 @@ elif show_gas:
                     "Spusť GitHub Actions: Update gas history."
                 )
             else:
-                # country se odvozuje z operatorKey (ISO prefix), NE z
-                # pointLabel — 48 z 413 bodů (např. Cieszyn) hlásí OBĚ
-                # strany hranice pod STEJNÝM pointLabel, různým
-                # operatorKey (ověřeno naživo). Filtr jen na pointLabel by
-                # bez rozlišení země smíchal dva různé operátory do
-                # jednoho grafu — proto je země první, ne kosmetický krok.
-                df_nom = df_nom.copy()
-                df_nom["country"] = df_nom["operatorKey"].apply(country_from_operator_key)
+                # country (odvozeno z operatorKey ISO prefixu) je už
+                # sloupec v cachovaných datech — viz
+                # data/entsog_operational.py::load_eu_operational().
+                # ŽÁDNÝ .copy()/přepočet tady — na 1.5M řádcích to dřív
+                # vedlo k ArrayMemoryError na konsolidaci object bloku
+                # (ověřeno naživo). country se používá k rozlišení bodů
+                # jako Cieszyn, co hlásí OBĚ strany hranice pod STEJNÝM
+                # pointLabel, různým operatorKey — proto je země první
+                # filtr, ne kosmetický krok.
 
                 all_countries_nom = sorted(
                     df_nom.loc[df_nom["pointLabel"].notna() & (df_nom["country"] != "??"), "country"]
@@ -1732,19 +1734,13 @@ elif show_gas:
                     )
 
                     st.markdown('<div class="section-title">Výhled</div>', unsafe_allow_html=True)
-                    # Default/max slideru se odvozuje z dat, ne natvrdo — GASSCO
-                    # plánuje odstávky dlouho dopředu (řádově stovky dní, stejně
-                    # jako ENTSOG Firm Booked), takže pevný nízký default (dřív
-                    # 60) dělal graf v praxi skoro vždy prázdný.
-                    if not umm_active.empty:
-                        days_to_furthest_stop = int((umm_active["eventStop"] - now_ts).dt.days.max())
-                        umm_outlook_default = max(days_to_furthest_stop + 14, 30)
-                    else:
-                        umm_outlook_default = 90
-                    umm_outlook_max = max(umm_outlook_default * 2, 60)
-
+                    # Pevný default 90 dní — dřívější odvození z max(eventStop)
+                    # vedlo k nesmyslně velkým výchozím hodnotám (412/877 dní),
+                    # když nějaká odstávka měla eventStop hodně daleko v
+                    # budoucnu. Slider dovoluje ručně rozšířit dál, kdo chce.
+                    umm_outlook_default = 90
                     umm_days_forward = st.slider(
-                        "Dní dopředu", min_value=7, max_value=umm_outlook_max,
+                        "Dní dopředu", min_value=7, max_value=500,
                         value=umm_outlook_default, key="umm_outlook_days",
                     )
 
@@ -1780,6 +1776,34 @@ elif show_gas:
                         )
                         umm_days_back = (now_ts.normalize() - umm_compare_date).days
                         df_umm_past = load_gassco_umm_snapshot(umm_days_back)
+
+                        umm_past_latest = _latest_per_base_id(df_umm_past)
+                        umm_past_active = (
+                            umm_past_latest[umm_past_latest["eventStatus"] != "Dismissed"]
+                            if not umm_past_latest.empty else umm_past_latest
+                        )
+                        umm_delta_view = st.radio(
+                            "Zobrazení", ["Vedle sebe", "Rozdíl"],
+                            horizontal=True, key="umm_delta_view",
+                        )
+                        umm_compare_label = umm_compare_date.strftime("%d.%m.%Y")
+                        if umm_delta_view == "Vedle sebe":
+                            st.plotly_chart(
+                                fig_gassco_umm_delta_bars(
+                                    umm_active, umm_past_active, umm_days_forward,
+                                    compare_label=umm_compare_label,
+                                ),
+                                use_container_width=True,
+                            )
+                        else:
+                            st.plotly_chart(
+                                fig_gassco_umm_delta_diff(
+                                    umm_active, umm_past_active, umm_days_forward,
+                                    compare_label=umm_compare_label,
+                                ),
+                                use_container_width=True,
+                            )
+
                         umm_delta = compute_umm_delta(df_umm_all, df_umm_past)
                         st.plotly_chart(fig_gassco_umm_delta(umm_delta), use_container_width=True)
 

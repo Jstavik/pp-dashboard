@@ -104,18 +104,44 @@ def fetch_gassco_umm() -> pd.DataFrame:
     nejbližších odstávek, co atom.xml chybělo úplně (0 v okně 30 dní).
 
     messageId formát je stejný jako u atom.xml (base_id/revision parsing
-    beze změny)."""
-    try:
-        session = _get_session()
-        resp = session.get("https://umm.gassco.no/xlexport", timeout=20)
-        if resp.status_code != 200:
+    beze změny).
+
+    Chyby se NEPOLYKAJÍ potichu — dřív "except Exception: return
+    pd.DataFrame()" bez jediného vypsaného řádku vedlo k tomu, že
+    scheduled běh v GitHub Actions tiše nezapisoval žádná nová data
+    (a žádný denní UMM snapshot) celé dny bez jakékoliv viditelné
+    chyby v jobu — jen "GASSCO UMM: žádná data" v update_gassco_umm(),
+    bez důvodu proč. Teď se skutečná příčina (HTTP status, výjimka)
+    vždycky vypíše, + 1 retry pro přechodné síťové chyby."""
+    import time as _time
+    last_err = None
+    for attempt in (1, 2):
+        try:
+            session = _get_session()
+            resp = session.get("https://umm.gassco.no/xlexport", timeout=30)
+            if resp.status_code != 200:
+                last_err = f"HTTP {resp.status_code} z /xlexport"
+                print(f"  GASSCO UMM: pokus {attempt}/2 selhal — {last_err}")
+                if attempt < 2:
+                    _time.sleep(5)
+                    continue
+                return pd.DataFrame()
+            break
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            print(f"  GASSCO UMM: pokus {attempt}/2 selhal — {last_err}")
+            if attempt < 2:
+                _time.sleep(5)
+                continue
             return pd.DataFrame()
 
+    try:
         import io
         raw = pd.read_excel(io.BytesIO(resp.content), header=[1, 2])
         raw.columns = [_XLEXPORT_COLUMNS.get(tuple(c), c[0]) for c in raw.columns]
         df = raw.dropna(subset=["messageId"]).reset_index(drop=True)
         if df.empty:
+            print("  GASSCO UMM: /xlexport OK, ale export neobsahuje žádné messageId řádky")
             return df
 
         df["messageId"] = df["messageId"].astype(str)
@@ -135,7 +161,8 @@ def fetch_gassco_umm() -> pd.DataFrame:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], utc=True, errors="coerce")
         return df
-    except Exception:
+    except Exception as e:
+        print(f"  GASSCO UMM: chyba při zpracování /xlexport — {type(e).__name__}: {e}")
         return pd.DataFrame()
 
 

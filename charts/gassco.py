@@ -346,6 +346,115 @@ def fig_gassco_umm_outlook(df_active: pd.DataFrame, days_forward: int = 60) -> g
     return fig
 
 
+def _daily_unavail_total(df_active: pd.DataFrame, days: pd.DatetimeIndex) -> pd.Series:
+    """Denní součet unavailableCapacity_GWh přes všechny aktivní odstávky
+    v df_active, pro každý den v `days`. Sdílené mezi
+    fig_gassco_umm_delta_bars a fig_gassco_umm_delta_diff."""
+    if df_active is None or df_active.empty:
+        return pd.Series(0.0, index=days)
+    daily = _expand_daily(df_active, days)
+    if daily.empty:
+        return pd.Series(0.0, index=days)
+    s = daily.groupby("date")["unavailableCapacity_GWh"].sum()
+    return s.reindex(days, fill_value=0.0)
+
+
+def fig_gassco_umm_delta_bars(
+    df_now_active: pd.DataFrame,
+    df_past_active: pd.DataFrame,
+    days_forward: int = 90,
+    compare_label: str = "",
+) -> go.Figure:
+    """Seskupený sloupcový graf: 'Stav před' (snapshot compare_days_back
+    dní zpět) vs 'Stav teď', denní agregovaná nedostupná kapacita
+    [GWh/d] přes VŠECHNY aktivní odstávky v okně days_forward dní
+    dopředu od teď — primární vizualizace srovnání se starším
+    snapshotem (MUST HAVE, ne jen tabulka jednotlivých změn níž).
+
+    Bere df_*_active PŘED filtrem na eventStop >= teď (stejně jako
+    fig_gassco_umm_outlook) — chceme i budoucí odstávky uvnitř okna."""
+    fig = go.Figure()
+    now = pd.Timestamp.now(tz="UTC").normalize()
+    days = pd.date_range(now, now + pd.Timedelta(days=days_forward), freq="D")
+
+    past_series = _daily_unavail_total(df_past_active, days)
+    now_series  = _daily_unavail_total(df_now_active, days)
+
+    if past_series.sum() == 0 and now_series.sum() == 0:
+        fig.update_layout(height=120, margin=dict(l=0, r=0, t=30, b=0),
+                           title="Žádná nedostupná kapacita v zobrazeném okně")
+        return fig
+
+    x = days.tz_localize(None)
+    past_label = f"Stav před ({compare_label})" if compare_label else "Stav před"
+
+    fig.add_trace(go.Bar(
+        x=x, y=past_series.values, name=past_label,
+        marker_color="#1565C0",
+        hovertemplate=f"{past_label}<br>%{{x|%d.%m.%Y}}<br>%{{y:.2f}} GWh/d<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        x=x, y=now_series.values, name="Stav teď",
+        marker_color="#FF8F00",
+        hovertemplate=f"Stav teď<br>%{{x|%d.%m.%Y}}<br>%{{y:.2f}} GWh/d<extra></extra>",
+    ))
+
+    _base_layout(fig, height=340, margin_l=55)
+    fig.update_layout(
+        title=f"Δ Nedostupná kapacita — stav před vs. teď [{days_forward} dní dopředu]",
+        barmode="group",
+        hovermode="x unified",
+    )
+    fig.update_xaxes(title_text="Datum")
+    fig.update_yaxes(title_text="GWh/d")
+    return fig
+
+
+def fig_gassco_umm_delta_diff(
+    df_now_active: pd.DataFrame,
+    df_past_active: pd.DataFrame,
+    days_forward: int = 90,
+    compare_label: str = "",
+) -> go.Figure:
+    """Druhá varianta srovnání se snapshotem — jeden sloupec na den =
+    přímo rozdíl (teď mínus tehdy) [GWh/d]. Zelená = nedostupná kapacita
+    ubyla (odstávka zkrácena/zrušena), červená = přibyla (nová/prodloužená
+    odstávka). Ztrácí absolutní hodnoty obou stavů (má fig_gassco_umm_delta_bars),
+    zato rychleji ukáže KDE se toho nejvíc změnilo."""
+    fig = go.Figure()
+    now = pd.Timestamp.now(tz="UTC").normalize()
+    days = pd.date_range(now, now + pd.Timedelta(days=days_forward), freq="D")
+
+    past_series = _daily_unavail_total(df_past_active, days)
+    now_series  = _daily_unavail_total(df_now_active, days)
+    diff = now_series - past_series
+
+    if diff.abs().sum() == 0:
+        fig.update_layout(height=120, margin=dict(l=0, r=0, t=30, b=0),
+                           title="Žádná změna oproti staršímu snapshotu")
+        return fig
+
+    x = days.tz_localize(None)
+    colors = ["#C62828" if v > 0 else "#2E7D32" for v in diff.values]
+    compare_suffix = f" (vs. {compare_label})" if compare_label else ""
+
+    fig.add_trace(go.Bar(
+        x=x, y=diff.values, marker_color=colors,
+        hovertemplate="%{x|%d.%m.%Y}<br>Δ %{y:+.2f} GWh/d<extra></extra>",
+    ))
+    fig.add_hline(y=0, line_color="#555", line_width=1)
+
+    _base_layout(fig, height=340, margin_l=55)
+    fig.update_layout(
+        title=f"Δ Nedostupná kapacita — rozdíl teď vs. dřív{compare_suffix} [{days_forward} dní dopředu]",
+        showlegend=False,
+        hovermode="x unified",
+    )
+    fig.update_xaxes(title_text="Datum")
+    fig.update_yaxes(title_text="Δ GWh/d")
+    return fig
+
+
 def fig_gassco_umm_delta(delta: dict) -> go.Figure:
     """Tabulka 3 kategorií změn (nové/zrušené/změněné) z
     data/gassco.py::compute_umm_delta — jeden sloupec navíc oproti
