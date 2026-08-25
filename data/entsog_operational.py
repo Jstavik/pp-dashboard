@@ -15,6 +15,33 @@ OPERATIONAL_DIR = "data/history/entsog_eu_operational"
 # se z dat odvozuje downstream (UI), netřeba ho tady ukládat zvlášť.
 INDICATORS = "Nomination,Renomination"
 
+# Zobrazovací jména pro ISO prefix z operatorKey — jen kosmetika pro UI,
+# NEOVLIVŇUJE které země/body se nabízí (ty se vždy odvozují z reálných
+# dat, viz country_from_operator_key). Kód, co v mapě chybí, se zobrazí
+# jako holý ISO prefix — nikdy nezmizí z výběru jen proto, že tu není.
+EU_COUNTRY_NAMES = {
+    "AT": "🇦🇹 Rakousko", "BE": "🇧🇪 Belgie", "BG": "🇧🇬 Bulharsko",
+    "CZ": "🇨🇿 Česko", "DE": "🇩🇪 Německo", "DK": "🇩🇰 Dánsko",
+    "EE": "🇪🇪 Estonsko", "ES": "🇪🇸 Španělsko", "FI": "🇫🇮 Finsko",
+    "FR": "🇫🇷 Francie", "GR": "🇬🇷 Řecko", "HR": "🇭🇷 Chorvatsko",
+    "HU": "🇭🇺 Maďarsko", "IE": "🇮🇪 Irsko", "IT": "🇮🇹 Itálie",
+    "LT": "🇱🇹 Litva", "LU": "🇱🇺 Lucembursko", "LV": "🇱🇻 Lotyšsko",
+    "NL": "🇳🇱 Nizozemsko", "PL": "🇵🇱 Polsko", "PT": "🇵🇹 Portugalsko",
+    "RO": "🇷🇴 Rumunsko", "SI": "🇸🇮 Slovinsko", "SK": "🇸🇰 Slovensko",
+    "UA": "🇺🇦 Ukrajina", "UK": "🇬🇧 Velká Británie", "AL": "🇦🇱 Albánie",
+}
+
+
+def country_from_operator_key(operator_key) -> str:
+    """ISO prefix z operatorKey (např. 'CZ-TSO-0001' -> 'CZ'). '??' pro
+    chybějící/nevalidní operatorKey (ojediněle se v datech vyskytne
+    ~20 řádků z 1.5M s operatorKey=None — bez smysluplného obsahu vůbec,
+    stejné řádky mají i pointLabel=None, takže je UI dropne beztak)."""
+    if operator_key is None or (isinstance(operator_key, float) and pd.isna(operator_key)):
+        return "??"
+    return str(operator_key)[:2]
+
+
 # ENTSO-G aggregateddata/operationaldata API sahá do 2020, dříve není dostupné.
 HISTORY_START = date(2020, 1, 1)
 

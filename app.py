@@ -24,6 +24,7 @@ from data.entsog import load_entsog_history, _short_name
 from data.gie import load_gie_all, VARIABLES
 from data.hydro import load_hydro, HYDRO_COUNTRY_NAMES
 from data.entsog_capacity import load_capacity
+from data.entsog_operational import load_cz_operational, country_from_operator_key, EU_COUNTRY_NAMES
 from charts.gas import (
     fig_gas_point_history, fig_gas_map,
     fig_flow_timeseries, fig_flow_seasonality,
@@ -31,6 +32,7 @@ from charts.gas import (
 from charts.storage import fig_storage_main, fig_storage_grid
 from charts.hydro import fig_hydro_main, fig_hydro_grid
 from charts.capacity import fig_capacity as fig_cap
+from charts.entsog_operational import fig_cz_operational
 from data.lng import load_lng
 from charts.lng import (
     fig_lng_sendout_timeseries,
@@ -957,8 +959,8 @@ elif show_gas:
         pivot_gas = (_entry.unstack(fill_value=0) - _exit.unstack(fill_value=0)).fillna(0)
         pivot_gas.index = pd.to_datetime(pivot_gas.index)
 
-        tab_map, tab_bar, tab_season, tab_cap, tab_stor, tab_lng, tab_gassco, tab_hist = st.tabs(
-            ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost", "🔲 Kapacity",
+        tab_map, tab_bar, tab_season, tab_cap, tab_nom, tab_stor, tab_lng, tab_gassco, tab_hist = st.tabs(
+            ["🗺️ Mapa", "📊 Toky", "📈 Sezonnost", "🔲 Kapacity", "📋 Nominace",
              "🏭 Zásobníky", "🚢 LNG", "🇳🇴 GASSCO", "📈 Historie"]
         )
 
@@ -1216,6 +1218,123 @@ elif show_gas:
                         sel_cap_type,
                     ),
                     use_container_width=True,
+                )
+
+        with tab_nom:
+            df_nom = load_cz_operational()
+
+            if df_nom.empty:
+                st.warning(
+                    "ENTSOG EU Nomination/Renomination data nejsou dostupná. "
+                    "Spusť GitHub Actions: Update gas history."
+                )
+            else:
+                # country se odvozuje z operatorKey (ISO prefix), NE z
+                # pointLabel — 48 z 413 bodů (např. Cieszyn) hlásí OBĚ
+                # strany hranice pod STEJNÝM pointLabel, různým
+                # operatorKey (ověřeno naživo). Filtr jen na pointLabel by
+                # bez rozlišení země smíchal dva různé operátory do
+                # jednoho grafu — proto je země první, ne kosmetický krok.
+                df_nom = df_nom.copy()
+                df_nom["country"] = df_nom["operatorKey"].apply(country_from_operator_key)
+
+                all_countries_nom = sorted(
+                    df_nom.loc[df_nom["pointLabel"].notna() & (df_nom["country"] != "??"), "country"]
+                    .unique()
+                )
+
+                col_country, col_ind = st.columns(2)
+                with col_country:
+                    sel_country_nom = st.selectbox(
+                        "🌍 Země",
+                        options=all_countries_nom,
+                        index=all_countries_nom.index("CZ") if "CZ" in all_countries_nom else 0,
+                        format_func=lambda c: EU_COUNTRY_NAMES.get(c, c),
+                        key="nom_country",
+                    )
+                with col_ind:
+                    all_indicators_nom = sorted(df_nom["indicator"].dropna().unique())
+                    sel_ind_nom = st.selectbox(
+                        "📊 Indikátor",
+                        options=all_indicators_nom,
+                        key="nom_indicator",
+                    )
+
+                df_country_nom = df_nom[df_nom["country"] == sel_country_nom]
+                all_points_nom = sorted(df_country_nom["pointLabel"].dropna().unique())
+
+                # Klíč widgetu obsahuje vybranou zemi — bez tohohle by
+                # přepnutí země mohlo Streamlitu poslat starou hodnotu
+                # bodu z JINÉ země, co v nové nabídce vůbec není (crash
+                # "value not in options"). S per-country klíčem má každá
+                # země svou vlastní zapamatovanou volbu, bez kolize.
+                point_key = f"nom_point__{sel_country_nom}"
+                default_point_idx = (
+                    all_points_nom.index("VIP Brandov")
+                    if sel_country_nom == "CZ" and "VIP Brandov" in all_points_nom
+                    else 0
+                )
+                sel_point_nom = st.selectbox(
+                    "📍 Bod",
+                    options=all_points_nom,
+                    index=default_point_idx,
+                    key=point_key,
+                )
+
+                col_ct, col_dr = st.columns([1, 2])
+                with col_ct:
+                    chart_type_nom = st.radio(
+                        "Typ grafu", ["Linie", "Plocha", "Sloupcový"],
+                        horizontal=True, key="nom_chart_type")
+                with col_dr:
+                    min_date_nom = df_nom["periodFrom_dt"].min()
+                    max_date_nom = df_nom["periodFrom_dt"].max()
+                    default_from = max(
+                        min_date_nom, max_date_nom - timedelta(days=365)
+                    )
+                    date_range_nom = st.date_input(
+                        "📆 Rozsah",
+                        value=(default_from, max_date_nom),
+                        min_value=min_date_nom,
+                        max_value=max_date_nom,
+                        key="nom_daterange",
+                    )
+
+                if isinstance(date_range_nom, (list, tuple)) and len(date_range_nom) == 2:
+                    d_from_nom, d_to_nom = date_range_nom
+                else:
+                    d_from_nom, d_to_nom = min_date_nom, max_date_nom
+
+                st.plotly_chart(
+                    fig_cz_operational(
+                        df_country_nom, sel_point_nom, sel_ind_nom,
+                        d_from_nom, d_to_nom, chart_type_nom,
+                    ),
+                    use_container_width=True,
+                )
+
+                st.markdown("##### Posledních 30 dní — surové hodnoty")
+                sub_table_nom = (
+                    df_country_nom[
+                        (df_country_nom["pointLabel"] == sel_point_nom) &
+                        (df_country_nom["indicator"] == sel_ind_nom)
+                    ]
+                    .sort_values("periodFrom_dt", ascending=False)
+                    .head(60)
+                )
+                st.dataframe(
+                    sub_table_nom[
+                        ["periodFrom_dt", "directionKey", "value_GWh",
+                         "operatorLabel", "unit"]
+                    ].rename(columns={
+                        "periodFrom_dt": "Datum",
+                        "directionKey": "Směr",
+                        "value_GWh": "Hodnota [GWh/d]",
+                        "operatorLabel": "Operátor",
+                        "unit": "Jednotka",
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
                 )
 
         with tab_stor:
