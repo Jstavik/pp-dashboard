@@ -19,9 +19,26 @@ import os
 import pandas as pd
 
 
-def read_partitioned(base_dir: str, fmt: str = "parquet") -> pd.DataFrame:
-    """Načte a sloučí všechny měsíční soubory v base_dir (data/history/<zdroj>/*.fmt)."""
+def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_to=None) -> pd.DataFrame:
+    """Načte a sloučí měsíční soubory v base_dir (data/history/<zdroj>/*.fmt).
+
+    date_from/date_to (volitelné) omezí čtení jen na soubory {YYYY-MM}.fmt
+    ležící (byť částečně) v zadaném rozsahu — filtruje se podle NÁZVU
+    souboru, ne podle obsahu, takže se soubory mimo okno vůbec neotvírají.
+    Bez date_from/date_to (default) čte úplně všechno, beze změny chování
+    pro stávající volající."""
     files = sorted(glob.glob(os.path.join(base_dir, f"*.{fmt}")))
+    if date_from is not None or date_to is not None:
+        lo = pd.Timestamp(date_from).strftime("%Y-%m") if date_from is not None else None
+        hi = pd.Timestamp(date_to).strftime("%Y-%m") if date_to is not None else None
+        def _in_range(path):
+            month = os.path.splitext(os.path.basename(path))[0]
+            if lo is not None and month < lo:
+                return False
+            if hi is not None and month > hi:
+                return False
+            return True
+        files = [f for f in files if _in_range(f)]
     if not files:
         return pd.DataFrame()
     reader = pd.read_parquet if fmt == "parquet" else pd.read_csv

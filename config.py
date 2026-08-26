@@ -231,6 +231,14 @@ ENTSOE_OUTAGE_REVISION_WINDOW_DAYS = 14
 GENERATION_CHUNK_DAYS = 30
 GENERATION_CHUNK_RETRIES = 3
 
+# ── ENTSOG OPERATIONAL (Nominace) — PARAMETRY ────────────────────
+# Default okno (měsíců zpět), co se z entsog_operational konsolidované
+# vrstvy načte do paměti při otevření panelu Nominace — celá historie
+# od 2020 je ~2GB v paměti (ověřeno naživo), na Streamlit Cloud free
+# tier (~1GB) by to spadlo. Uživatel může okno v UI rozšířit až na
+# celou dostupnou historii — viz data/entsog_operational.py::load_eu_operational.
+ENTSOG_NOMINATION_DEFAULT_MONTHS = 12
+
 # ── OBECNÁ DATOVÁ VRSTVA — ZEMĚ ──────────────────────────────────
 # Přidání nové země = jeden řádek sem (+ časová zóna a jméno níž), nic
 # jiného — viz data/generation.py, data/outages.py,

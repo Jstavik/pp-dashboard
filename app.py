@@ -11,6 +11,7 @@ from config import (
     CSS_STYLES, THRESHOLD,
     C_DEFICIT, C_SURPLUS, C_OK, C_WARN, C_NEW, C_TEXT, C_MUTED,
     sparkline_svg, storage_color, psr_lookup,
+    ENTSOG_NOMINATION_DEFAULT_MONTHS,
 )
 from data.entsoe import (
     fetch_entsoe_data, fetch_dap, fetch_installed_capacity,
@@ -24,7 +25,7 @@ from data.entsog import load_entsog_history, _short_name
 from data.gie import load_gie_all, VARIABLES
 from data.hydro import load_hydro, HYDRO_COUNTRY_NAMES
 from data.entsog_capacity import load_capacity
-from data.entsog_operational import load_cz_operational, EU_COUNTRY_NAMES
+from data.entsog_operational import load_cz_operational, EU_COUNTRY_NAMES, HISTORY_START
 from charts.gas import (
     fig_gas_point_history, fig_gas_map,
     fig_flow_timeseries, fig_flow_seasonality,
@@ -1222,7 +1223,28 @@ elif show_gas:
                 )
 
         with tab_nom:
-            df_nom = load_cz_operational()
+            # Kolik měsíců historie ENTSOG operational vrstvy se vůbec
+            # NAČTE do paměti (viz data/entsog_operational.py::load_eu_operational)
+            # — celá historie od 2020 je ~2GB v paměti, na Streamlit Cloud
+            # free tier (~1GB) by to spadlo. Horní mez slideru = počet
+            # měsíců od HISTORY_START dopočtený za běhu, ne pevné číslo —
+            # na maximu tak slider přirozeně vybere celou dostupnou historii.
+            today_nom = date.today()
+            months_since_start_nom = (
+                (today_nom.year - HISTORY_START.year) * 12
+                + (today_nom.month - HISTORY_START.month) + 1
+            )
+            window_months_nom = st.slider(
+                "📆 Historie (měsíců zpět)",
+                min_value=1, max_value=months_since_start_nom,
+                value=min(ENTSOG_NOMINATION_DEFAULT_MONTHS, months_since_start_nom),
+                key="nom_window_months",
+                help="Kolik měsíců zpět se má načíst do paměti. Menší okno = "
+                     "rychlejší načtení a míň paměti; na maximu se natáhne "
+                     "celá dostupná historie.",
+            )
+            load_from_nom = (pd.Timestamp(today_nom) - pd.DateOffset(months=window_months_nom)).date()
+            df_nom = load_cz_operational(date_from=load_from_nom)
 
             if df_nom.empty:
                 st.warning(

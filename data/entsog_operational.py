@@ -416,38 +416,55 @@ _CATEGORY_COLS = [
 ]
 
 
-def load_eu_operational() -> pd.DataFrame:
-    """Načte celý konsolidovaný dataset (partitioned soubory, všechny
-    HISTORY_ i OPEN_ENDED_ indikátory pohromadě) a přidá 'country' (viz
+def _load_operational(date_from=None, date_to=None) -> pd.DataFrame:
+    df = read_partitioned(OPERATIONAL_DIR, fmt="parquet", date_from=date_from, date_to=date_to)
+    if df.empty:
+        return df
+    df["country"] = df["operatorKey"].apply(country_from_operator_key)
+    for col in _CATEGORY_COLS:
+        if col in df.columns:
+            df[col] = df[col].astype("category")
+    return df
+
+
+def load_eu_operational(date_from=None, date_to=None) -> pd.DataFrame:
+    """Načte konsolidovaný dataset (partitioned soubory, všechny HISTORY_
+    i OPEN_ENDED_ indikátory pohromadě) a přidá 'country' (viz
     country_from_operator_key).
 
-    Sloupce s malým počtem unikátních hodnot (indicator, unit,
-    directionKey, operatorKey/pointLabel, ...) se převádí na category
-    dtype PŘÍMO TADY, uvnitř cachovaného _load() — ne až v app.py při
-    každém rerunu. Důvod: bez tohohle měl obyčejný df.copy() (na
-    přidání country sloupce) v app.py ArrayMemoryError na konsolidaci
+    date_from/date_to (volitelné) omezí čtení na měsíční soubory v daném
+    rozsahu (viz partitioned_store.read_partitioned) — bez nich se čte
+    CELÁ historie od HISTORY_START, což pro tenhle dataset znamená ~2GB
+    v paměti (ověřeno naživo, 2026-08-26: 171 měsíčních souborů, 4.36M
+    řádků). Volající (typicky UI s výběrem konkrétního bodu/období) by
+    měl date_from/date_to nastavit na rozumné okno, ne spoléhat na
+    default = všechno.
+
+    POZOR pro OPEN_ENDED_INDICATORS (kapacita/interrupce): jejich
+    periodFrom_dt nese VALIDITY okno, klidně roky staré (viz komentář u
+    OPEN_ENDED_INDICATORS výš) — date-omezené volání je tak přirozeně
+    NEBUDE zahrnovat celé, i když jsou aktuálně platné. Date-okno je
+    bezpečné pro HISTORY_INDICATORS (Nomination/Renomination/GCV/Wobbe),
+    kde periodFrom_dt odpovídá skutečnému dni. UI pro kapacitu/interrupce
+    by mělo volat bez date_from/date_to (nebo s vlastním, širším řešením).
+
+    date_from/date_to jsou SKUTEČNÉ argumenty cachované funkce (ne
+    closure), aby je Streamlit správně zahrnul do cache klíče — jinak by
+    st.cache_data vracelo první nacachovaný rozsah i pro jiné volání.
+    Kategorizace sloupců (viz _CATEGORY_COLS) probíhá uvnitř _load_operational,
+    ne až v app.py při každém rerunu — bez tohohle měl obyčejný df.copy()
+    (na přidání country sloupce) v app.py ArrayMemoryError na konsolidaci
     ~190MB object-dtype bloku (ověřeno naživo) — plain string sloupce
-    opakované přes 1.5M+ řádků jsou v paměti řádově dražší než jejich
-    pár set unikátních hodnot. category dtype tohle řeší už při jediném
-    (cachovaném) načtení, downstream filtrování (==, .unique(),
-    groupby) funguje na category stejně jako na str. id a
-    periodFrom_dt/periodTo_dt zůstávají beze změny — id je skoro
-    unikátní na řádek (kategorizace by nepomohla) a date sloupce se
-    porovnávají (>=, <=) v grafech, což na category dtype není bezpečné."""
-    def _load():
-        df = read_partitioned(OPERATIONAL_DIR, fmt="parquet")
-        if df.empty:
-            return df
-        df["country"] = df["operatorKey"].apply(country_from_operator_key)
-        for col in _CATEGORY_COLS:
-            if col in df.columns:
-                df[col] = df[col].astype("category")
-        return df
+    opakované přes miliony řádků jsou v paměti řádově dražší než jejich
+    pár set unikátních hodnot. id a periodFrom_dt/periodTo_dt zůstávají
+    beze změny — id je skoro unikátní na řádek (kategorizace by
+    nepomohla) a date sloupce se porovnávají (>=, <=) v grafech, což na
+    category dtype není bezpečné."""
     try:
         import streamlit as st
-        return st.cache_data(ttl=3600, show_spinner=False)(_load)()
+        return st.cache_data(ttl=3600, show_spinner=False)(_load_operational)(date_from, date_to)
     except ImportError:
-        return _load()
+        return _load_operational(date_from, date_to)
 
 
 # Dočasný alias — app.py zatím importuje load_cz_operational beze změny,
