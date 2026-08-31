@@ -6,9 +6,9 @@ import os
 from datetime import timedelta
 
 from config import MSMM3_TO_GWH
-from data.partitioned_store import write_daily_snapshot, read_snapshot
+from data.partitioned_store import write_daily_snapshot, read_snapshot, read_partitioned, upsert_partitioned
 
-GASSCO_CSV      = "data/history/gassco_nominations.csv"
+GASSCO_NOMINATIONS_DIR = "data/history/gassco_nominations"
 GASSCO_UMM_PATH = "data/history/gassco_umm.parquet"
 GASSCO_UMM_SNAPSHOTS_DIR = "data/history/gassco_umm_snapshots"
 
@@ -54,7 +54,14 @@ def fetch_gassco_nominations() -> pd.DataFrame:
                 df_p["date"]       = pd.to_datetime(df_p["x"], unit="ms", utc=True)
                 df_p["point"]      = pt_name
                 df_p["value_MSm3"] = df_p["y"]
-                df_p["value_GWh"]  = df_p["value_MSm3"] * MSMM3_TO_GWH
+                # round() — bez tohohle je float násobení stejných vstupů v
+                # různých bězích bit-nedeterministické na posledním řádu
+                # (~1e-13, ověřeno naživo), což by rozbilo "obsah beze
+                # změny → nepřepisovat" v upsert_partitioned a odstávky by se
+                # tak commitovaly do gitu úplně stejně jako předtím plný
+                # přepis — 3 desetinná místa je řádově víc přesnosti, než
+                # má smysl pro GWh/d veličinu.
+                df_p["value_GWh"]  = (df_p["value_MSm3"] * MSMM3_TO_GWH).round(3)
                 frames.append(df_p[["date", "point", "value_MSm3", "value_GWh"]])
 
     if not frames:
@@ -382,15 +389,23 @@ def fetch_realtime_nominations() -> pd.DataFrame:
 
 
 def update_gassco():
+    """GASSCO nominace — měsíčně partitionované úložiště (viz
+    data/partitioned_store.py), stejný vzor jako GIE/LNG/ENTSOG.
+    fetch_gassco_nominations() vrací rolling okno z GASSCO API
+    (/ch/2Y/{id}) — upsert_partitioned zapisuje jen měsíce, co se v
+    tomhle okně vyskytují, uzavřené starší měsíce zůstávají nedotčené.
+    Na rozdíl od dřívějšího plného přepisu CSV tak historie NEZÁVISÍ na
+    tom, jak daleko API okno zrovna sahá."""
     os.makedirs("data/history", exist_ok=True)
     print("  GASSCO nominace...")
     df = fetch_gassco_nominations()
     if df.empty:
         print("  GASSCO: žádná data")
         return
-    df["date"] = df["date"].astype(str)
-    df.to_csv(GASSCO_CSV, index=False)
-    print(f"  GASSCO: {len(df)} řádků → {GASSCO_CSV}")
+    touched = upsert_partitioned(df, GASSCO_NOMINATIONS_DIR, "date", ["point", "date"], fmt="csv")
+    written = [(m, n) for m, n, w in touched if w]
+    print(f"  GASSCO: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+          f"({len(touched) - len(written)} beze změny) → {GASSCO_NOMINATIONS_DIR}/")
 
 
 def load_gassco() -> pd.DataFrame:
@@ -398,11 +413,9 @@ def load_gassco() -> pd.DataFrame:
         import streamlit as st
         @st.cache_data(ttl=300, show_spinner=False)
         def _load():
-            if os.path.exists(GASSCO_CSV):
-                df_hist = pd.read_csv(GASSCO_CSV, parse_dates=["date"])
+            df_hist = read_partitioned(GASSCO_NOMINATIONS_DIR, fmt="csv")
+            if not df_hist.empty:
                 df_hist["date"] = pd.to_datetime(df_hist["date"], utc=True)
-            else:
-                df_hist = pd.DataFrame()
 
             df_live = fetch_realtime_nominations()
 
@@ -418,13 +431,12 @@ def load_gassco() -> pd.DataFrame:
 
         return _load()
     except ImportError:
-        if os.path.exists(GASSCO_CSV):
-            df = pd.read_csv(GASSCO_CSV, parse_dates=["date"])
+        df = read_partitioned(GASSCO_NOMINATIONS_DIR, fmt="csv")
+        if not df.empty:
             df["date"] = pd.to_datetime(df["date"], utc=True)
             df_live = fetch_realtime_nominations()
             if not df_live.empty:
                 live_date = df_live["date"].iloc[0]
                 df = df[df["date"].dt.date != live_date.date()]
                 df = pd.concat([df, df_live], ignore_index=True)
-            return df
-        return pd.DataFrame()
+        return df
