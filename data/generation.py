@@ -36,11 +36,14 @@ def load_generation(country: str, start: pd.Timestamp = None, end: pd.Timestamp 
     df["year"] = local.dt.year
     df["day_of_year"] = local.dt.dayofyear
     # category dtype pro sloupce s málo unikátními hodnotami — source_type/
-    # psr_code opakované přes miliony řádků jsou jako plain string sloupce
-    # řádově dražší v paměti než jejich pár desítek unikátních hodnot
-    # (stejný důvod jako entsog_operational.py::_CATEGORY_COLS). Změřeno
-    # naživo: 2876.9MB → 1152.5MB napříč 7 zeměmi (-60 %).
-    for col in ("source_type", "psr_code"):
+    # psr_code/country opakované přes miliony řádků jsou jako plain string
+    # sloupce řádově dražší v paměti než jejich pár unikátních hodnot
+    # (stejný důvod jako entsog_operational.py::_CATEGORY_COLS). "country"
+    # má v tomhle datasetu jen JEDNU hodnotu (per-country partitioned
+    # adresář), a i tak jako object dtype stojí ~200-230MB na zemi —
+    # jako category prakticky nic bez ohledu na počet řádků. Změřeno
+    # naživo: 2769.5MB → 255.1MB napříč 7 zeměmi (-91 %).
+    for col in ("country", "source_type", "psr_code"):
         if col in df.columns:
             df[col] = df[col].astype("category")
     return df
