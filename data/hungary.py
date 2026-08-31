@@ -2,50 +2,11 @@ import os
 import pandas as pd
 import streamlit as st
 
-from config import GEN_STACK_ORDER, PSR_CODE_BY_SOURCE_TYPE
-from data.partitioned_store import read_partitioned
-
-HU_GENERATION_DIR = "data/history/hu_generation"
 HU_OUTAGES_PATH = "data/history/hu_outages.parquet"
 
-_EMPTY_GENERATION_COLS = ["date", "source_type", "psr_code", "mw", "year", "day_of_year"]
 _EMPTY_ACTIVE_COLS = ["production_resource_name", "plant_type", "start", "end",
                        "nominal_power", "avail_qty", "unavail_mw", "docstatus", "businesstype"]
 _EMPTY_DAILY_COLS = ["date", "plant_type", "unavail_mw"]
-
-
-@st.cache_data(ttl=3600)
-def load_hu_generation() -> pd.DataFrame:
-    """Výroba HU podle zdroje — long formát (date, source_type, psr_code, mw)
-    z měsíčně partitionovaného úložiště (viz data/partitioned_store.py),
-    doplněné o year/day_of_year pro sezonní graf.
-
-    Starý fallback dashboard (sub_hu v app.py) — obecná vrstva pro HU už
-    žije v data/generation.py, tohle zůstává jen dokud sub_hu neni
-    smazaný (krok 4 refaktoringu)."""
-    df = read_partitioned(HU_GENERATION_DIR, fmt="parquet")
-    if df.empty:
-        return pd.DataFrame(columns=_EMPTY_GENERATION_COLS)
-
-    local = df["date"].dt.tz_convert("Europe/Budapest")
-    df["year"] = local.dt.year
-    df["day_of_year"] = local.dt.dayofyear
-    return df
-
-
-def hu_available_source_types(df_gen: pd.DataFrame) -> list:
-    """Zdroje, které HU reálně produkuje (podle dat v hu_generation.parquet),
-    seřazené podle GEN_STACK_ORDER — pro selectbox v sezonním grafu.
-    Na rozdíl od config.PSR_TYPES (obecná paleta pro celou ENTSO-E oblast)
-    obsahuje jen zdroje, co se u HU skutečně vyskytují."""
-    if df_gen.empty:
-        return []
-
-    def _key(source_type):
-        code = PSR_CODE_BY_SOURCE_TYPE.get(source_type)
-        return GEN_STACK_ORDER.index(code) if code in GEN_STACK_ORDER else 999
-
-    return sorted(df_gen["source_type"].unique().tolist(), key=_key)
 
 
 @st.cache_data(ttl=300)
