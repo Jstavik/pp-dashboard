@@ -56,7 +56,7 @@ def fig_generation_stacked(df: pd.DataFrame, day: pd.Timestamp = None) -> go.Fig
     if day_df.empty:
         return _base_layout(go.Figure(), height=380)
 
-    wide = day_df.pivot_table(index="date", columns="source_type", values="mw", aggfunc="mean") / 1000
+    wide = day_df.pivot_table(index="date", columns="source_type", values="mw", aggfunc="mean", observed=True) / 1000
     fig = _stacked_area(wide)
     _base_layout(fig, height=380)
     fig.update_layout(title=f"Výroba podle zdroje — {day.date()} [GW]", hovermode="x unified")
@@ -81,7 +81,7 @@ def fig_generation_ytd(df: pd.DataFrame, start_date: pd.Timestamp = None) -> go.
         return _base_layout(go.Figure(), height=380)
 
     daily = ytd.assign(day=ytd["date"].dt.normalize()).pivot_table(
-        index="day", columns="source_type", values="mw", aggfunc="mean"
+        index="day", columns="source_type", values="mw", aggfunc="mean", observed=True
     ) / 1000
     fig = _stacked_area(daily)
     _base_layout(fig, height=380)
