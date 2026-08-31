@@ -533,9 +533,12 @@ if show_ee:
         sekce = st.radio("Sekce", ["Výroba", "Odstávky"], horizontal=True, key="eu_sekce")
 
         if sekce == "Výroba":
-            with st.spinner(f"Načítám výrobu — {COUNTRY_NAMES.get(country, country)}..."):
-                df_gen = load_generation(country)
-
+            # load_generation() se volá AŽ PO výběru Pohledu a jeho
+            # parametrů (den/od data), s odpovídajícím start/end — Teď/
+            # denní a Letos nepotřebují celou historii, jen Sezonnost
+            # (víceletá srovnávací sezonnost) ano. Změřeno naživo na
+            # DE_LU: celá historie 362.5MB → jen dnešní den 0.02MB,
+            # jen letos 34.4MB.
             pohled = st.radio(
                 "Pohled", ["Teď/denní", "Letos", "Sezonnost"],
                 horizontal=True, key=f"gen_pohled_{country}",
@@ -546,6 +549,8 @@ if show_ee:
                 default_day = pd.Timestamp.now(tz=tz).date()
                 sel_day = st.date_input("Den", value=default_day, key=f"gen_day_{country}")
                 day_ts = pd.Timestamp(sel_day, tz=tz).tz_convert("UTC")
+                with st.spinner(f"Načítám výrobu — {COUNTRY_NAMES.get(country, country)}..."):
+                    df_gen = load_generation(country, start=day_ts, end=day_ts + pd.Timedelta(days=1))
                 st.plotly_chart(fig_generation_stacked(df_gen, day_ts), use_container_width=True,
                                 config={"displayModeBar": False})
 
@@ -553,10 +558,14 @@ if show_ee:
                 default_start = pd.Timestamp(year=pd.Timestamp.now(tz=tz).year, month=1, day=1, tz=tz).date()
                 sel_start = st.date_input("Od data", value=default_start, key=f"gen_start_{country}")
                 start_ts = pd.Timestamp(sel_start, tz=tz).tz_convert("UTC")
+                with st.spinner(f"Načítám výrobu — {COUNTRY_NAMES.get(country, country)}..."):
+                    df_gen = load_generation(country, start=start_ts)
                 st.plotly_chart(fig_generation_ytd(df_gen, start_ts), use_container_width=True,
                                 config={"displayModeBar": False})
 
-            else:  # Sezonnost
+            else:  # Sezonnost — potřebuje celou historii (víceleté srovnání)
+                with st.spinner(f"Načítám výrobu — {COUNTRY_NAMES.get(country, country)}..."):
+                    df_gen = load_generation(country)
                 sources = available_source_types(df_gen)
                 if sources:
                     labels = {s: psr_lookup(s)[0] for s in sources}

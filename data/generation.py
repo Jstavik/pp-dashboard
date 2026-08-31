@@ -14,10 +14,16 @@ def load_generation(country: str, start: pd.Timestamp = None, end: pd.Timestamp 
     sezonní graf (počítané v místní časové zóně dané země).
 
     start/end (volitelné) filtrují na [start, end] podle "date" — pokud
-    nejsou tz-aware, berou se jako UTC (stejně jako uložený sloupec)."""
+    nejsou tz-aware, berou se jako UTC (stejně jako uložený sloupec).
+    Předávají se i do read_partitioned jako date_from/date_to (hrubý
+    filtr na úrovni měsíčních souborů, ne až po přečtení celého
+    datasetu) — jinak by start/end omezovaly jen VÝSLEDEK, ne špičkovou
+    paměť při čtení, což byl celý smysl date-scopingu (viz
+    entsog_operational.py::load_eu_operational)."""
     from config import COUNTRY_TIMEZONES
 
-    df = read_partitioned(f"data/history/generation/{country}", fmt="parquet")
+    df = read_partitioned(f"data/history/generation/{country}", fmt="parquet",
+                           date_from=start, date_to=end)
     if df.empty:
         return pd.DataFrame(columns=_EMPTY_GENERATION_COLS)
 
