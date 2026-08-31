@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from config import C_DEFICIT, MONTH_TICKS, GEN_STACK_ORDER, PSR_CODE_BY_SOURCE_TYPE, psr_lookup, _base_layout
-from charts.nuclear import _year_color_seasonality_bg
+from charts.gas import _year_color_seasonality_bg
 
 
 def _fill_rgba(color: str, alpha: float = 0.78) -> str:
@@ -114,8 +114,8 @@ def _add_seasonality_trace(fig: go.Figure, series: pd.Series, name: str, color: 
 
 def fig_seasonality(df: pd.DataFrame, source_type: str, chart_type: str = "Linie") -> go.Figure:
     """Sezonnost výroby pro vybraný zdroj — historické roky v pozadí
-    (barva podle stáří, sdílená s FR/HU přes
-    charts.nuclear._year_color_seasonality_bg), aktuální rok zvýrazněný.
+    (barva podle stáří, sdílená s gas sezonností přes
+    charts.gas._year_color_seasonality_bg), aktuální rok zvýrazněný.
 
     chart_type: 'Linie' / 'Plocha' / 'Sloupcový' — stejný projektový
     standard jako charts/gas.py::fig_flow_seasonality (st.radio v app.py)."""

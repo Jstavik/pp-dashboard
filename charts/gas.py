@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import plotly.graph_objects as go
 
-from config import MONTH_TICKS, MSMM3_TO_GWH, GEOJSON_COUNTRIES_URL
+from config import MONTH_TICKS, MSMM3_TO_GWH, GEOJSON_COUNTRIES_URL, C_YEAR_SEASONALITY_ALT
 
 FLOW_COLORS = [
     "#1565C0","#C62828","#2E7D32","#F57F17","#6A1B9A",
@@ -27,6 +27,18 @@ def _year_color_seasonality(year: int) -> str:
     if diff <= 0:
         return _YEAR_COLOR_BY_AGE[0]
     return _YEAR_COLOR_BY_AGE.get(diff, _YEAR_COLOR_OLD)
+
+
+def _year_color_seasonality_bg(yr: int) -> str:
+    """Barva pro roky v pozadí sezonního grafu — stejná stupnice jako
+    _year_color_seasonality(yr), jen current-1 dostane náhradní barvu.
+    Aktuální rok má v tomhle grafu vlastní pevnou červenou (C_DEFICIT) mimo
+    tuhle smyčku a current-1 by jinak dostal tu samou červenou z automatické
+    gradace — nahrazeno fialovou, ostatní roky (current-2, current-3, staré)
+    beze změny."""
+    if pd.Timestamp.now().year - yr == 1:
+        return C_YEAR_SEASONALITY_ALT
+    return _year_color_seasonality(yr)
 
 
 def fig_flow_timeseries(

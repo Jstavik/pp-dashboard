@@ -506,228 +506,11 @@ def update_dap_europe():
     print(f"DAP Europe: {len(df_new)} zemí, {len(written)} přepsaný měsíc → {DAP_DIR}/")
 
 
-def update_nuclear_fr_generation():
-    """Jaderná výroba FR (ENTSO-E query_generation, psr_type=B14) →
-    měsíčně partitionované úložiště (krok 0 vzor) —
-    data/history/nuclear_fr_generation/{YYYY-MM}.parquet."""
-    from entsoe import EntsoePandasClient
-    import pandas as pd
-    GEN_DIR = "data/history/nuclear_fr_generation"
-    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
-    tz = "Europe/Paris"
-
-    last_date = last_date_partitioned(GEN_DIR, "date", "parquet")
-    if last_date is not None:
-        start = last_date.tz_convert(tz).normalize()
-        if start.date() >= pd.Timestamp.now(tz=tz).date():
-            print("Nuclear FR gen: aktuální, skip")
-            return
-    else:
-        start = pd.Timestamp("2020-01-01", tz=tz)
-    end = pd.Timestamp.now(tz=tz) + pd.Timedelta(days=1)
-
-    df_new = client.query_generation("FR", start=start, end=end, psr_type="B14")
-    df_new.columns = ["nuclear_mw"]
-    df_new.index.name = "date"
-    df_new = df_new.reset_index()
-    local = df_new["date"].dt.tz_convert(tz)
-    df_new["year"] = local.year
-    df_new["day_of_year"] = local.day_of_year
-
-    touched = upsert_partitioned(df_new, GEN_DIR, "date", ["date"], fmt="parquet")
-    written = [(m, n) for m, n, w in touched if w]
-    print(f"Nuclear FR gen: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
-          f"({len(touched) - len(written)} beze změny) → {GEN_DIR}/")
-
-
-def update_nuclear_fr_outages():
-    """Stáhne jaderné odstávky FR (ENTSO-E unavailability) jen za posledních
-    ENTSOE_OUTAGE_REVISION_WINDOW_DAYS dní zpět → next_year_end a
-    zmerguje s existujícím parquetem.
-
-    Odstávky se v revizích mění (docstatus, avail_qty), ale jen ty
-    "aktivní/blízké" — revize starší než pár týdnů se prakticky nedějí
-    (předpoklad, needěláno na historických datech). Proto na rozdíl od
-    update_nuclear_fr_generation() nejde o čistý append: záznamy, jejichž
-    odstávka skončila před stahovaným oknem, zůstávají z parquetu beze
-    změny; záznamy uvnitř okna (mohly dostat novou revizi) se z API
-    stažení přepíšou celé.
-    """
-    from entsoe import EntsoePandasClient
-    import pandas as pd, os
-    PATH = "data/history/nuclear_fr_outages.parquet"
-    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
-
-    now = pd.Timestamp.now(tz="Europe/Paris")
-    fetch_start = now - pd.Timedelta(days=ENTSOE_OUTAGE_REVISION_WINDOW_DAYS)
-    next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz="Europe/Paris")
-
-    df_out = client.query_unavailability_of_generation_units(
-        "FR", start=fetch_start, end=next_year_end, docstatus=None
-    )
-    nuclear = df_out[df_out["plant_type"] == "Nuclear"].copy()
-    nuclear["nominal_power"] = pd.to_numeric(nuclear["nominal_power"], errors="coerce").fillna(0)
-    nuclear["avail_qty"] = pd.to_numeric(nuclear["avail_qty"], errors="coerce").fillna(0)
-
-    # Nejnovější revision pro každý blok+interval
-    latest = nuclear.sort_values("revision").groupby(
-        ["production_resource_name", "start", "end"]
-    ).last().reset_index()
-    latest = latest[latest["docstatus"] != "Cancelled"]
-    latest["unavail_mw"] = latest["nominal_power"] - latest["avail_qty"]
-
-    cols = ["production_resource_name", "start", "end", "nominal_power",
-            "avail_qty", "unavail_mw", "docstatus", "businesstype"]
-    latest = latest[cols].reset_index(drop=True)
-
-    if os.path.exists(PATH):
-        existing = pd.read_parquet(PATH)
-        frozen = existing[existing["end"] < fetch_start]
-        combined = pd.concat([frozen, latest], ignore_index=True)
-    else:
-        frozen = latest.iloc[0:0]
-        combined = latest
-
-    combined = combined.sort_values(["production_resource_name", "start"]).reset_index(drop=True)
-    combined.to_parquet(PATH, index=False)
-    print(f"Nuclear FR outages: {len(latest)} z API (okno {fetch_start.date()}→{next_year_end.date()}) "
-          f"+ {len(frozen)} beze změny z parquetu → {len(combined)} celkem → {PATH}")
-
-
-def _melt_hu_generation(df_wide: pd.DataFrame) -> pd.DataFrame:
-    """Wide/MultiIndex df z query_generation("HU", ..., psr_type=None) →
-    long formát (date, source_type, psr_code, mw). Zachovává jen sloupce
-    'Actual Aggregated' (zahazuje 'Actual Consumption', např. u přečerpávání)."""
-    cols = ["date", "source_type", "psr_code", "mw"]
-    if df_wide.empty:
-        return pd.DataFrame(columns=cols)
-
-    agg_cols = [c for c in df_wide.columns if c[1] == "Actual Aggregated"]
-    df = df_wide[agg_cols].copy()
-    df.columns = [c[0] for c in agg_cols]
-    df.index.name = "date"
-
-    long = df.reset_index().melt(id_vars="date", var_name="source_type", value_name="mw")
-    long = long.dropna(subset=["mw"])
-
-    unmapped = sorted(set(long["source_type"]) - set(PSR_CODE_BY_SOURCE_TYPE))
-    if unmapped:
-        print(f"    VAROVÁNÍ: nenamapované source_type v PSR_CODE_BY_SOURCE_TYPE: {unmapped}")
-
-    long["psr_code"] = long["source_type"].map(PSR_CODE_BY_SOURCE_TYPE)
-    return long[cols]
-
-
-def update_hu_generation():
-    """Výroba HU podle zdroje (ENTSO-E query_generation, psr_type=None) →
-    long formát parquet (date, source_type, psr_code, mw).
-
-    Stahuje po GENERATION_CHUNK_DAYS-denních chuncích s
-    GENERATION_CHUNK_RETRIES pokusy na chunk — ENTSO-E vrací 503/504 na
-    širokých rozsazích. Měsíčně partitionované úložiště (krok 0 vzor) —
-    při existujících datech stahuje jen od last_date (s pár dny přesahu
-    pro jistotu), jinak celý backfill od HISTORY_START."""
-    from entsoe import EntsoePandasClient
-    import pandas as pd, time
-    GEN_DIR = "data/history/hu_generation"
-    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
-    tz = "Europe/Budapest"
-
-    last_date = last_date_partitioned(GEN_DIR, "date", "parquet")
-    if last_date is not None:
-        start = last_date.tz_convert(tz) - pd.Timedelta(days=3)
-        print(f"HU gen: existující data do {last_date.date()}, stahuji od {start.date()}")
-    else:
-        start = pd.Timestamp(HISTORY_START, tz=tz)
-        print(f"HU gen: nový soubor, plný backfill od {start.date()}")
-
-    end = pd.Timestamp.now(tz=tz) + pd.Timedelta(days=1)
-
-    frames = []
-    cur = start
-    while cur < end:
-        chunk_end = min(cur + pd.Timedelta(days=GENERATION_CHUNK_DAYS), end)
-        for attempt in range(1, GENERATION_CHUNK_RETRIES + 1):
-            try:
-                raw = client.query_generation("HU", start=cur, end=chunk_end, psr_type=None)
-                frames.append(_melt_hu_generation(raw))
-                print(f"  {cur.date()} → {chunk_end.date()}: OK")
-                break
-            except Exception as e:
-                print(f"  {cur.date()} → {chunk_end.date()}: pokus {attempt}/{GENERATION_CHUNK_RETRIES} "
-                      f"selhal — {str(e)[:80]}")
-                if attempt < GENERATION_CHUNK_RETRIES:
-                    time.sleep(5)
-        cur = chunk_end
-        time.sleep(1)
-
-    if not frames:
-        print("HU gen: žádná nová data")
-        return
-
-    new_data = pd.concat(frames, ignore_index=True)
-    if new_data.empty:
-        print("HU gen: žádná nová data")
-        return
-
-    touched = upsert_partitioned(new_data, GEN_DIR, "date", ["date", "source_type"], fmt="parquet")
-    written = [(m, n) for m, n, w in touched if w]
-    print(f"HU gen: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
-          f"({len(touched) - len(written)} beze změny) → {GEN_DIR}/")
-
-
-def update_hu_outages():
-    """Odstávky HU (ENTSO-E unavailability) — stejná architektura jako
-    update_nuclear_fr_outages(), ale BEZ filtru na plant_type (u FR šlo jen
-    o jádro, u HU chceme rozpad podle všech typů zdrojů). Rolling window
-    [now - ENTSOE_OUTAGE_REVISION_WINDOW_DAYS, next_year_end] + merge se
-    starým parquetem, protože odstávky se v revizích mění."""
-    from entsoe import EntsoePandasClient
-    import pandas as pd, os
-    PATH = "data/history/hu_outages.parquet"
-    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
-
-    now = pd.Timestamp.now(tz="Europe/Budapest")
-    fetch_start = now - pd.Timedelta(days=ENTSOE_OUTAGE_REVISION_WINDOW_DAYS)
-    next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz="Europe/Budapest")
-
-    df_out = client.query_unavailability_of_generation_units(
-        "HU", start=fetch_start, end=next_year_end, docstatus=None
-    ).copy()
-    df_out["nominal_power"] = pd.to_numeric(df_out["nominal_power"], errors="coerce").fillna(0)
-    df_out["avail_qty"] = pd.to_numeric(df_out["avail_qty"], errors="coerce").fillna(0)
-
-    # Nejnovější revision pro každý blok+interval
-    latest = df_out.sort_values("revision").groupby(
-        ["production_resource_name", "start", "end"]
-    ).last().reset_index()
-    latest = latest[latest["docstatus"] != "Cancelled"]
-    latest["unavail_mw"] = latest["nominal_power"] - latest["avail_qty"]
-
-    cols = ["production_resource_name", "plant_type", "start", "end", "nominal_power",
-            "avail_qty", "unavail_mw", "docstatus", "businesstype"]
-    latest = latest[cols].reset_index(drop=True)
-
-    if os.path.exists(PATH):
-        existing = pd.read_parquet(PATH)
-        frozen = existing[existing["end"] < fetch_start]
-        combined = pd.concat([frozen, latest], ignore_index=True)
-    else:
-        frozen = latest.iloc[0:0]
-        combined = latest
-
-    combined = combined.sort_values(["production_resource_name", "start"]).reset_index(drop=True)
-    combined.to_parquet(PATH, index=False)
-    print(f"HU outages: {len(latest)} z API (okno {fetch_start.date()}→{next_year_end.date()}) "
-          f"+ {len(frozen)} beze změny z parquetu → {len(combined)} celkem → {PATH}")
-
-
 def _melt_generation(df_wide: pd.DataFrame, country: str) -> pd.DataFrame:
     """Wide/MultiIndex df z query_generation(country, ..., psr_type=None) →
     long formát (date, country, source_type, psr_code, mw). Zachovává jen
     sloupce 'Actual Aggregated' (zahazuje 'Actual Consumption', např. u
-    přečerpávání). Obecná verze data/hu_generation.py::_melt_hu_generation
-    z kroku 1 — krok 2 nahrazuje per-country funkce touhle jednou."""
+    přečerpávání)."""
     cols = ["date", "country", "source_type", "psr_code", "mw"]
     if df_wide.empty:
         return pd.DataFrame(columns=cols)
@@ -754,12 +537,8 @@ def update_generation(country: str):
     psr_type=None) → sjednocené partitionované úložiště
     data/history/generation/<country>/{YYYY-MM}.parquet.
 
-    Krok 2 obecné datové vrstvy — nahrazuje postupně
-    update_nuclear_fr_generation/update_hu_generation (ty zatím běží dál
-    a udržují staré soubory jako fallback, dokud nová appka není ověřená
-    — krok 4). Stahuje po GENERATION_CHUNK_DAYS chuncích s
-    GENERATION_CHUNK_RETRIES pokusy (ENTSO-E padá na 503/504 na širokých
-    rozsazích) — vzor z update_hu_generation."""
+    Stahuje po GENERATION_CHUNK_DAYS chuncích s GENERATION_CHUNK_RETRIES
+    pokusy na chunk (ENTSO-E padá na 503/504 na širokých rozsazích)."""
     from entsoe import EntsoePandasClient
     import pandas as pd, time
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
@@ -810,17 +589,11 @@ def update_generation(country: str):
 
 def update_outages(country: str):
     """Odstávky pro danou zemi (ENTSO-E unavailability) — BEZ filtru na
-    plant_type, všechny typy zdrojů (stejně jako HU v kroku 1, ne jen
-    jádro jako u staré FR verze). Rolling window
+    plant_type, všechny typy zdrojů. Rolling window
     [now - ENTSOE_OUTAGE_REVISION_WINDOW_DAYS, next_year_end], merge do
     JEDNOHO sdíleného data/history/outages.parquet (víc zemí ve stejném
     souboru — na rozdíl od per-country partitioningu u výroby, odstávky
-    se revidují, denní/country split nedává smysl, viz krok 0/krok 1).
-
-    Krok 2 obecné datové vrstvy — nahrazuje postupně
-    update_nuclear_fr_outages/update_hu_outages (ty zatím běží dál a
-    udržují staré soubory jako fallback, dokud nová appka není ověřená
-    — krok 4)."""
+    se revidují, denní/country split nedává smysl)."""
     from entsoe import EntsoePandasClient
     import pandas as pd, os
     PATH = "data/history/outages.parquet"
@@ -897,13 +670,6 @@ if __name__ == "__main__":
         ("GASSCO nominace",                   update_gassco),
         ("GASSCO UMM (odstávky polí)",         update_gassco_umm),
         ("DAP Europe choropleth",             update_dap_europe),
-        # Staré per-country zdroje (FR/HU) — dočasně běží dál souběžně
-        # s obecnou vrstvou níž, dokud není nová appka ověřená (krok 4),
-        # pak se smažou (staré update_* funkce i tenhle blok).
-        ("Jaderná výroba FR (ENTSO-E)",        update_nuclear_fr_generation),
-        ("Jaderné odstávky FR (ENTSO-E)",      update_nuclear_fr_outages),
-        ("Výroba HU podle zdroje (ENTSO-E)",   update_hu_generation),
-        ("Odstávky HU (ENTSO-E)",              update_hu_outages),
     ]
     # Obecná vrstva (krok 2) — přidání země = jeden řádek v config.COUNTRIES,
     # žádná kopie funkce.
