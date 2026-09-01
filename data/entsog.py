@@ -1,6 +1,7 @@
 import os
 import requests
 import pandas as pd
+import streamlit as st
 from datetime import date, timedelta
 
 POINTS_CONFIG = {
@@ -48,11 +49,7 @@ def fetch_entsog_flows(days: int = 90) -> pd.DataFrame:
         except Exception:
             return pd.DataFrame()
 
-    try:
-        import streamlit as st
-        return st.cache_data(ttl=300, show_spinner=False)(_impl)(days)
-    except ImportError:
-        return _impl(days)
+    return st.cache_data(ttl=300, show_spinner=False)(_impl)(days)
 
 
 def load_entsog_history() -> pd.DataFrame:
@@ -73,10 +70,6 @@ def load_entsog_history() -> pd.DataFrame:
             df["date"] = pd.to_datetime(df["date"], utc=True)
             return df
         return fetch_entsog_flows(days=90)
-    try:
-        import streamlit as st
-        return st.cache_data(ttl=300, show_spinner=False)(_load)()
-    except ImportError:
-        return _load()
+    return st.cache_data(ttl=300, show_spinner=False)(_load)()
 
 

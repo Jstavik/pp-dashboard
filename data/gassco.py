@@ -3,6 +3,7 @@ import glob
 import requests
 import pandas as pd
 import os
+import streamlit as st
 from datetime import timedelta
 
 from config import MSMM3_TO_GWH
@@ -315,11 +316,7 @@ def load_gassco_umm() -> pd.DataFrame:
         if not os.path.exists(GASSCO_UMM_PATH):
             return pd.DataFrame()
         return pd.read_parquet(GASSCO_UMM_PATH)
-    try:
-        import streamlit as st
-        return st.cache_data(ttl=300, show_spinner=False)(_load)()
-    except ImportError:
-        return _load()
+    return st.cache_data(ttl=300, show_spinner=False)(_load)()
 
 
 def load_gassco_umm_snapshot(days_back: int) -> pd.DataFrame:
@@ -409,34 +406,21 @@ def update_gassco():
 
 
 def load_gassco() -> pd.DataFrame:
-    try:
-        import streamlit as st
-        @st.cache_data(ttl=300, show_spinner=False)
-        def _load():
-            df_hist = read_partitioned(GASSCO_NOMINATIONS_DIR, fmt="csv")
-            if not df_hist.empty:
-                df_hist["date"] = pd.to_datetime(df_hist["date"], utc=True)
+    def _load():
+        df_hist = read_partitioned(GASSCO_NOMINATIONS_DIR, fmt="csv")
+        if not df_hist.empty:
+            df_hist["date"] = pd.to_datetime(df_hist["date"], utc=True)
 
-            df_live = fetch_realtime_nominations()
+        df_live = fetch_realtime_nominations()
 
-            if df_live.empty:
-                return df_hist
-            if df_hist.empty:
-                return df_live
+        if df_live.empty:
+            return df_hist
+        if df_hist.empty:
+            return df_live
 
-            live_date = df_live["date"].iloc[0]
-            df_hist = df_hist[df_hist["date"].dt.date != live_date.date()]
-            df_combined = pd.concat([df_hist, df_live], ignore_index=True)
-            return df_combined.sort_values(["point", "date"]).reset_index(drop=True)
+        live_date = df_live["date"].iloc[0]
+        df_hist = df_hist[df_hist["date"].dt.date != live_date.date()]
+        df_combined = pd.concat([df_hist, df_live], ignore_index=True)
+        return df_combined.sort_values(["point", "date"]).reset_index(drop=True)
 
-        return _load()
-    except ImportError:
-        df = read_partitioned(GASSCO_NOMINATIONS_DIR, fmt="csv")
-        if not df.empty:
-            df["date"] = pd.to_datetime(df["date"], utc=True)
-            df_live = fetch_realtime_nominations()
-            if not df_live.empty:
-                live_date = df_live["date"].iloc[0]
-                df = df[df["date"].dt.date != live_date.date()]
-                df = pd.concat([df, df_live], ignore_index=True)
-        return df
+    return st.cache_data(ttl=300, show_spinner=False)(_load)()

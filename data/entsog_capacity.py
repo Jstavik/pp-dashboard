@@ -1,5 +1,6 @@
 import requests, time, os
 import pandas as pd
+import streamlit as st
 
 from data.partitioned_store import read_partitioned, upsert_partitioned
 
@@ -179,11 +180,7 @@ def update_capacity():
 def load_capacity() -> pd.DataFrame:
     def _load():
         return read_partitioned(CAPACITY_DIR, fmt="parquet")
-    try:
-        import streamlit as st
-        return st.cache_data(ttl=3600, show_spinner=False)(_load)()
-    except ImportError:
-        return _load()
+    return st.cache_data(ttl=3600, show_spinner=False)(_load)()
 
 
 def expand_capacity(df_raw: pd.DataFrame, target_dates: list) -> pd.DataFrame:

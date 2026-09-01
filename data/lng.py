@@ -1,5 +1,6 @@
 import requests, os, time
 import pandas as pd
+import streamlit as st
 
 from data.partitioned_store import read_partitioned, upsert_partitioned
 
@@ -127,17 +128,9 @@ def update_lng():
 
 
 def load_lng() -> pd.DataFrame:
-    try:
-        import streamlit as st
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _load():
-            df = read_partitioned(LNG_DIR, fmt="csv")
-            if not df.empty:
-                df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
-            return df
-        return _load()
-    except ImportError:
+    def _load():
         df = read_partitioned(LNG_DIR, fmt="csv")
         if not df.empty:
             df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
         return df
+    return st.cache_data(ttl=3600, show_spinner=False)(_load)()

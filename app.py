@@ -11,6 +11,11 @@ from config import (
     CSS_STYLES, THRESHOLD,
     C_DEFICIT, C_SURPLUS, C_OK, C_WARN, C_NEW, C_TEXT, C_MUTED,
     sparkline_svg, storage_color, psr_lookup,
+    RESERVES_FALLBACK_RANGE_DAYS, OUTAGES_D7_COMPARISON_DAYS,
+    OUTAGES_DELTA_MAX_WINDOW_DAYS, RESERVES_DEFAULT_RANGE_DAYS,
+    GAS_FLOWS_DEFAULT_RANGE_DAYS, LNG_DEFAULT_RANGE_DAYS,
+    LNG_FALLBACK_RANGE_DAYS, GASSCO_DEFAULT_RANGE_DAYS,
+    GASSCO_REPORT_DEFAULT_RANGE_DAYS,
     ENTSOG_NOMINATION_DEFAULT_MONTHS,
 )
 from data.entsoe import (
@@ -249,7 +254,7 @@ if show_ee:
             reserves = dict(afrr_d_amt=pd.DataFrame(), afrr_d_pri=pd.DataFrame(),
                             afrr_y_amt=pd.DataFrame(), afrr_y_pri=pd.DataFrame(),
                             mfrr_d_amt=pd.DataFrame(), mfrr_d_pri=pd.DataFrame(),
-                            start=now.normalize(), end=now.normalize()+pd.Timedelta(days=10), now=now)
+                            start=now.normalize(), end=now.normalize()+pd.Timedelta(days=RESERVES_FALLBACK_RANGE_DAYS), now=now)
 
     df_act = fetch_activation_prices()
     ws_raw = fetch_wind_solar_forecast()
@@ -633,11 +638,11 @@ if show_ee:
                 df_now = load_outages_snapshot(country, days_back=0)
                 df_compare = load_outages_snapshot(country, days_back=days_back)
                 st.plotly_chart(
-                    fig_outages_delta(df_now, df_compare, window_days=min(days_forward, 30),
+                    fig_outages_delta(df_now, df_compare, window_days=min(days_forward, OUTAGES_DELTA_MAX_WINDOW_DAYS),
                                       compare_days_back=days_back),
                     use_container_width=True, config={"displayModeBar": False},
                 )
-                full_available = oldest + pd.Timedelta(days=7)
+                full_available = oldest + pd.Timedelta(days=OUTAGES_D7_COMPARISON_DAYS)
                 st.caption(f"Historie odstávek dostupná od {oldest.strftime('%d.%m.%Y')} — "
                            f"plné D-7 srovnání bude možné od {full_available.strftime('%d.%m.%Y')}.")
 
@@ -714,7 +719,7 @@ if show_ee:
     # ──────────── TAB 4: REZERVY ─────────────────────────────────────
     with tab_rezervy:
         res_start = now.normalize()
-        res_end   = now.normalize() + pd.Timedelta(days=7)
+        res_end   = now.normalize() + pd.Timedelta(days=RESERVES_DEFAULT_RANGE_DAYS)
         if now.month < 7:
             _a04_label = f"{now.year}-01-01 – {now.year}-07-01"
         else:
@@ -1085,7 +1090,7 @@ elif show_gas:
                     max_date = df_hist["date"].dt.tz_localize(None).max()
                     if "gas_dr" not in st.session_state:
                         st.session_state["gas_dr"] = (
-                            (max_date - pd.Timedelta(days=365)).date(),
+                            (max_date - pd.Timedelta(days=GAS_FLOWS_DEFAULT_RANGE_DAYS)).date(),
                             max_date.date(),
                         )
                     st.markdown("**Rychlý výběr období:**")
@@ -1501,7 +1506,7 @@ elif show_gas:
                 if "lng_dr" not in st.session_state:
                     st.session_state["lng_dr"] = (
                         (pd.Timestamp(max_date_lng) -
-                         pd.Timedelta(days=730)).date(),
+                         pd.Timedelta(days=LNG_DEFAULT_RANGE_DAYS)).date(),
                         max_date_lng,
                     )
                 qd_cols_lng = st.columns(5)
@@ -1538,7 +1543,7 @@ elif show_gas:
                 lng_from = pd.Timestamp(date_range_lng[0])
                 lng_to   = pd.Timestamp(date_range_lng[1])
             else:
-                lng_from = pd.Timestamp(max_date_lng) - pd.Timedelta(days=90)
+                lng_from = pd.Timestamp(max_date_lng) - pd.Timedelta(days=LNG_FALLBACK_RANGE_DAYS)
                 lng_to   = pd.Timestamp(max_date_lng)
 
             st.markdown("---")
@@ -1671,7 +1676,7 @@ elif show_gas:
                 with col2:
                     if "gassco_dr" not in st.session_state:
                         st.session_state["gassco_dr"] = (
-                            (max_date_g - pd.Timedelta(days=30)).date(),
+                            (max_date_g - pd.Timedelta(days=GASSCO_DEFAULT_RANGE_DAYS)).date(),
                             max_date_g.date(),
                         )
                     qd_cols = st.columns(5)
@@ -1704,7 +1709,7 @@ elif show_gas:
                     ts_from = pd.Timestamp(date_range_g[0], tz="UTC")
                     ts_to   = pd.Timestamp(date_range_g[1], tz="UTC")
                 else:
-                    ts_from = max_date_g - pd.Timedelta(days=30)
+                    ts_from = max_date_g - pd.Timedelta(days=GASSCO_DEFAULT_RANGE_DAYS)
                     ts_to   = max_date_g
 
                 st.plotly_chart(
@@ -1929,7 +1934,7 @@ elif show_rep:
             st.plotly_chart(
                 fig_gassco_timeseries(
                     df_g, default_pts,
-                    df_g["date"].max() - pd.Timedelta(days=365),
+                    df_g["date"].max() - pd.Timedelta(days=GASSCO_REPORT_DEFAULT_RANGE_DAYS),
                     df_g["date"].max()),
                 use_container_width=True,
                 config={"toImageButtonOptions": {

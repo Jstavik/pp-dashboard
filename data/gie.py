@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import streamlit as st
 
 from data.partitioned_store import read_partitioned
 
@@ -32,8 +33,4 @@ def load_gie_all() -> pd.DataFrame:
         if not df.empty:
             df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
         return df
-    try:
-        import streamlit as st
-        return st.cache_data(ttl=3600, show_spinner=False)(_load)()
-    except ImportError:
-        return _load()
+    return st.cache_data(ttl=3600, show_spinner=False)(_load)()

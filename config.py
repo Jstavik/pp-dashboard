@@ -224,15 +224,10 @@ MONTH_TICKS = dict(
 
 # Náhradní barva pro current-1 v sezonních grafech, kde current-1 by jinak
 # kolidoval s pevnou C_DEFICIT vyhrazenou pro zvýrazněnou "aktuální rok" trasu
-# (viz charts/nuclear.py::_year_color_seasonality_bg)
+# (viz charts/gas.py::_year_color_seasonality_bg)
 C_YEAR_SEASONALITY_ALT = "#6A1B9A"
 
 # ── ENTSO-E ODSTÁVKY/VÝROBA — PARAMETRY ──────────────────────────
-# Okno pro výpočet kapacitního faktoru (skutečná výroba / teoretická
-# dostupnost) použitého k navázání predikce na historii — viz
-# charts/nuclear.py::fig_nuclear_fr_seasonality_with_forecast
-NUCLEAR_FR_CF_WINDOW_DAYS = 30
-
 # Okno zpětného stahování odstávek (rolling-window refetch) — revize starší
 # než tohle se prakticky nemění, takže update_outages(country) přepisuje
 # jen tuhle část a starší záznamy v outages.parquet nechává beze změny.
@@ -252,6 +247,21 @@ GENERATION_CHUNK_RETRIES = 3
 # tier (~1GB) by to spadlo. Uživatel může okno v UI rozšířit až na
 # celou dostupnou historii — viz data/entsog_operational.py::load_eu_operational.
 ENTSOG_NOMINATION_DEFAULT_MONTHS = 12
+
+# ── APP.PY DEFAULTNÍ OKNA (date pickery) ─────────────────────────
+# Pojmenované náhrady za dřív natvrdo zapsaná pd.Timedelta(days=N) v
+# app.py — NEZAHRNUJE "rychlý výběr" preset tlačítka (Týden/Měsíc/...),
+# ty jsou samodokumentující se vlastním viditelným labelem přímo vedle
+# čísla, jen defaultní/fallback okna bez takového kontextu.
+RESERVES_FALLBACK_RANGE_DAYS = 10   # prázdný fallback dict při chybě fetch_reserves()
+OUTAGES_D7_COMPARISON_DAYS = 7      # od kdy je možné plné "D-7" srovnání odstávek
+OUTAGES_DELTA_MAX_WINDOW_DAYS = 30  # strop okna pro fig_outages_delta
+RESERVES_DEFAULT_RANGE_DAYS = 7     # výchozí okno tab_rezervy (dnes → +N dní)
+GAS_FLOWS_DEFAULT_RANGE_DAYS = 365  # výchozí rozsah "gas_dr" (toky plynu)
+LNG_DEFAULT_RANGE_DAYS = 730        # výchozí rozsah "lng_dr" (LNG terminály)
+LNG_FALLBACK_RANGE_DAYS = 90        # fallback, pokud se date_input nedá rozbalit na (od, do)
+GASSCO_DEFAULT_RANGE_DAYS = 30      # výchozí rozsah "gassco_dr" (GASSCO časová osa)
+GASSCO_REPORT_DEFAULT_RANGE_DAYS = 365  # výchozí rozsah GASSCO grafu v sekci Report
 
 # ── OBECNÁ DATOVÁ VRSTVA — ZEMĚ ──────────────────────────────────
 # Přidání nové země = jeden řádek sem (+ časová zóna a jméno níž), nic
