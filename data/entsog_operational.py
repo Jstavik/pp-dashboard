@@ -1,6 +1,7 @@
 import requests, time, os
 from datetime import date
 import pandas as pd
+import streamlit as st
 
 from data.partitioned_store import read_partitioned, upsert_partitioned
 
@@ -36,6 +37,13 @@ OPERATIONAL_DIR = "data/history/entsog_operational"
 # takhle plně zabackfillovaná — ale VŠECHNO NOVÉ se fetchuje PO JEDNOM
 # indikátoru, nikdy kombinovaně, viz fetch_operational_month.
 HISTORY_INDICATORS = ["Nomination", "Renomination", "GCV", "Wobbe Index"]
+
+# Podmnožiny HISTORY_INDICATORS pro panel Nominace (app.py, tab_nom):
+# fig_cz_operational je navržená jen pro denní Entry/Exit graf, což sedí
+# na Nomination/Renomination — GCV/Wobbe Index mají vlastní sekci
+# "Kvalita plynu" (stejný graf, jiné umístění v UI, ne kapacitní tabulka).
+NOMINATION_CHART_INDICATORS = ["Nomination", "Renomination"]
+QUALITY_INDICATORS = ["GCV", "Wobbe Index"]
 
 # Reálné (server-side canonical) názvy ověřené naživo pojedno — uživatelův
 # původní seznam měl 12 položek, ale:
@@ -460,11 +468,45 @@ def load_eu_operational(date_from=None, date_to=None) -> pd.DataFrame:
     beze změny — id je skoro unikátní na řádek (kategorizace by
     nepomohla) a date sloupce se porovnávají (>=, <=) v grafech, což na
     category dtype není bezpečné."""
-    try:
-        import streamlit as st
-        return st.cache_data(ttl=3600, show_spinner=False)(_load_operational)(date_from, date_to)
-    except ImportError:
-        return _load_operational(date_from, date_to)
+    return st.cache_data(ttl=3600, show_spinner=False)(_load_operational)(date_from, date_to)
+
+
+def _load_open_ended() -> pd.DataFrame:
+    df = read_partitioned(
+        OPERATIONAL_DIR, fmt="parquet",
+        row_filter=lambda d: d[~d["indicator"].isin(HISTORY_INDICATORS)],
+    )
+    if df.empty:
+        return df
+    df["country"] = df["operatorKey"].apply(country_from_operator_key)
+    return df
+
+
+def load_eu_operational_open_ended() -> pd.DataFrame:
+    """Načte kapacitní/interrupční (OPEN_ENDED_INDICATORS-typu) záznamy
+    napříč CELOU historií, BEZ date-okna — na rozdíl od load_eu_operational.
+
+    Důvod: periodFrom_dt u těchhle indikátorů nese VALIDITY okno, klidně
+    z roku 2013 (ověřeno naživo na VIP Brandov — Firm Booked periodFrom
+    2013-10-16 → 2026-08-01, periodTo až 2050), zatímco jejich aktuální
+    platnost (periodTo_dt >= dnes) je nezávislá na tom, jak starý je
+    periodFrom_dt. Date-okno (viz load_eu_operational, řeší panel
+    Nominace) by aktuálně platné, ale staré záznamy nesprávně vyřadilo.
+
+    Filtruje se VYLOUČENÍM HISTORY_INDICATORS, ne přesným seznamem
+    OPEN_ENDED_INDICATORS — v uložených datech se vyskytuje i varianta
+    názvu mimo kanonický seznam ("Planned interruption of interruptible
+    capacity", zjevně pozůstatek dřívější verze fetch configu, ověřeno
+    naživo). Vyloučení je vůči tomu odolné, přesný seznam by tenhle
+    záznam tiše ztratil.
+
+    Bezpečné paměťově i bez date-okna: row_filter v read_partitioned
+    filtruje PER SOUBOR před concat, takže se čte všech ~170 měsíčních
+    souborů (I/O), ale drží se v paměti jen filtrovaný zbytek — OPEN_ENDED
+    indikátory jsou řádově menší objem než HISTORY_ (ověřeno na VIP
+    Brandov: ~11-27 řádků na bod/indikátor za CELOU historii, ne denní
+    záznam jako Nomination/Renomination/GCV/Wobbe)."""
+    return st.cache_data(ttl=3600, show_spinner=False)(_load_open_ended)()
 
 
 # Dočasný alias — app.py zatím importuje load_cz_operational beze změny,

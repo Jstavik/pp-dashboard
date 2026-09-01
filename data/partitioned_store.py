@@ -19,14 +19,22 @@ import os
 import pandas as pd
 
 
-def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_to=None) -> pd.DataFrame:
+def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_to=None, row_filter=None) -> pd.DataFrame:
     """Načte a sloučí měsíční soubory v base_dir (data/history/<zdroj>/*.fmt).
 
     date_from/date_to (volitelné) omezí čtení jen na soubory {YYYY-MM}.fmt
     ležící (byť částečně) v zadaném rozsahu — filtruje se podle NÁZVU
     souboru, ne podle obsahu, takže se soubory mimo okno vůbec neotvírají.
     Bez date_from/date_to (default) čte úplně všechno, beze změny chování
-    pro stávající volající."""
+    pro stávající volající.
+
+    row_filter (volitelné, DataFrame -> DataFrame) se aplikuje PER SOUBOR
+    hned po přečtení, PŘED concat — pro zdroje, kde je potřeba projít
+    celou historii (date-okno nejde použít, viz
+    entsog_operational.py::load_eu_operational_open_ended), ale výsledek
+    je řádkově malý (jen pár sloupcových hodnot z každého souboru). Drží
+    špičkovou paměť na velikosti jednoho souboru + filtrovaného výsledku,
+    ne na velikosti celého datasetu."""
     files = sorted(glob.glob(os.path.join(base_dir, f"*.{fmt}")))
     if date_from is not None or date_to is not None:
         lo = pd.Timestamp(date_from).strftime("%Y-%m") if date_from is not None else None
@@ -42,7 +50,10 @@ def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_t
     if not files:
         return pd.DataFrame()
     reader = pd.read_parquet if fmt == "parquet" else pd.read_csv
-    return pd.concat((reader(f) for f in files), ignore_index=True)
+    frames = (reader(f) for f in files)
+    if row_filter is not None:
+        frames = (row_filter(df) for df in frames)
+    return pd.concat(frames, ignore_index=True)
 
 
 def last_date_partitioned(base_dir: str, date_col: str, fmt: str = "parquet"):

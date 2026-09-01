@@ -11,12 +11,12 @@ from config import (
     CSS_STYLES, THRESHOLD,
     C_DEFICIT, C_SURPLUS, C_OK, C_WARN, C_NEW, C_TEXT, C_MUTED,
     sparkline_svg, storage_color, psr_lookup,
+    ENTSOG_NOMINATION_DEFAULT_MONTHS,
     RESERVES_FALLBACK_RANGE_DAYS, OUTAGES_D7_COMPARISON_DAYS,
     OUTAGES_DELTA_MAX_WINDOW_DAYS, RESERVES_DEFAULT_RANGE_DAYS,
     GAS_FLOWS_DEFAULT_RANGE_DAYS, LNG_DEFAULT_RANGE_DAYS,
     LNG_FALLBACK_RANGE_DAYS, GASSCO_DEFAULT_RANGE_DAYS,
     GASSCO_REPORT_DEFAULT_RANGE_DAYS,
-    ENTSOG_NOMINATION_DEFAULT_MONTHS,
 )
 from data.entsoe import (
     fetch_entsoe_data, fetch_dap, fetch_installed_capacity,
@@ -30,7 +30,10 @@ from data.entsog import load_entsog_history, _short_name
 from data.gie import load_gie_all, VARIABLES
 from data.hydro import load_hydro, HYDRO_COUNTRY_NAMES
 from data.entsog_capacity import load_capacity
-from data.entsog_operational import load_cz_operational, EU_COUNTRY_NAMES, HISTORY_START
+from data.entsog_operational import (
+    load_cz_operational, load_eu_operational_open_ended, EU_COUNTRY_NAMES,
+    HISTORY_START, NOMINATION_CHART_INDICATORS, QUALITY_INDICATORS,
+)
 from charts.gas import (
     fig_gas_point_history, fig_gas_map,
     fig_flow_timeseries, fig_flow_seasonality,
@@ -1291,7 +1294,16 @@ elif show_gas:
                         key="nom_country",
                     )
                 with col_ind:
-                    all_indicators_nom = sorted(df_nom["indicator"].dropna().unique())
+                    # Jen Nomination/Renomination — fig_cz_operational je
+                    # navržená pro denní Entry/Exit graf, ne pro kapacitní/
+                    # interrupční/kvalitní indikátory (ty mají vlastní
+                    # sekce níž, GCV/Wobbe navíc jinou fyzikální veličinu
+                    # než kWh/d). df_nom sám o sobě obsahuje VŠECH 13
+                    # indikátorů v okně — jen nabídka dropdownu je užší.
+                    available_ind_set_nom = set(df_nom["indicator"].dropna().unique())
+                    all_indicators_nom = [
+                        i for i in NOMINATION_CHART_INDICATORS if i in available_ind_set_nom
+                    ]
                     sel_ind_nom = st.selectbox(
                         "📊 Indikátor",
                         options=all_indicators_nom,
@@ -1318,6 +1330,7 @@ elif show_gas:
                     index=default_point_idx,
                     key=point_key,
                 )
+                df_point_nom = df_country_nom[df_country_nom["pointLabel"] == sel_point_nom]
 
                 col_ct, col_dr = st.columns([1, 2])
                 with col_ct:
@@ -1345,7 +1358,7 @@ elif show_gas:
 
                 st.plotly_chart(
                     fig_cz_operational(
-                        df_country_nom, sel_point_nom, sel_ind_nom,
+                        df_point_nom, sel_point_nom, sel_ind_nom,
                         d_from_nom, d_to_nom, chart_type_nom,
                     ),
                     use_container_width=True,
@@ -1353,10 +1366,7 @@ elif show_gas:
 
                 st.markdown("##### Posledních 30 dní — surové hodnoty")
                 sub_table_nom = (
-                    df_country_nom[
-                        (df_country_nom["pointLabel"] == sel_point_nom) &
-                        (df_country_nom["indicator"] == sel_ind_nom)
-                    ]
+                    df_point_nom[df_point_nom["indicator"] == sel_ind_nom]
                     .sort_values("periodFrom_dt", ascending=False)
                     .head(60)
                 )
@@ -1374,6 +1384,107 @@ elif show_gas:
                     use_container_width=True,
                     hide_index=True,
                 )
+
+                st.markdown("---")
+
+                # Kapacita/interrupce žijí ve VLASTNÍM, vždy neomezeném
+                # (bez date-okna) načtení — viz
+                # data/entsog_operational.py::load_eu_operational_open_ended.
+                # Jejich periodFrom_dt nese validity okno klidně z roku
+                # 2013 (ověřeno naživo), takže by je "Historie (měsíců
+                # zpět)" slider výš nesprávně vyřadil, i když jsou
+                # AKTUÁLNĚ platné. Malý objem dat (~30MB za celou Evropu,
+                # ověřeno), takže bezpečné načíst vždy celé.
+                df_oe_nom = load_eu_operational_open_ended()
+                if df_oe_nom.empty:
+                    df_oe_point_nom = df_oe_nom
+                else:
+                    df_oe_point_nom = df_oe_nom[
+                        (df_oe_nom["country"] == sel_country_nom)
+                        & (df_oe_nom["pointLabel"] == sel_point_nom)
+                    ]
+                st.markdown("##### 📦 Kapacita — aktivní rezervace")
+                if df_oe_point_nom.empty:
+                    st.caption("Bod nemá žádná kapacitní ani interrupční data.")
+                else:
+                    is_interruption_oe = df_oe_point_nom["indicator"].str.contains(
+                        "interruption", case=False, na=False
+                    )
+                    df_cap_nom = df_oe_point_nom[
+                        ~is_interruption_oe
+                        & (df_oe_point_nom["periodFrom_dt"] <= today_nom)
+                        & (df_oe_point_nom["periodTo_dt"] >= today_nom)
+                    ].sort_values(["indicator", "directionKey"])
+                    if df_cap_nom.empty:
+                        st.caption("Žádná aktivní kapacitní rezervace pro tenhle bod.")
+                    else:
+                        st.dataframe(
+                            df_cap_nom[
+                                ["indicator", "directionKey", "periodFrom_dt",
+                                 "periodTo_dt", "value_GWh"]
+                            ].rename(columns={
+                                "indicator": "Typ",
+                                "directionKey": "Směr",
+                                "periodFrom_dt": "Od",
+                                "periodTo_dt": "Do",
+                                "value_GWh": "Hodnota [GWh/d]",
+                            }),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                st.markdown("##### ⚠️ Interrupce — aktivní a plánované")
+                if df_oe_point_nom.empty:
+                    st.caption("Bod nemá žádná kapacitní ani interrupční data.")
+                else:
+                    is_interruption_oe = df_oe_point_nom["indicator"].str.contains(
+                        "interruption", case=False, na=False
+                    )
+                    df_int_nom = df_oe_point_nom[
+                        is_interruption_oe
+                        & (df_oe_point_nom["periodTo_dt"] >= today_nom)
+                    ].sort_values("periodFrom_dt")
+                    if df_int_nom.empty:
+                        st.caption("Žádné aktivní ani plánované interrupce pro tenhle bod.")
+                    else:
+                        st.dataframe(
+                            df_int_nom[
+                                ["indicator", "directionKey", "periodFrom_dt",
+                                 "periodTo_dt", "value_GWh"]
+                            ].rename(columns={
+                                "indicator": "Typ",
+                                "directionKey": "Směr",
+                                "periodFrom_dt": "Od",
+                                "periodTo_dt": "Do",
+                                "value_GWh": "Hodnota [GWh/d]",
+                            }),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                st.markdown("##### 🧪 Kvalita plynu")
+                # GCV/Wobbe jsou HISTORY_INDICATORS — v df_point_nom už
+                # jsou (df_nom nese všech 13 indikátorů v okně, jen
+                # dropdown výš je zúžený na Nomination/Renomination),
+                # žádné extra načtení netřeba.
+                available_quality_nom = [
+                    q for q in QUALITY_INDICATORS
+                    if q in set(df_point_nom["indicator"].dropna().unique())
+                ]
+                if not available_quality_nom:
+                    st.caption("Bod nehlásí GCV ani Wobbe Index.")
+                else:
+                    sel_quality_nom = st.radio(
+                        "Ukazatel", available_quality_nom, horizontal=True,
+                        key=f"nom_quality__{sel_country_nom}__{sel_point_nom}",
+                    )
+                    st.plotly_chart(
+                        fig_cz_operational(
+                            df_point_nom, sel_point_nom, sel_quality_nom,
+                            d_from_nom, d_to_nom, chart_type_nom,
+                        ),
+                        use_container_width=True,
+                    )
 
         with tab_stor:
             df_gie = load_gie_all()
