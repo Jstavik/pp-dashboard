@@ -1403,20 +1403,26 @@ elif show_gas:
                         (df_oe_nom["country"] == sel_country_nom)
                         & (df_oe_nom["pointLabel"] == sel_point_nom)
                     ]
-                st.markdown("##### 📦 Kapacita — aktivní rezervace")
+                st.markdown("##### 📦 Kapacita — aktuální a budoucí rezervace")
                 if df_oe_point_nom.empty:
                     st.caption("Bod nemá žádná kapacitní ani interrupční data.")
                 else:
                     is_interruption_oe = df_oe_point_nom["indicator"].str.contains(
                         "interruption", case=False, na=False
                     )
+                    # periodTo_dt >= dnes, BEZ podmínky na periodFrom_dt — už
+                    # dohodnuté, ale ještě NEZAČATÉ budoucí rezervace (viz
+                    # periodFrom_dt v budoucnu) patří do "dopředného" pohledu
+                    # stejně jako právě aktivní. Stejný vzor jako Interrupce
+                    # níž — ověřeno naživo na VIP Brandov: bez tyhle úpravy by
+                    # se skryly reálné budoucí rezervace (např. Firm Booked
+                    # 2026-09-02 → 2026-10-01, dnešek 2026-09-01).
                     df_cap_nom = df_oe_point_nom[
                         ~is_interruption_oe
-                        & (df_oe_point_nom["periodFrom_dt"] <= today_nom)
                         & (df_oe_point_nom["periodTo_dt"] >= today_nom)
-                    ].sort_values(["indicator", "directionKey"])
+                    ].sort_values(["periodFrom_dt", "indicator", "directionKey"])
                     if df_cap_nom.empty:
-                        st.caption("Žádná aktivní kapacitní rezervace pro tenhle bod.")
+                        st.caption("Žádná aktuální ani budoucí kapacitní rezervace pro tenhle bod.")
                     else:
                         st.dataframe(
                             df_cap_nom[
