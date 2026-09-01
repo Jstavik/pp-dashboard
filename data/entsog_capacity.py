@@ -87,6 +87,26 @@ INDICATORS = (
 
 
 def fetch_point_capacity(point_label: str) -> list:
+    """Stránkování se řídí VÝHRADNĚ len(rows) == 0, ne meta.total a NE
+    len(rows) < limit. Ověřeno naživo (2026-09, 4 body): meta.total sice
+    souhlasil na 4/4 testech, ale na VIP Brandov i Baumgarten server
+    vrátil na první stránce MÍŇ řádků než limit (24 z 500, resp. 42 z
+    500), přestože ještě zbývala další stránka — endpoint tedy nutně
+    NEPLNÍ stránky až po limit, takže "len(rows) < limit → konec" by
+    tiše uřízlo zbylá data. Extra dotaz na offset za posledním
+    očekávaným řádkem naopak spolehlivě vrátil 0 řádků na všech 4
+    bodech — jediný ověřeně bezpečný signál konce, byť stojí jeden
+    zbytečný request navíc na bod, co končí přesně na hranici stránky.
+
+    Samostatné zjištění (mimo stránkování): kombinace 6 indikátorů v
+    jednom dotazu (INDICATORS) na Baumgarten tiše PŘEKLASIFIKOVALA 4
+    řádky (Firm Booked/Available 9→7 každý) do Interruptible Total
+    (7→11) — celkový součet řádků seděl (46=46), ale rozpad podle
+    indikátoru ne. Na VIP Brandov/Waidhaus/Mallnow se stejná kombinace
+    projevila správně. Nejde o stejný "3+ indikátorů se zredukuje na
+    1-2 dominantní" bug z entsog_operational.py (tady všech 6 zůstalo),
+    ale o related data-integrity riziko stejné kombinované-query třídy
+    — zatím NEOPRAVENO, mimo rozsah týhle opravy (viz konverzace)."""
     all_rows, offset, limit = [], 0, 500
     while True:
         url = (
@@ -98,11 +118,10 @@ def fetch_point_capacity(point_label: str) -> list:
         try:
             resp = requests.get(url, timeout=30)
             data = resp.json()
-            rows  = data.get("operationaldata", [])
-            total = data.get("meta", {}).get("total", 0)
+            rows = data.get("operationaldata", [])
             all_rows.extend(rows)
             offset += len(rows)
-            if offset >= total or len(rows) == 0:
+            if len(rows) == 0:
                 break
             time.sleep(0.2)
         except Exception as e:
