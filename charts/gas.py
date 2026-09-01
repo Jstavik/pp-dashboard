@@ -4,29 +4,24 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import plotly.graph_objects as go
 
-from config import MONTH_TICKS, MSMM3_TO_GWH, GEOJSON_COUNTRIES_URL, C_YEAR_SEASONALITY_ALT
+from config import (
+    MONTH_TICKS, MSMM3_TO_GWH, GEOJSON_COUNTRIES_URL, C_YEAR_SEASONALITY_ALT,
+    GAS_SEASONALITY_YEAR_COLORS, GAS_SEASONALITY_YEAR_COLOR_OLD,
+)
 
 FLOW_COLORS = [
     "#1565C0","#C62828","#2E7D32","#F57F17","#6A1B9A",
     "#00838F","#E65100","#4527A0","#558B2F","#AD1457",
 ]
 
-_YEAR_COLOR_BY_AGE = {
-    0: "#2E7D32",  # aktuální rok — nejsilnější
-    1: "#C62828",  # current-1 — výrazná
-    2: "#F57F17",
-    3: "#1565C0",
-}
-_YEAR_COLOR_OLD = "#BDBDBD"  # current-4 a starší
-
-
 def _year_color_seasonality(year: int) -> str:
-    """Barva pro rok v sezonním grafu — relativně k aktuálnímu roku,
-    stejný princip jako config.year_color(). current-4 a starší = šedá."""
+    """Barva pro rok v sezonním grafu — relativně k aktuálnímu roku
+    (config.GAS_SEASONALITY_YEAR_COLORS, jiná stupnice než
+    config.year_color() — viz komentář tam). current-4 a starší = šedá."""
     diff = pd.Timestamp.now().year - year
     if diff <= 0:
-        return _YEAR_COLOR_BY_AGE[0]
-    return _YEAR_COLOR_BY_AGE.get(diff, _YEAR_COLOR_OLD)
+        return GAS_SEASONALITY_YEAR_COLORS[0]
+    return GAS_SEASONALITY_YEAR_COLORS.get(diff, GAS_SEASONALITY_YEAR_COLOR_OLD)
 
 
 def _year_color_seasonality_bg(yr: int) -> str:

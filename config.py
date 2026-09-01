@@ -185,6 +185,20 @@ YEAR_PALETTE = [
     "#FF8F00","#C62828","#AD1457","#6A1B9A",
 ]
 
+# Samostatná stupnice pro charts/gas.py::_year_color_seasonality (gas
+# sezonnost) — záměrně JINÝ princip než YEAR_PALETTE/year_color() výš
+# (tam current-1 = šedá a barvy sytí se stářím dozadu, tady current-1 =
+# červená a barvy BLEDNOU do šeda se stářím) — dva různé vizuální jazyky
+# pro různé grafy, ne duplicitní logika. Hodnoty žijí tady (ne
+# duplikované v charts/gas.py) kvůli "barvy patří do config.py" pravidlu.
+GAS_SEASONALITY_YEAR_COLORS = {
+    0: "#2E7D32",  # aktuální rok — nejsilnější
+    1: "#C62828",  # current-1 — výrazná
+    2: "#F57F17",
+    3: "#1565C0",
+}
+GAS_SEASONALITY_YEAR_COLOR_OLD = "#BDBDBD"  # current-4 a starší
+
 
 def year_color(year: int) -> str:
     """Barva pro daný rok — aktuální rok = zelená, starší = YEAR_PALETTE."""
