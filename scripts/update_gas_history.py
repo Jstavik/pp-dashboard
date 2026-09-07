@@ -441,9 +441,13 @@ def update_dap_europe():
 
     client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
 
-    # +1 den: den-ahead ceny na dnešek jsou publikované už včera, takže
-    # dnešek je kompletní den dat a musí být celý zahrnutý v dotazu.
-    end = pd.Timestamp.now(tz="Europe/Prague").normalize() + pd.Timedelta(days=1)
+    # +2 dny: den-ahead ceny na ZÍTŘEK bývají publikované už dnes kolem
+    # 13:00 CET — odpolední/večerní běh (17:00 CEST) je tak může zachytit
+    # rovnou, ne až zítřejším ranním během (06:00). Okno musí sahat až za
+    # zítřek (end je exkluzivní), aby ho query_day_ahead_prices vůbec
+    # mohla vrátit. Když zítřek ještě publikovaný není (ranní běh), cnt>=20
+    # filtr níž ho přirozeně vyřadí — žádné riziko neúplných dat.
+    end = pd.Timestamp.now(tz="Europe/Prague").normalize() + pd.Timedelta(days=2)
 
     last_existing = last_date_partitioned(DAP_DIR, "date", "parquet")
     if last_existing is not None:
