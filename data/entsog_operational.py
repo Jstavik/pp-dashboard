@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from data.partitioned_store import read_partitioned, upsert_partitioned
+from config import ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS
 
 OPERATIONAL_DIR = "data/history/entsog_operational"
 
@@ -468,7 +469,7 @@ def load_eu_operational(date_from=None, date_to=None) -> pd.DataFrame:
     beze změny — id je skoro unikátní na řádek (kategorizace by
     nepomohla) a date sloupce se porovnávají (>=, <=) v grafech, což na
     category dtype není bezpečné."""
-    return st.cache_data(ttl=3600, show_spinner=False)(_load_operational)(date_from, date_to)
+    return st.cache_data(ttl=ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS, show_spinner=False)(_load_operational)(date_from, date_to)
 
 
 def _load_open_ended() -> pd.DataFrame:
@@ -506,7 +507,7 @@ def load_eu_operational_open_ended() -> pd.DataFrame:
     indikátory jsou řádově menší objem než HISTORY_ (ověřeno na VIP
     Brandov: ~11-27 řádků na bod/indikátor za CELOU historii, ne denní
     záznam jako Nomination/Renomination/GCV/Wobbe)."""
-    return st.cache_data(ttl=3600, show_spinner=False)(_load_open_ended)()
+    return st.cache_data(ttl=ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS, show_spinner=False)(_load_open_ended)()
 
 
 # Dočasný alias — app.py zatím importuje load_cz_operational beze změny,

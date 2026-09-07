@@ -248,6 +248,14 @@ GENERATION_CHUNK_RETRIES = 3
 # celou dostupnou historii — viz data/entsog_operational.py::load_eu_operational.
 ENTSOG_NOMINATION_DEFAULT_MONTHS = 12
 
+# TTL (sekundy) pro load_eu_operational/load_eu_operational_open_ended.
+# Zdroj se aktualizuje jen 2x/den (GitHub Actions cron 4:00 a 15:00 UTC,
+# viz .github/workflows/update_gas.yml) — 1h TTL byl zbytečně agresivní,
+# nutil zbytečné cold recompute (~1.4-3.4s naměřeno, viz
+# data/entsog_operational.py) i mezi dvěma cron běhy. 6h dává rozumnou
+# rezervu bez ztráty čerstvosti dat.
+ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS = 6 * 60 * 60
+
 # ── APP.PY DEFAULTNÍ OKNA (date pickery) ─────────────────────────
 # Pojmenované náhrady za dřív natvrdo zapsaná pd.Timedelta(days=N) v
 # app.py — NEZAHRNUJE "rychlý výběr" preset tlačítka (Týden/Měsíc/...),
