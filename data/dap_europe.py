@@ -44,3 +44,26 @@ def load_dap_europe() -> pd.DataFrame:
         return df
     last = df["date"].max()
     return df[df["date"] == last].copy()
+
+
+@st.cache_data(ttl=300)
+def load_dap_europe_all() -> pd.DataFrame:
+    """Jako load_dap_europe(), ale bez oříznutí na poslední den — pro
+    date picker v interaktivním DAP Mapa tabu (app.py::tab_dap_mapa),
+    kde uživatel vybírá den dodávky z celé dostupné historie."""
+    return read_partitioned(DAP_DIR, fmt="parquet")
+
+
+def dap_europe_last_write() -> pd.Timestamp | None:
+    """Kdy byl naposledy zapsán nejnovější (aktuální měsíc) partition
+    soubor — proxy pro "poslední úspěšný běh update_dap_europe()".
+    Nezávisí na obsahu dat (den dodávky), jen na tom, kdy update
+    scheduled běh naposledy soubor skutečně přepsal — pokud běh
+    selže/nic nenajde, upsert_partitioned soubor nepřepíše a mtime
+    zůstane na posledním skutečně úspěšném zápisu."""
+    import glob
+    import os
+    files = sorted(glob.glob(os.path.join(DAP_DIR, "*.parquet")))
+    if not files:
+        return None
+    return pd.Timestamp(os.path.getmtime(files[-1]), unit="s", tz="UTC").tz_convert("Europe/Prague")
