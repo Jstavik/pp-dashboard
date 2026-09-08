@@ -513,3 +513,49 @@ def load_eu_operational_open_ended() -> pd.DataFrame:
 # Dočasný alias — app.py zatím importuje load_cz_operational beze změny,
 # dokud UI (výběr země/bodu pro celou Evropu) není potvrzené a upravené.
 load_cz_operational = load_eu_operational
+
+
+def active_capacity_dedup(df_point: pd.DataFrame, target_dates: list) -> pd.Series:
+    """Denní časová řada pro JEDEN bod+operátor+směr+indikátor (typicky
+    Firm/Interruptible Technical/Available) z OPEN_ENDED_INDICATORS dat.
+
+    KRITICKÉ (ověřeno naživo na VIP Brandov/GASCADE/Firm Technical, viz
+    panel Nominace): tenhle typ indikátoru se v datech objevuje jako
+    NEUSPOŘÁDANÉ PŘEKRÝVAJÍCÍ SE validity segmenty — pro jeden konkrétní
+    den `d` může existovat 5-10 řádků, kde periodFrom_dt <= d <=
+    periodTo_dt současně platí (revize/re-publikace se stejným nebo
+    posunutým oknem). Naivní `.sum()` přes všechny takové řádky pro
+    daný den DEN VÝSLEDEK 5-10× NADHODNOTÍ (ověřený bug, ne teoretický
+    — stejná chyba jako u data/entsog_capacity.py::expand_capacity()).
+
+    Správně: pro každý den `d` ze VŠECH řádků, co ho pokrývají, vzít JEN
+    ten s nejnovějším lastUpdateDateTime (poslední publikovaná revize),
+    ne sumu. Dny bez pokrývajícího řádku se do výsledku vůbec nezahrnou
+    (ne 0) — volající tak může vykreslit čáru, co končí tam, kde končí
+    skutečná data, místo aby spadla na nulu (viz panel Kapacita v
+    app.py::tab_cap, "konec dostupných dat" značka)."""
+    if df_point.empty:
+        return pd.Series(dtype="float64")
+
+    df_point = df_point.copy()
+    df_point["_from"] = pd.to_datetime(df_point["periodFrom_dt"])
+    df_point["_to"] = pd.to_datetime(df_point["periodTo_dt"])
+    df_point["_upd"] = pd.to_datetime(df_point["lastUpdateDateTime"], utc=True)
+    df_point = df_point.sort_values("_upd")
+
+    values = {}
+    for d in target_dates:
+        # periodFrom_dt/periodTo_dt jsou tz-naive (obyčejné kalendářní dny) —
+        # target_dates volající typicky staví z tz-aware "teď" (Europe/Prague),
+        # takže d_ts musí přijít o tz, jinak pandas porovnání tvrdě spadne
+        # (tz-naive vs tz-aware datetime64 nejde srovnat).
+        d_ts = pd.Timestamp(d)
+        if d_ts.tzinfo is not None:
+            d_ts = d_ts.tz_localize(None)
+        mask = (df_point["_from"] <= d_ts) & (df_point["_to"] >= d_ts)
+        cand = df_point.loc[mask]
+        if cand.empty:
+            continue
+        values[d_ts] = cand.iloc[-1]["value_GWh"]  # sorted by _upd asc → last = nejnovější revize
+
+    return pd.Series(values).sort_index()
