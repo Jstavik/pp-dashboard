@@ -17,6 +17,17 @@ def _get_client():
     # což při výpadku ENTSO-E znamená až ~90s čekání na jedno volání
     # (3× 20s timeout + 2× 10s delay). Snížení na 2 drží worst-case
     # na ~50s a appka se rychleji dostane k except/fallbacku.
+    #
+    # DŮLEŽITÁ MEZERA (ověřeno živě 2026-09-09, entsoe-py 0.6.x zdroj
+    # decorators.py::retry): retry_wrapper chytá jen requests.ConnectionError/
+    # gaierror/RemoteDisconnected — NE requests.exceptions.ReadTimeout
+    # (v requests hierarchii Timeout ⊄ ConnectionError). Živý test proti
+    # ENTSO-E s tímhle retry_count=2 na visícím spojení: 1 HTTP request,
+    # 1× 20s read timeout, chyba propaguje OKAMŽITĚ bez jediného retry.
+    # Tenhle parametr tedy zkracuje worst-case jen pro connection-refused/
+    # DNS/remote-disconnect chyby, NE pro read-timeout (dosud pozorovaný
+    # dominantní způsob selhání proti ENTSO-E) — tam žádný retry_count
+    # rozdíl nedělá, jeden hang = jeden timeout.
     return EntsoePandasClient(api_key=ENTSOE_TOKEN, timeout=20, retry_count=2)
 
 
