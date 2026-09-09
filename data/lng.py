@@ -1,8 +1,10 @@
 import requests, os, time
 import pandas as pd
 import streamlit as st
+from datetime import date, timedelta
 
-from data.partitioned_store import read_partitioned, upsert_partitioned
+from data.partitioned_store import read_partitioned, upsert_partitioned, last_date_partitioned
+from config import GIE_ALSI_REVISION_WINDOW_DAYS
 
 ALSI_KEY = "628043ec28b2f2395a95f5adad7ec983"
 LNG_DIR  = "data/history/lng_storage"
@@ -14,9 +16,21 @@ COUNTRIES_ALSI = [
 ]
 
 
-def fetch_lng_all() -> pd.DataFrame:
-    """Stáhne LNG zásobníky ze GIE ALSI API — všechny země + EU."""
+def fetch_lng_all(from_date: date = None, to_date: date = None) -> pd.DataFrame:
+    """Stáhne LNG zásobníky ze GIE ALSI API — všechny země + EU.
+
+    from_date/to_date (volitelné) — ALSI API from/to param PODPORUJE
+    (ověřeno živě 2026-09-09, stejná platforma jako AGSI storage —
+    viz scripts/update_gas_history.py::fetch_gie_all_countries) —
+    starší komentář, že "ALSI API nemá časové okno", byl mylný. Bez
+    zadání (default) stahuje pořád celou historii jako dřív."""
     all_frames = []
+
+    date_param = ""
+    if from_date is not None:
+        date_param += f"&from={from_date}"
+    if to_date is not None:
+        date_param += f"&to={to_date}"
 
     # Per země
     for cc in COUNTRIES_ALSI:
@@ -24,7 +38,7 @@ def fetch_lng_all() -> pd.DataFrame:
             for attempt in range(3):
                 try:
                     r = requests.get(
-                        f"https://alsi.gie.eu/api?country={cc}"
+                        f"https://alsi.gie.eu/api?country={cc}{date_param}"
                         f"&size=300&page={page}",
                         headers={"x-key": ALSI_KEY},
                         timeout=20,
@@ -51,7 +65,7 @@ def fetch_lng_all() -> pd.DataFrame:
         for attempt in range(3):
             try:
                 r = requests.get(
-                    f"https://alsi.gie.eu/api?type=eu"
+                    f"https://alsi.gie.eu/api?type=eu{date_param}"
                     f"&size=300&page={page}",
                     headers={"x-key": ALSI_KEY},
                     timeout=20,
@@ -111,11 +125,23 @@ def fetch_lng_all() -> pd.DataFrame:
 
 def update_lng():
     """LNG terminály — měsíčně partitionované úložiště (viz
-    data/partitioned_store.py). fetch_lng_all() vždy stahuje celou historii
-    (ALSI API nemá časové okno) — upsert_partitioned uzavřené měsíce, co se
-    obsahem nezměnily, nechá netknuté."""
+    data/partitioned_store.py). fetch_lng_all(from_date, to_date) — ALSI
+    API from/to param podporuje (ověřeno živě, viz docstring tam), takže
+    se stahuje jen okno [last_date - GIE_ALSI_REVISION_WINDOW_DAYS,
+    dnešek], ne celá historie znovu při každém běhu (dřívější chování,
+    opraveno 2026-09-09 — starý komentář o "ALSI nemá date param" byl
+    mylný)."""
     os.makedirs("data/history", exist_ok=True)
-    new_data = fetch_lng_all()
+
+    last_date = last_date_partitioned(LNG_DIR, "gasDayStart", "csv")
+    if last_date is not None:
+        from_date = (last_date - timedelta(days=GIE_ALSI_REVISION_WINDOW_DAYS)).date()
+        print(f"LNG ALSI: existující data do {last_date.date()}, stahuji od {from_date}")
+    else:
+        from_date = None
+        print("LNG ALSI: nový soubor, plný backfill")
+
+    new_data = fetch_lng_all(from_date=from_date, to_date=date.today())
     if new_data.empty:
         print("LNG ALSI: žádná data")
         return

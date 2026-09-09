@@ -240,6 +240,14 @@ ENTSOE_OUTAGE_REVISION_WINDOW_DAYS = 14
 GENERATION_CHUNK_DAYS = 30
 GENERATION_CHUNK_RETRIES = 3
 
+# GIE AGSI (storage) + ALSI (LNG) — obě API na stejné platformě, obě
+# ověřeně (živý dotaz, 2026-09-09) podporují from/to date-range param,
+# přestože starší komentář u fetch_gie_all_countries()/fetch_lng_all()
+# tvrdil opak. Okno zpětného stahování — bezpečnostní rezerva pro
+# pozdní revize posledních dní, stejný vzor jako
+# ENTSOE_OUTAGE_REVISION_WINDOW_DAYS.
+GIE_ALSI_REVISION_WINDOW_DAYS = 14
+
 # ── ENTSOG OPERATIONAL (Nominace) — PARAMETRY ────────────────────
 # Default okno (měsíců zpět), co se z entsog_operational konsolidované
 # vrstvy načte do paměti při otevření panelu Nominace — celá historie

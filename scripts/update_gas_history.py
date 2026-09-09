@@ -6,7 +6,6 @@ from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 import os
 import time
-from data.entsog_capacity import update_capacity
 from data.entsog_operational import update_eu_operational
 from data.lng import update_lng
 from data.gassco import update_gassco, update_gassco_umm
@@ -16,6 +15,7 @@ from config import (
     ENTSOE_TOKEN, ENTSOE_OUTAGE_REVISION_WINDOW_DAYS,
     GENERATION_CHUNK_DAYS, GENERATION_CHUNK_RETRIES,
     PSR_CODE_BY_SOURCE_TYPE, COUNTRIES, COUNTRY_TIMEZONES,
+    GIE_ALSI_REVISION_WINDOW_DAYS,
 )
 
 # ENTSO-G aggregateddata API sahá do 2020, dříve není dostupné
@@ -293,10 +293,22 @@ def backfill_entsog_allocation(start: date = None, end: date = None, log_path: s
 
 
 
-def fetch_gie_all_countries() -> pd.DataFrame:
-    """Stáhne GIE historii pro všechny země + EU agregát."""
+def fetch_gie_all_countries(from_date: date = None, to_date: date = None) -> pd.DataFrame:
+    """Stáhne GIE historii pro všechny země + EU agregát.
+
+    from_date/to_date (volitelné) — AGSI API from/to param PODPORUJE
+    (ověřeno živě 2026-09-09: dotaz s from/to vrátil přesně dny v okně,
+    1 stránka místo 18-20 bez okna) — starší komentář, že "AGSI API
+    nemá parametr pro časové okno", byl mylný. Bez zadání (default)
+    stahuje pořád celou historii jako dřív."""
     import time
     all_frames = []
+
+    date_param = ""
+    if from_date is not None:
+        date_param += f"&from={from_date}"
+    if to_date is not None:
+        date_param += f"&to={to_date}"
 
     targets = [(cc, f"country={cc}") for cc in COUNTRIES_GIE]
     targets.append(("EU", "type=eu"))
@@ -305,7 +317,7 @@ def fetch_gie_all_countries() -> pd.DataFrame:
         print(f"  GIE {cc}...")
         frames = []
         for page in range(1, 50):
-            url = f"https://agsi.gie.eu/api?{param}&size=300&page={page}"
+            url = f"https://agsi.gie.eu/api?{param}{date_param}&size=300&page={page}"
             try:
                 resp = requests.get(
                     url,
@@ -364,12 +376,22 @@ def fetch_gie_all_countries() -> pd.DataFrame:
 def update_gie_all():
     """GIE storage všechny země — měsíčně partitionované úložiště.
 
-    fetch_gie_all_countries() bohužel vždy stahuje CELOU historii (GIE AGSI
-    API nemá parametr pro časové okno) — stará uzavřená data se tedy
-    přeposílají znovu při každém běhu. upsert_partitioned ale díky kontrole
-    "obsah beze změny → nepřepisovat" nechá uzavřené měsíce netknuté."""
+    fetch_gie_all_countries(from_date, to_date) — AGSI API from/to param
+    podporuje (ověřeno živě, viz docstring tam), takže se stahuje jen
+    okno [last_date - GIE_ALSI_REVISION_WINDOW_DAYS, dnešek], ne celá
+    historie znovu při každém běhu (dřívější chování, opraveno
+    2026-09-09 — starý komentář o "AGSI nemá date param" byl mylný)."""
     os.makedirs("data/history", exist_ok=True)
-    new_data = fetch_gie_all_countries()
+
+    last_date = last_date_partitioned(GIE_ALL_DIR, "gasDayStart", "csv")
+    if last_date is not None:
+        from_date = (last_date - timedelta(days=GIE_ALSI_REVISION_WINDOW_DAYS)).date()
+        print(f"GIE all: existující data do {last_date.date()}, stahuji od {from_date}")
+    else:
+        from_date = None
+        print("GIE all: nový soubor, plný backfill")
+
+    new_data = fetch_gie_all_countries(from_date=from_date, to_date=date.today())
     if new_data.empty:
         print("GIE all: žádná data")
         return
@@ -668,7 +690,6 @@ if __name__ == "__main__":
         ("ENTSO-G Allocation (všechny země)", update_entsog_allocation),
         ("GIE storage — všechny země",        update_gie_all),
         ("Hydro reservoirs (ENTSO-E 16.1.D)", update_hydro),
-        ("Kapacity ENTSO-G",                  update_capacity),
         ("ENTSOG EU operational (nom/reno/kapacita/interrupce/kvalita)", update_eu_operational),
         ("LNG terminály (GIE ALSI)",          update_lng),
         ("GASSCO nominace",                   update_gassco),
