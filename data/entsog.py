@@ -52,24 +52,43 @@ def fetch_entsog_flows(days: int = 90) -> pd.DataFrame:
     return st.cache_data(ttl=300, show_spinner=False)(_impl)(days)
 
 
-def load_entsog_history() -> pd.DataFrame:
+def load_entsog_history(date_from=None, date_to=None) -> pd.DataFrame:
+    """Fyzické toky ENTSO-G (data/history/entsog_flows/, měsíčně
+    partitionované). date_from/date_to (volitelné) omezí čtení na měsíční
+    soubory v daném rozsahu (viz partitioned_store.read_partitioned) —
+    stejný vzor jako data/entsog_operational.py::load_eu_operational.
+
+    date_from/date_to jsou SKUTEČNÉ argumenty cachované funkce (ne closure
+    proměnné), aby je Streamlit správně zahrnul do cache klíče.
+
+    POZOR: na rozdíl od load_eu_operational (kde okno bez ztráty
+    funkčnosti stačí Nominaci) tenhle dataset krmí i víceleté srovnávací
+    funkce (app.py tab_season, tab_bar tlačítko "Maximum", tab_lng
+    "Roky (sezonnost)" + tlačítko "Max") — ty explicitně potřebují CELOU
+    historii, ne jen okno. Volající v app.py proto volá bez argumentů
+    (plná historie) jen když je to skutečně potřeba (session_state flag
+    nastavený příslušným checkboxem/tlačítkem), jinak s oknovaným
+    date_from (viz ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS)."""
+    return st.cache_data(ttl=300, show_spinner=False)(_load_entsog_history)(date_from, date_to)
+
+
+def _load_entsog_history(date_from=None, date_to=None) -> pd.DataFrame:
     from data.partitioned_store import read_partitioned
-    entsog_flows_dir = "data/history/entsog_flows"
-    def _load():
-        df = read_partitioned(entsog_flows_dir, fmt="parquet")
-        if not df.empty:
-            # entsog_flows teď sdílí úložiště i s Allocation (viz
-            # scripts/update_gas_history.py::update_entsog_allocation) —
-            # BEZ tohohle filtru by se Allocation řádky namíchaly do
-            # fyzických toků a ticho rozbily/zdvojnásobily existující
-            # Mapa/Toky/Sezonnost grafy. "indicator" chybí jen u řádků
-            # zapsaných PŘED migrací (žádné už by neměly zbýt, ale
-            # .isin(["Physical Flow", NaN]) je bezpečná pojistka).
-            if "indicator" in df.columns:
-                df = df[df["indicator"].isin(["Physical Flow"]) | df["indicator"].isna()]
-            df["date"] = pd.to_datetime(df["date"], utc=True)
-            return df
+    df = read_partitioned("data/history/entsog_flows", fmt="parquet", date_from=date_from, date_to=date_to)
+    if not df.empty:
+        # entsog_flows teď sdílí úložiště i s Allocation (viz
+        # scripts/update_gas_history.py::update_entsog_allocation) —
+        # BEZ tohohle filtru by se Allocation řádky namíchaly do
+        # fyzických toků a ticho rozbily/zdvojnásobily existující
+        # Mapa/Toky/Sezonnost grafy. "indicator" chybí jen u řádků
+        # zapsaných PŘED migrací (žádné už by neměly zbýt, ale
+        # .isin(["Physical Flow", NaN]) je bezpečná pojistka).
+        if "indicator" in df.columns:
+            df = df[df["indicator"].isin(["Physical Flow"]) | df["indicator"].isna()]
+        df["date"] = pd.to_datetime(df["date"], utc=True)
+        return df
+    if date_from is None and date_to is None:
         return fetch_entsog_flows(days=90)
-    return st.cache_data(ttl=300, show_spinner=False)(_load)()
+    return df
 
 

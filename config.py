@@ -281,6 +281,16 @@ GIE_ALSI_REVISION_WINDOW_DAYS = 14
 # celou dostupnou historii — viz data/entsog_operational.py::load_eu_operational.
 ENTSOG_NOMINATION_DEFAULT_MONTHS = 12
 
+# Default okno (měsíců zpět) pro load_entsog_history() (fyzické toky,
+# app.py show_gas/show_rep) — stejný důvod jako ENTSOG_NOMINATION_DEFAULT_
+# MONTHS výš (celá historie = ~1.1GB/1.5M řádků, 4-8s cold read, ověřeno
+# naživo 2026-09-09). 13 měsíců bezpečně pokrývá tab_bar's "Rok" (365 dní)
+# quick-select s rezervou. Víceleté funkce (tab_season, tab_bar tlačítko
+# "Maximum", tab_lng "Roky (sezonnost)"/"Max") si o plnou historii řeknou
+# explicitně (checkbox/tlačítko → session_state flag), needitují jí
+# automaticky na každý rerun — viz data/entsog.py::load_entsog_history.
+ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS = 13
+
 # TTL (sekundy) pro load_eu_operational/load_eu_operational_open_ended.
 # Zdroj se aktualizuje jen 2x/den (GitHub Actions cron 4:00 a 15:00 UTC,
 # viz .github/workflows/update_gas.yml) — 1h TTL byl zbytečně agresivní,

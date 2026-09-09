@@ -11,7 +11,7 @@ from config import (
     CSS_STYLES, THRESHOLD,
     C_DEFICIT, C_SURPLUS, C_OK, C_WARN, C_NEW, C_TEXT, C_MUTED,
     sparkline_svg, storage_color, psr_lookup,
-    ENTSOG_NOMINATION_DEFAULT_MONTHS,
+    ENTSOG_NOMINATION_DEFAULT_MONTHS, ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS,
     RESERVES_FALLBACK_RANGE_DAYS, OUTAGES_D7_COMPARISON_DAYS,
     OUTAGES_DELTA_MAX_WINDOW_DAYS, RESERVES_DEFAULT_RANGE_DAYS,
     GAS_FLOWS_DEFAULT_RANGE_DAYS, LNG_DEFAULT_RANGE_DAYS,
@@ -947,8 +947,26 @@ elif show_gas:
         '</div></div>',
         unsafe_allow_html=True,
     )
+    # df_hist (fyzické toky ENTSO-G) krmí Mapu/Toky/Sezonnost/Kapacitu/LNG
+    # najednou (eager st.tabs — všechny podzáložky se počítají na každý
+    # rerun bez ohledu na to, která je vidět). Sezonnost (tab_season) a
+    # tlačítka "Maximum"/"Max" (tab_bar, tab_lng) explicitně potřebují
+    # CELOU historii (multiletý výběr let) — ostatní ne. Defaultně se
+    # proto načte jen okno (ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS), plná
+    # historie se dotáhne jen když ji uživatel skutečně vyžádal
+    # (checkbox/tlačítko níž nastaví jeden z těchhle session_state flagů)
+    # — ne automaticky na každý page load. Naměřeno naživo 2026-09-09:
+    # okno 13 měsíců 0.25-0.3s / plná historie 4-8s.
+    _ENTSOG_FULL_FLAGS = ["gas_seas_full", "gas_bar_full", "gas_lng_full", "gas_lng_full_via_max"]
+    _need_entsog_full = any(st.session_state.get(k, False) for k in _ENTSOG_FULL_FLAGS)
     with st.spinner("Načítám data ENTSO-G..."):
-        df_hist = load_entsog_history()
+        if _need_entsog_full:
+            df_hist = load_entsog_history()
+        else:
+            _entsog_window_from = (
+                pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS)
+            ).normalize()
+            df_hist = load_entsog_history(date_from=_entsog_window_from)
 
     # Status panel plyn
     def _safe_max_date(df, col):
@@ -1123,6 +1141,18 @@ elif show_gas:
                             (max_date - pd.Timedelta(days=GAS_FLOWS_DEFAULT_RANGE_DAYS)).date(),
                             max_date.date(),
                         )
+                    # "Maximum" potřebuje CELOU historii (viz gas_bar_full
+                    # flag u load_entsog_history výš), ale df_hist na TÉHLE
+                    # rerun (kliknutí) je pořád ta stará (oknovaná) verze —
+                    # nastavit skutečné datum minima teď by bylo špatně.
+                    # Místo toho jen nastav flag + sentinel a nech
+                    # st.rerun() proběhnout — na PŘÍŠTÍ rerun je df_hist už
+                    # plná a sentinel se rozřeší níž na skutečné minimum.
+                    if st.session_state.get("gas_dr") == "PENDING_MAX":
+                        st.session_state["gas_dr"] = (
+                            df_hist["date"].dt.tz_convert("Europe/Prague").dt.date.min(),
+                            max_date.date(),
+                        )
                     st.markdown("**Rychlý výběr období:**")
                     qd_cols = st.columns(6)
                     labels  = ["Týden","Měsíc","Kvartál","Půlrok","Rok","Maximum"]
@@ -1135,11 +1165,8 @@ elif show_gas:
                                     max_date.date(),
                                 )
                             else:
-                                st.session_state["gas_dr"] = (
-                                    df_hist["date"].dt.tz_convert("Europe/Prague")
-                                    .dt.date.min(),
-                                    max_date.date(),
-                                )
+                                st.session_state["gas_bar_full"] = True
+                                st.session_state["gas_dr"] = "PENDING_MAX"
                             st.rerun()
                     date_range = st.date_input(
                         "📆 Rozsah (časová osa)",
@@ -1173,6 +1200,14 @@ elif show_gas:
                 )
 
         with tab_season:
+            st.checkbox(
+                "📅 Načíst celou historii (víceleté srovnání) — pomalejší načtení",
+                key="gas_seas_full",
+                help="Bez zaškrtnutí se srovnání omezí na posledních "
+                     f"{ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS} měsíců (rychlé). "
+                     "Zaškrtnutím se na příštím načtení dotáhne celá historie "
+                     "od 2020 (pomalejší, ale umožní srovnání starších let).",
+            )
             if df_hist.empty:
                 st.warning("Data nejsou dostupná.")
             else:
@@ -1731,6 +1766,13 @@ elif show_gas:
                     )
 
         with tab_lng:
+            st.checkbox(
+                "📅 Načíst celou historii toků (víceleté srovnání sezonnosti) — pomalejší načtení",
+                key="gas_lng_full",
+                help="Bez zaškrtnutí se 'Roky (sezonnost)' níž a tlačítko "
+                     f"'Max' omezí na posledních {ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS} "
+                     "měsíců (rychlé). Netýká se zásob ALSI níž (ty jsou vždy celé).",
+            )
             df_lng_alsi = load_lng()
 
             df_lng_flows = df_hist[
@@ -1781,6 +1823,15 @@ elif show_gas:
                          pd.Timedelta(days=LNG_DEFAULT_RANGE_DAYS)).date(),
                         max_date_lng,
                     )
+                # "Max" potřebuje CELOU historii toků — stejný odložený
+                # sentinel vzor jako tab_bar's "Maximum" výš (df_lng_flows
+                # na TÉHLE rerun je pořád oknovaná, skutečné minimum se
+                # dopočítá až na příští rerun, kdy je df_hist už plná).
+                if st.session_state.get("lng_dr") == "PENDING_MAX":
+                    st.session_state["lng_dr"] = (
+                        df_lng_flows["date"].dt.tz_convert("Europe/Prague").dt.date.min(),
+                        max_date_lng,
+                    )
                 qd_cols_lng = st.columns(5)
                 for i, (lbl, delta) in enumerate(zip(
                     ["Týden", "Měsíc", "3M", "Rok", "Max"],
@@ -1794,12 +1845,14 @@ elif show_gas:
                                 max_date_lng,
                             )
                         else:
-                            st.session_state["lng_dr"] = (
-                                df_lng_flows["date"]
-                                .dt.tz_convert("Europe/Prague")
-                                .dt.date.min(),
-                                max_date_lng,
-                            )
+                            # NE "gas_lng_full" (to je klíč checkboxu výš —
+                            # widget s tímhle klíčem se v tomhle běhu skriptu
+                            # už vykreslil, Streamlit by na přepsání jeho
+                            # session_state za během shodil
+                            # StreamlitAPIException). Samostatný flag,
+                            # sloučený s checkboxem až v _ENTSOG_FULL_FLAGS.
+                            st.session_state["gas_lng_full_via_max"] = True
+                            st.session_state["lng_dr"] = "PENDING_MAX"
                         st.rerun()
 
                 date_range_lng = st.date_input(
@@ -2127,7 +2180,12 @@ elif show_gas:
             )
 
 elif show_rep:
-    df_hist = load_entsog_history()
+    # Report jen mapuje (fig_gas_map = poslední 2 celé dny) — žádná
+    # víceletá funkce jako na Plyn stránce, oknovaný default vždy stačí.
+    _entsog_window_from = (
+        pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS)
+    ).normalize()
+    df_hist = load_entsog_history(date_from=_entsog_window_from)
     st.markdown("### 📋 Ranní report — přehledy")
     st.caption("Každá záložka = jedna stránka A4 na výšku. "
                "Použijte tlačítko ke stažení nebo zkopírování.")
