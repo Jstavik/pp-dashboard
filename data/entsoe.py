@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 from entsoe import EntsoePandasClient
 
-from config import ENTSOE_TOKEN
+from config import ENTSOE_TOKEN, ENTSOE_REQUEST_TIMEOUT_S
 
 
 @st.cache_resource
@@ -28,7 +28,7 @@ def _get_client():
     # DNS/remote-disconnect chyby, NE pro read-timeout (dosud pozorovaný
     # dominantní způsob selhání proti ENTSO-E) — tam žádný retry_count
     # rozdíl nedělá, jeden hang = jeden timeout.
-    return EntsoePandasClient(api_key=ENTSOE_TOKEN, timeout=20, retry_count=2)
+    return EntsoePandasClient(api_key=ENTSOE_TOKEN, timeout=ENTSOE_REQUEST_TIMEOUT_S, retry_count=2)
 
 
 client = _get_client()

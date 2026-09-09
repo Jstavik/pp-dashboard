@@ -13,6 +13,8 @@ from data.dap_europe import DAP_COUNTRIES
 from data.partitioned_store import upsert_partitioned, last_date_partitioned, write_daily_snapshot
 from config import (
     ENTSOE_TOKEN, ENTSOE_OUTAGE_REVISION_WINDOW_DAYS,
+    ENTSOE_OUTAGE_FORWARD_WINDOW_DAYS, ENTSOE_OUTAGE_FETCH_RETRIES,
+    ENTSOE_REQUEST_TIMEOUT_S,
     GENERATION_CHUNK_DAYS, GENERATION_CHUNK_RETRIES,
     PSR_CODE_BY_SOURCE_TYPE, COUNTRIES, COUNTRY_TIMEZONES,
     GIE_ALSI_REVISION_WINDOW_DAYS,
@@ -616,23 +618,50 @@ def update_generation(country: str):
 def update_outages(country: str):
     """Odstávky pro danou zemi (ENTSO-E unavailability) — BEZ filtru na
     plant_type, všechny typy zdrojů. Rolling window
-    [now - ENTSOE_OUTAGE_REVISION_WINDOW_DAYS, next_year_end], merge do
-    JEDNOHO sdíleného data/history/outages.parquet (víc zemí ve stejném
-    souboru — na rozdíl od per-country partitioningu u výroby, odstávky
-    se revidují, denní/country split nedává smysl)."""
+    [now - ENTSOE_OUTAGE_REVISION_WINDOW_DAYS, now + ENTSOE_OUTAGE_FORWARD_WINDOW_DAYS],
+    merge do JEDNOHO sdíleného data/history/outages.parquet (víc zemí ve
+    stejném souboru — na rozdíl od per-country partitioningu u výroby,
+    odstávky se revidují, denní/country split nedává smysl).
+
+    Okno dřív sahalo "do konce příštího roku" (~490 dní dopředu) — živě
+    ověřeno 2026-09-09, že nad 365 dní entsoe-py (@year_limited dekorátor)
+    dotaz tiše rozdělí na 2 samostatné roční requesty, každý navíc s
+    vlastní @documents_limited(200) offset-paginací, tj. zbytečně
+    zdvojnásobený počet requestů/šance na timeout. ENTSOE_OUTAGE_FORWARD_
+    WINDOW_DAYS je zvoleno tak, aby REVISION+FORWARD zůstalo pod 365 dny
+    (viz config.py komentář) — jeden rok-blok místo dvou.
+
+    ENTSOE_OUTAGE_FETCH_RETRIES — na rozdíl od update_generation() tahle
+    funkce dřív neměla ŽÁDNÝ vlastní retry: jeden padlý sub-request (síťová
+    chyba i ReadTimeout, který sdílený entsoe-py @retry nechytá, viz
+    data/entsoe.py) shodil rovnou celou zemi bez druhého pokusu."""
     from entsoe import EntsoePandasClient
     import pandas as pd, os
     PATH = "data/history/outages.parquet"
-    client = EntsoePandasClient(api_key=ENTSOE_TOKEN)
+    client = EntsoePandasClient(api_key=ENTSOE_TOKEN, timeout=ENTSOE_REQUEST_TIMEOUT_S)
     tz = COUNTRY_TIMEZONES[country]
 
     now = pd.Timestamp.now(tz=tz)
     fetch_start = now - pd.Timedelta(days=ENTSOE_OUTAGE_REVISION_WINDOW_DAYS)
-    next_year_end = pd.Timestamp(year=now.year + 1, month=12, day=31, tz=tz)
+    fetch_end = now + pd.Timedelta(days=ENTSOE_OUTAGE_FORWARD_WINDOW_DAYS)
 
-    df_out = client.query_unavailability_of_generation_units(
-        country, start=fetch_start, end=next_year_end, docstatus=None
-    ).copy()
+    df_out = None
+    last_err = None
+    for attempt in range(1, ENTSOE_OUTAGE_FETCH_RETRIES + 1):
+        try:
+            df_out = client.query_unavailability_of_generation_units(
+                country, start=fetch_start, end=fetch_end, docstatus=None
+            ).copy()
+            break
+        except Exception as e:
+            last_err = e
+            print(f"  Outages {country}: pokus {attempt}/{ENTSOE_OUTAGE_FETCH_RETRIES} "
+                  f"selhal — {str(e)[:80]}")
+            if attempt < ENTSOE_OUTAGE_FETCH_RETRIES:
+                time.sleep(5)
+    if df_out is None:
+        print(f"  Outages {country}: všechny pokusy selhaly — {last_err}")
+        return
     df_out["nominal_power"] = pd.to_numeric(df_out["nominal_power"], errors="coerce").fillna(0)
     df_out["avail_qty"] = pd.to_numeric(df_out["avail_qty"], errors="coerce").fillna(0)
 
@@ -650,12 +679,24 @@ def update_outages(country: str):
     latest = latest[cols].reset_index(drop=True)
 
     fetch_start_utc = fetch_start.tz_convert("UTC")
+    fetch_end_utc   = fetch_end.tz_convert("UTC")
 
     if os.path.exists(PATH):
         existing = pd.read_parquet(PATH)
         # zamrzlé: záznamy jiných zemí (netýká se tohohle běhu) + záznamy
-        # téhle země mimo stahované okno (odstávka skončila dřív)
-        frozen = existing[(existing["country"] != country) | (existing["end"] < fetch_start_utc)]
+        # téhle země MIMO stahované okno — buď už skončily dřív (end <
+        # fetch_start), NEBO začínají až za novým (užším)
+        # ENTSOE_OUTAGE_FORWARD_WINDOW_DAYS obzorem (start > fetch_end).
+        # Druhá podmínka je NOVÁ (dřív fetch_end sahal ~490 dní dopředu,
+        # tak široko, že žádný existující záznam prakticky nikdy nezačínal
+        # za ním) — bez ní by se plánovaná odstávka ohlášená daleko dopředu
+        # při zúžení okna na dalším běhu tiše ztratila (spadla by mimo
+        # "frozen" i mimo čerstvý "latest" fetch, který ji teď taky nevidí).
+        frozen = existing[
+            (existing["country"] != country)
+            | (existing["end"] < fetch_start_utc)
+            | (existing["start"] > fetch_end_utc)
+        ]
     else:
         frozen = latest.iloc[0:0]
     combined = pd.concat([frozen, latest], ignore_index=True)
@@ -673,7 +714,7 @@ def update_outages(country: str):
     combined = combined.sort_values(["country", "production_resource_name", "start"]).reset_index(drop=True)
     combined.to_parquet(PATH, index=False)
     n_frozen_country = int((frozen["country"] == country).sum()) if not frozen.empty else 0
-    print(f"Outages {country}: {len(latest)} z API (okno {fetch_start.date()}→{next_year_end.date()}) "
+    print(f"Outages {country}: {len(latest)} z API (okno {fetch_start.date()}→{fetch_end.date()}) "
           f"+ {n_frozen_country} beze změny z {country} + {len(frozen) - n_frozen_country} ostatní země "
           f"→ {len(combined)} celkem → {PATH}")
 

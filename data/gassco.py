@@ -340,8 +340,16 @@ def list_available_umm_snapshot_dates() -> list:
     return dates
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_realtime_nominations() -> pd.DataFrame:
-    """Aktuální nominace z realTimeAtom.xml — bez session."""
+    """Aktuální nominace z realTimeAtom.xml — bez session.
+
+    Živé volání na umm.gassco.no (jiný host než ENTSO-E/ENTSO-G, mimo
+    scope commitu c7bd4551) — @st.cache_data(ttl=300) přidáno 2026-09-09,
+    ať tenhle GET nejede znovu na každý rerun Plyn/Report stránky (dřív
+    byl cachovaný jen nepřímo přes obalující load_gassco()'s vlastní
+    cache — funkční, ale ne samostatně odolné, pokud by tuhle funkci
+    někdy volal jiný kód mimo load_gassco())."""
     import xml.etree.ElementTree as ET
     try:
         resp = requests.get(

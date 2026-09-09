@@ -234,6 +234,31 @@ C_YEAR_SEASONALITY_ALT = "#6A1B9A"
 # Sdílené napříč všemi zeměmi.
 ENTSOE_OUTAGE_REVISION_WINDOW_DAYS = 14
 
+# Okno dopředného stahování plánovaných odstávek (výhled). Zvoleno tak, aby
+# ENTSOE_OUTAGE_REVISION_WINDOW_DAYS + tohle zůstalo POD 365 dny — entsoe-py
+# (@year_limited dekorátor na query_unavailability_of_generation_units)
+# nad rok automaticky rozdělí dotaz na 2+ samostatné roční bloky, každý
+# navíc prochází vlastní @documents_limited(200) offset-paginací (živě
+# ověřeno 2026-09-09: první sub-request u starého next_year_end okna měl
+# periodStart=202608261600/periodEnd=202708261600, přesně první rok).
+# Dřívější "do konce příštího roku" okno (~490 dní) tak generovalo 2x víc
+# requestů než nutné. 270 dní zachovává dlouhý výhled (většina plánovaných
+# odstávek se ohlašuje měsíce dopředu, ne přes rok), 14+270=284 dní < 365.
+ENTSOE_OUTAGE_FORWARD_WINDOW_DAYS = 270
+
+# Počet pokusů o update_outages(country) fetch při chybě (síťová chyba i
+# ReadTimeout — entsoe-py @retry dekorátor na sdíleném klientovi chytá jen
+# ConnectionError/DNS/RemoteDisconnected, NE ReadTimeout, viz data/entsoe.py
+# — bez vlastního retry tu jeden padlý sub-request shodí celou zemi bez
+# druhého pokusu, na rozdíl od update_generation (GENERATION_CHUNK_RETRIES).
+ENTSOE_OUTAGE_FETCH_RETRIES = 2
+
+# Timeout (s) pro EntsoePandasClient — sdíleno mezi appkou (data/entsoe.py)
+# a scheduled update skriptem (scripts/update_gas_history.py), ať žádný
+# request nečeká na odpověď neomezeně dlouho (Python requests default =
+# None = čekej navždy).
+ENTSOE_REQUEST_TIMEOUT_S = 20
+
 # Chunkování backfillu query_generation(country, ...) — ENTSO-E vrací
 # 503/504 na širokých rozsazích, proto se stahuje po menších oknech
 # s retry — viz scripts/update_gas_history.py::update_generation
