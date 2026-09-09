@@ -13,7 +13,11 @@ def _get_client():
     # EntsoePandasClient/EntsoeRawClient timeout param podporuje přímo
     # (předává se beze změny do requests.get, ověřeno ve zdroji knihovny)
     # — 20s konzistentní s timeouty používanými jinde v projektu.
-    return EntsoePandasClient(api_key=ENTSOE_TOKEN, timeout=20)
+    # retry_count — knihovna defaultuje na 3 pokusy × 10s retry_delay,
+    # což při výpadku ENTSO-E znamená až ~90s čekání na jedno volání
+    # (3× 20s timeout + 2× 10s delay). Snížení na 2 drží worst-case
+    # na ~50s a appka se rychleji dostane k except/fallbacku.
+    return EntsoePandasClient(api_key=ENTSOE_TOKEN, timeout=20, retry_count=2)
 
 
 client = _get_client()
