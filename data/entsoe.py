@@ -7,7 +7,13 @@ from config import ENTSOE_TOKEN
 
 @st.cache_resource
 def _get_client():
-    return EntsoePandasClient(api_key=ENTSOE_TOKEN)
+    # timeout — bez tohohle requests čeká na odpověď neomezeně dlouho
+    # (Python requests default = None = žádný timeout), takže try/except
+    # kolem volání nikdy nezachytí viset spojení, jen skutečnou chybu.
+    # EntsoePandasClient/EntsoeRawClient timeout param podporuje přímo
+    # (předává se beze změny do requests.get, ověřeno ve zdroji knihovny)
+    # — 20s konzistentní s timeouty používanými jinde v projektu.
+    return EntsoePandasClient(api_key=ENTSOE_TOKEN, timeout=20)
 
 
 client = _get_client()

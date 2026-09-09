@@ -223,31 +223,36 @@ if auto_refresh:
     )
 
 # ── NAČTENÍ DAT ──────────────────────────────────────────────────
-with st.spinner("Načítám data z ENTSO-E…"):
-    try:
-        imbal_raw, gen_raw, load_actual, load_fc, out_raw, now = fetch_entsoe_data()
-    except Exception as e:
-        st.warning(f"⚠️ ENTSO-E dočasně nedostupné ({type(e).__name__}): {e}")
-        now         = pd.Timestamp.now(tz="Europe/Prague")
-        imbal_raw   = pd.DataFrame(columns=["odchylka_MWh", "price_Short", "price_Long"])
-        gen_raw     = pd.DataFrame()
-        load_actual = pd.Series(dtype="float64", name="actual_MW")
-        load_fc     = pd.Series(dtype="float64", name="forecast_MW")
-        out_raw     = pd.DataFrame()
+# fetch_entsoe_data() (CZ odchylka/generace/zatížení/odstávky) patří jen
+# stránkám Elektřina a ČEPS odstávky (ta čte df_out/now/changes/n_pu/n_gu
+# z týchž dat) — NIKDY se nevolá pro Plyn/Report, ať appka na těch
+# stránkách nečeká na ENTSO-E, i kdyby úplně nereagovalo. Dřív se volalo
+# nepodmíněně před celým if/elif page-splitem — appku to na Plyn/Report
+# tvrdě blokovalo na ENTSO-E timeoutu (ověřeno naživo 2026-09-09).
+if show_ee or show_out:
+    with st.spinner("Načítám data z ENTSO-E…"):
+        try:
+            imbal_raw, gen_raw, load_actual, load_fc, out_raw, now = fetch_entsoe_data()
+        except Exception as e:
+            st.warning(f"⚠️ ENTSO-E dočasně nedostupné ({type(e).__name__}): {e}")
+            now         = pd.Timestamp.now(tz="Europe/Prague")
+            imbal_raw   = pd.DataFrame(columns=["odchylka_MWh", "price_Short", "price_Long"])
+            gen_raw     = pd.DataFrame()
+            load_actual = pd.Series(dtype="float64", name="actual_MW")
+            load_fc     = pd.Series(dtype="float64", name="forecast_MW")
+            out_raw     = pd.DataFrame()
 
-df_imbal = parse_imbalance(imbal_raw)
-df_out   = parse_outages(out_raw)
-changes  = detect_changes(st.session_state.df_out_prev, df_out)
-st.session_state.df_out_prev = df_out.copy() if not df_out.empty else None
+    df_imbal = parse_imbalance(imbal_raw)
+    df_out   = parse_outages(out_raw)
+    changes  = detect_changes(st.session_state.df_out_prev, df_out)
+    st.session_state.df_out_prev = df_out.copy() if not df_out.empty else None
 
+    last_imbal = float(df_imbal["odchylka_MWh"].iloc[-1]) if not df_imbal.empty else 0.0
+    ceps_d = None
 
-last_imbal = float(df_imbal["odchylka_MWh"].iloc[-1]) if not df_imbal.empty else 0.0
-ceps_d = None
-
-# fallbacky pro případ show_gas=True nebo ENTSO-E 503
-n_pu  = int((df_out["unit_level"] == "PU").sum()) if not df_out.empty else 0
-n_gu  = int((df_out["unit_level"] == "GU").sum()) if not df_out.empty else 0
-n_new = len(changes["new"])
+    n_pu  = int((df_out["unit_level"] == "PU").sum()) if not df_out.empty else 0
+    n_gu  = int((df_out["unit_level"] == "GU").sum()) if not df_out.empty else 0
+    n_new = len(changes["new"])
 
 if show_ee:
     with st.spinner("Načítám data rezerv…"):
