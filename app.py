@@ -993,8 +993,8 @@ elif show_gas:
     )
     _df_hydro_tmp  = load_hydro()
     _last_hydro    = _safe_max_date(_df_hydro_tmp, "date")
-    _df_gassco_tmp = load_gassco()
-    _last_gassco   = _safe_max_date(_df_gassco_tmp, "date")
+    df_gassco      = load_gassco()
+    _last_gassco   = _safe_max_date(df_gassco, "date")
     data_status_row([
         {"name": "ENTSO-G",
          "date": _last_entsog,
@@ -1033,7 +1033,7 @@ elif show_gas:
                 st.warning("Data nejsou dostupná.")
             else:
                 st.plotly_chart(
-                    fig_gas_map(df_hist, df_gassco=load_gassco()),
+                    fig_gas_map(df_hist, df_gassco=df_gassco),
                     use_container_width=True,
                     config={"displayModeBar": True, "scrollZoom": True},
                 )
@@ -1966,21 +1966,21 @@ elif show_gas:
                 )
 
         with tab_gassco:
-            df_gassco = load_gassco()
+            df_gassco_tab = df_gassco.copy()
 
-            if df_gassco.empty:
+            if df_gassco_tab.empty:
                 st.warning(
                     "GASSCO data nejsou dostupná. "
                     "Spusť GitHub Actions: Update gas history."
                 )
             else:
-                df_gassco["date"] = pd.to_datetime(df_gassco["date"], utc=True)
-                all_points_g = sorted(df_gassco["point"].unique().tolist())
-                all_years_g  = sorted(df_gassco["date"].dt.year.unique().tolist())
-                max_date_g   = df_gassco["date"].max()
+                df_gassco_tab["date"] = pd.to_datetime(df_gassco_tab["date"], utc=True)
+                all_points_g = sorted(df_gassco_tab["point"].unique().tolist())
+                all_years_g  = sorted(df_gassco_tab["date"].dt.year.unique().tolist())
+                max_date_g   = df_gassco_tab["date"].max()
 
                 st.plotly_chart(
-                    fig_gassco_kpi(df_gassco),
+                    fig_gassco_kpi(df_gassco_tab),
                     use_container_width=True,
                 )
 
@@ -2014,7 +2014,7 @@ elif show_gas:
                                 )
                             else:
                                 st.session_state["gassco_dr"] = (
-                                    df_gassco["date"].min().date(),
+                                    df_gassco_tab["date"].min().date(),
                                     max_date_g.date(),
                                 )
                             st.rerun()
@@ -2036,7 +2036,7 @@ elif show_gas:
                     ts_to   = max_date_g
 
                 st.plotly_chart(
-                    fig_gassco_timeseries(df_gassco, sel_points_g, ts_from, ts_to),
+                    fig_gassco_timeseries(df_gassco_tab, sel_points_g, ts_from, ts_to),
                     use_container_width=True,
                 )
 
@@ -2060,7 +2060,7 @@ elif show_gas:
                     )
 
                 st.plotly_chart(
-                    fig_gassco_seasonality(df_gassco, sel_pts_season, sel_years_g),
+                    fig_gassco_seasonality(df_gassco_tab, sel_pts_season, sel_years_g),
                     use_container_width=True,
                 )
 
@@ -2184,6 +2184,7 @@ elif show_rep:
         pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS)
     ).normalize()
     df_hist = load_entsog_history(date_from=_entsog_window_from)
+    df_g = load_gassco()
     st.markdown("### 📋 Ranní report — přehledy")
     st.caption("Každá záložka = jedna stránka A4 na výšku. "
                "Použijte tlačítko ke stažení nebo zkopírování.")
@@ -2203,7 +2204,7 @@ elif show_rep:
             with st.spinner("Načítám data..."):
                 fig_map_rep = fig_gas_map(
                     df_hist,
-                    df_gassco=load_gassco(),
+                    df_gassco=df_g,
                 )
                 fig_map_rep.update_layout(
                     height=1050,
@@ -2241,8 +2242,6 @@ elif show_rep:
     # ── GASSCO ──────────────────────────────────────────
     with rep_gassco:
         st.markdown("#### GASSCO — Norský export plynu")
-
-        df_g = load_gassco()
 
         if df_g.empty:
             st.warning("Data nejsou k dispozici.")
