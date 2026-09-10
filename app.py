@@ -28,7 +28,7 @@ from data.ceps import (
 from data.deltagreen import fetch_deltagreen
 from data.entsog import load_entsog_history, _short_name
 from data.gie import load_gie_all, VARIABLES
-from data.hydro import load_hydro, HYDRO_COUNTRY_NAMES
+from data.hydro import load_hydro
 from data.entsog_operational import (
     load_cz_operational, load_eu_operational_open_ended, EU_COUNTRY_NAMES,
     HISTORY_START, NOMINATION_CHART_INDICATORS, QUALITY_INDICATORS,
@@ -39,7 +39,6 @@ from charts.gas import (
     fig_flow_timeseries, fig_flow_seasonality,
 )
 from charts.storage import fig_storage_main, fig_storage_grid
-from charts.hydro import fig_hydro_main, fig_hydro_grid
 from charts.capacity import fig_flow_stacked, fig_point_capacity
 from charts.entsog_operational import fig_cz_operational
 from data.lng import load_lng
@@ -86,6 +85,7 @@ from data.generation import load_generation, available_source_types
 from data.outages import load_outages, load_outages_snapshot, list_available_snapshot_dates
 from charts.electricity_generation import fig_generation_stacked, fig_generation_ytd, fig_seasonality
 from charts.electricity_outages import fig_outages_table, fig_outlook, fig_outages_delta
+from views.hydro import render_hydro_tab
 
 def data_status_row(sources: list) -> None:
     """Zobrazí řádek se stavem datových zdrojů."""
@@ -767,60 +767,9 @@ if show_ee:
 
 
     # ──────────── TAB HYDRO: VODNÍ ZÁSOBNÍKY ─────────────────────────
+    df_hydro = load_hydro()
     with tab_hydro:
-        df_hydro = load_hydro()
-
-        if df_hydro.empty:
-            st.warning(
-                "Hydro data nejsou dostupná. "
-                "Spusť GitHub Actions: Update gas history."
-            )
-        else:
-            all_countries_h = sorted(df_hydro["country"].unique().tolist())
-            all_years_h     = sorted(df_hydro["date"].dt.year.unique().tolist())
-
-            # ── Hlavní graf ──────────────────────────────────────
-            st.markdown("#### Hlavní graf")
-            col1, col2 = st.columns(2)
-            with col1:
-                sel_country_h = st.selectbox(
-                    "Země",
-                    options=all_countries_h,
-                    format_func=lambda c: HYDRO_COUNTRY_NAMES.get(c, c),
-                    index=all_countries_h.index("NO")
-                          if "NO" in all_countries_h else 0,
-                    key="hydro_country",
-                )
-            with col2:
-                sel_years_h = st.multiselect(
-                    "Roky",
-                    options=all_years_h,
-                    default=all_years_h[-6:],
-                    key="hydro_years_main",
-                )
-
-            if sel_years_h:
-                st.plotly_chart(
-                    fig_hydro_main(df_hydro, sel_country_h, sel_years_h),
-                    use_container_width=True,
-                )
-
-            st.markdown("---")
-
-            # ── Grid 3×2 ─────────────────────────────────────────
-            st.markdown("#### Přehled klíčových zemí")
-            sel_years_hg = st.multiselect(
-                "Roky (grid)",
-                options=all_years_h,
-                default=all_years_h[-6:],
-                key="hydro_years_grid",
-            )
-
-            if sel_years_hg:
-                st.plotly_chart(
-                    fig_hydro_grid(df_hydro, sel_years_hg),
-                    use_container_width=True,
-                )
+        render_hydro_tab(df_hydro)
 
     # ──────────── TAB 5: DELTA GREEN ─────────────────────────────────
     with tab_dg:
