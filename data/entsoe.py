@@ -44,58 +44,111 @@ def fetch_entsoe_data():
     end_load   = start_day + pd.Timedelta(days=2)
     end_out    = start_day + pd.Timedelta(days=7)
 
-    vol   = client.query_imbalance_volumes("CZ", start=start_day, end=end_imbal)
-    imbal = (vol.rename("odchylka_MWh").to_frame()
-             if isinstance(vol, pd.Series)
-             else vol.select_dtypes("number").sum(axis=1).rename("odchylka_MWh").to_frame())
-    try:
-        pri = client.query_imbalance_prices("CZ", start=start_day, end=end_imbal)
-        imbal["price_Short"] = pri["Short"]
-        imbal["price_Long"]  = pri["Long"]
-    except Exception:
-        imbal["price_Short"] = float("nan")
-        imbal["price_Long"]  = float("nan")
+    # ── FETCH fáze — 7 nezávislých zdrojů paralelně přes ThreadPoolExecutor
+    # (I/O-bound HTTP, GIL nevadí). vol nemá try/except stejně jako dřív —
+    # selže-li, výjimka propaguje ven z fetch_entsoe_data() přesně jako
+    # v sekvenční verzi (volající v app.py to obaluje vlastním try/except).
+    # Ostatní 4 fetch helpery si drží try/except přesně jak je měly dřív
+    # (fetch call + triviální reshape typu iloc/rename, co bez úspěšného
+    # fetche nedává smysl volat zvlášť). PROCESSING fáze níž pak dělá jen
+    # levý merge/reshape, co na I/O nezávisí.
+    def _fetch_price():
+        try:
+            return client.query_imbalance_prices("CZ", start=start_day, end=end_imbal)
+        except Exception:
+            return None
 
-    try:
-        gen = client.query_generation("CZ", start=start_day, end=end_imbal, psr_type=None)
-        if isinstance(gen.columns, pd.MultiIndex):
-            lvls = gen.columns.get_level_values(1)
-            gen_actual = (gen.xs("Actual Aggregated", level=1, axis=1)
-                          if "Actual Aggregated" in lvls
-                          else gen.xs(lvls[0], level=1, axis=1))
-        else:
-            gen_actual = gen
-    except Exception:
-        gen_actual = pd.DataFrame()
+    def _fetch_gen():
+        try:
+            return client.query_generation("CZ", start=start_day, end=end_imbal, psr_type=None)
+        except Exception:
+            return None
 
-    try:
-        load_actual = client.query_load("CZ", start=start_day, end=end_load)
-        if isinstance(load_actual, pd.DataFrame):
-            load_actual = load_actual.iloc[:, 0]
-        load_actual = load_actual.rename("actual_MW")
-    except Exception:
-        load_actual = pd.Series(dtype="float64", name="actual_MW")
-    try:
-        load_fc = client.query_load_forecast("CZ", start=start_day, end=end_load)
-        if isinstance(load_fc, pd.DataFrame):
-            load_fc = load_fc.iloc[:, 0]
-        load_fc = load_fc.rename("forecast_MW")
-    except Exception:
-        load_fc = pd.Series(dtype="float64", name="forecast_MW")
+    def _fetch_load_actual():
+        try:
+            load_actual = client.query_load("CZ", start=start_day, end=end_load)
+            if isinstance(load_actual, pd.DataFrame):
+                load_actual = load_actual.iloc[:, 0]
+            return load_actual.rename("actual_MW")
+        except Exception:
+            return pd.Series(dtype="float64", name="actual_MW")
 
-    out_frames = []
-    for level, fn in [
-        ("PU", client.query_unavailability_of_production_units),
-        ("GU", client.query_unavailability_of_generation_units),
-    ]:
+    def _fetch_load_fc():
+        try:
+            load_fc = client.query_load_forecast("CZ", start=start_day, end=end_load)
+            if isinstance(load_fc, pd.DataFrame):
+                load_fc = load_fc.iloc[:, 0]
+            return load_fc.rename("forecast_MW")
+        except Exception:
+            return pd.Series(dtype="float64", name="forecast_MW")
+
+    def _fetch_unavail(level, fn):
         try:
             raw = fn("CZ", start=start_day, end=end_out)
             if raw is not None and not raw.empty:
                 raw = raw.copy()
                 raw["unit_level"] = level
-                out_frames.append(raw)
+                return raw
         except Exception:
             pass
+        return None
+
+    # Bez "with" — na explicitní vol.result() výjimku (stejně nechráněnou
+    # jako dřív) chceme propagovat hned, ne čekat, až executor.shutdown()
+    # v __exit__ dokyne i zbylé (třeba viset na timeoutu) vlákna, jejichž
+    # výsledek stejně zahodíme. shutdown(wait=False) v finally nezabíjí
+    # běžící vlákna, jen je nečeká — dokončí se na pozadí sama.
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=7)
+    try:
+        fut_vol         = executor.submit(client.query_imbalance_volumes, "CZ", start=start_day, end=end_imbal)
+        fut_price       = executor.submit(_fetch_price)
+        fut_gen         = executor.submit(_fetch_gen)
+        fut_load_actual = executor.submit(_fetch_load_actual)
+        fut_load_fc     = executor.submit(_fetch_load_fc)
+        fut_pu          = executor.submit(_fetch_unavail, "PU", client.query_unavailability_of_production_units)
+        fut_gu          = executor.submit(_fetch_unavail, "GU", client.query_unavailability_of_generation_units)
+
+        vol         = fut_vol.result()
+        pri         = fut_price.result()
+        gen         = fut_gen.result()
+        load_actual = fut_load_actual.result()
+        load_fc     = fut_load_fc.result()
+        pu_raw      = fut_pu.result()
+        gu_raw      = fut_gu.result()
+    finally:
+        executor.shutdown(wait=False)
+
+    # ── PROCESSING fáze — sekvenčně, žádné I/O ─────────────────────────
+    imbal = (vol.rename("odchylka_MWh").to_frame()
+             if isinstance(vol, pd.Series)
+             else vol.select_dtypes("number").sum(axis=1).rename("odchylka_MWh").to_frame())
+
+    if pri is not None:
+        try:
+            imbal["price_Short"] = pri["Short"]
+            imbal["price_Long"]  = pri["Long"]
+        except Exception:
+            imbal["price_Short"] = float("nan")
+            imbal["price_Long"]  = float("nan")
+    else:
+        imbal["price_Short"] = float("nan")
+        imbal["price_Long"]  = float("nan")
+
+    if gen is not None:
+        try:
+            if isinstance(gen.columns, pd.MultiIndex):
+                lvls = gen.columns.get_level_values(1)
+                gen_actual = (gen.xs("Actual Aggregated", level=1, axis=1)
+                              if "Actual Aggregated" in lvls
+                              else gen.xs(lvls[0], level=1, axis=1))
+            else:
+                gen_actual = gen
+        except Exception:
+            gen_actual = pd.DataFrame()
+    else:
+        gen_actual = pd.DataFrame()
+
+    out_frames = [f for f in (pu_raw, gu_raw) if f is not None]
     raw_out = pd.concat(out_frames, ignore_index=True) if out_frames else pd.DataFrame()
 
     return imbal, gen_actual, load_actual, load_fc, raw_out, now
