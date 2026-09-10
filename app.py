@@ -19,7 +19,6 @@ from config import (
 from data.entsoe import (
     fetch_entsoe_data, fetch_dap, fetch_installed_capacity, fetch_reserves,
 )
-from data.ceps import fetch_ceps_all
 from data.deltagreen import fetch_deltagreen
 from data.entsog import load_entsog_history, _short_name
 from data.gie import load_gie_all
@@ -38,7 +37,7 @@ from charts.capacity import fig_flow_stacked, fig_point_capacity
 from charts.entsog_operational import fig_cz_operational
 from data.gassco import load_gassco
 from charts.gassco import fig_gassco_kpi, fig_gassco_timeseries, fig_gassco_seasonality
-from charts.imbalance import parse_imbalance, fig_ceps_dashboard
+from charts.imbalance import parse_imbalance
 from charts.generation import fig_deltagreen
 from charts.outages import (
     parse_outages, detect_changes,
@@ -60,6 +59,7 @@ from views.storage import render_storage_tab
 from views.lng import render_lng_tab
 from views.gassco import render_gassco_tab
 from views.electricity_dashboard import render_dashboard_tab
+from views.ceps import render_ceps_tab
 
 
 # ── PAGE CONFIG ─────────────────────────────────────────────────
@@ -313,39 +313,7 @@ if show_ee:
 
     # ──────────── TAB ČEPS: REAL-TIME DASHBOARD ──────────────────────
     with tab_ceps:
-        st.markdown(
-            "Zdroj: **ČEPS a.s.** — data jsou anonymní, bez autentizace. "
-            "Zpoždění ~1–5 minut. Výroba podle zdroje má granularitu 15 min, "
-            "ostatní data jsou minutová."
-        )
-        with st.spinner("Načítám ČEPS real-time data..."):
-            ceps_data = fetch_ceps_all()
-
-        st.plotly_chart(
-            fig_ceps_dashboard(ceps_data),
-            use_container_width=True,
-            config={"displayModeBar": False},
-        )
-
-        df_i = ceps_data["imbal"]
-        df_f = ceps_data["freq"]
-        df_l = ceps_data["load"]
-        c1, c2, c3, c4 = st.columns(4)
-        if not df_i.empty:
-            last_imb = float(df_i.iloc[-1, 0])
-            c1.metric("Odchylka", f"{last_imb:+.1f} MW",
-                      delta="Surplus" if last_imb >= 0 else "Deficit")
-        if not df_f.empty:
-            last_hz = float(df_f.iloc[-1, 0])
-            c2.metric("Frekvence", f"{last_hz:.3f} Hz",
-                      delta=f"{last_hz-50:.3f} Hz")
-        if not df_l.empty and "Load [MW]" in df_l.columns:
-            last_load = float(df_l["Load [MW]"].iloc[-1])
-            c3.metric("Zatížení", f"{last_load:,.0f} MW")
-        if not ceps_data["cb"].empty and "Net Export (MW)" in ceps_data["cb"].columns:
-            net = float(ceps_data["cb"]["Net Export (MW)"].iloc[-1])
-            c4.metric("Net Export", f"{net:+.0f} MW",
-                      delta="export" if net >= 0 else "import")
+        render_ceps_tab()
 
 
     # ──────────── TAB 2: VÝROBA/ODSTÁVKY ─────────────────────────────
