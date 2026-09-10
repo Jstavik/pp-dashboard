@@ -982,14 +982,14 @@ elif show_gas:
             return None
 
     _last_entsog   = _safe_max_date(df_hist, "date")
-    _df_gie_tmp    = load_gie_all()
+    df_gie         = load_gie_all()
     _last_gie      = (
-        pd.Timestamp(_df_gie_tmp["gasDayStart"]
+        pd.Timestamp(df_gie["gasDayStart"]
                      .pipe(lambda s: pd.to_datetime(s, utc=True)
                            if s.dt.tz is None else s)
                      .dt.tz_convert("Europe/Prague")
                      .dt.date.max())
-        if not _df_gie_tmp.empty else None
+        if not df_gie.empty else None
     )
     _df_hydro_tmp  = load_hydro()
     _last_hydro    = _safe_max_date(_df_hydro_tmp, "date")
@@ -1042,7 +1042,7 @@ elif show_gas:
                     f"Norské nominace: live (realTimeAtom.xml)"
                 )
 
-                df_gie_map = load_gie_all()
+                df_gie_map = df_gie.copy()
                 if not df_gie_map.empty:
                     df_gie_map["gasDayStart"] = pd.to_datetime(
                         df_gie_map["gasDayStart"], errors="coerce")
@@ -1683,20 +1683,20 @@ elif show_gas:
                     )
 
         with tab_stor:
-            df_gie = load_gie_all()
+            df_gie_stor = df_gie.copy()
 
-            if df_gie.empty:
+            if df_gie_stor.empty:
                 st.warning(
                     "GIE data nejsou dostupná. "
                     "Spusť GitHub Actions: Update gas history."
                 )
             else:
-                df_gie["gasDayStart"] = pd.to_datetime(df_gie["gasDayStart"])
+                df_gie_stor["gasDayStart"] = pd.to_datetime(df_gie_stor["gasDayStart"])
                 all_years = sorted(
-                    df_gie["gasDayStart"].dt.year.unique().tolist()
+                    df_gie_stor["gasDayStart"].dt.year.unique().tolist()
                 )
                 all_countries = sorted(
-                    df_gie["country_code"].unique().tolist()
+                    df_gie_stor["country_code"].unique().tolist()
                 )
 
                 # ── Hlavní graf — filtry ──────────────────────────
@@ -1727,7 +1727,7 @@ elif show_gas:
                 if sel_years_main:
                     st.plotly_chart(
                         fig_storage_main(
-                            df_gie,
+                            df_gie_stor,
                             sel_country_main,
                             sel_var_main,
                             sel_years_main,
@@ -1758,7 +1758,7 @@ elif show_gas:
                 if sel_years_grid:
                     st.plotly_chart(
                         fig_storage_grid(
-                            df_gie,
+                            df_gie_stor,
                             sel_var_grid,
                             sel_years_grid,
                         ),
@@ -2293,7 +2293,7 @@ elif show_rep:
             # ── Aktuální stav — Plotly tabulka ───────────────────────
             import plotly.graph_objects as go
 
-            df_gie_r2 = load_gie_all()
+            df_gie_r2 = df_gie_r.copy()
             df_gie_r2["gasDayStart"] = pd.to_datetime(
                 df_gie_r2["gasDayStart"], errors="coerce")
             for c in ["full", "gasInStorage", "injection", "withdrawal"]:
