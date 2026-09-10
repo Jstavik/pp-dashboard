@@ -38,7 +38,7 @@ date,point,value_MSm3,value_GWh
 2026-09-05 11:00:00+00:00,Fields Delivering into SEGAL,13.0,137.15
 2026-09-06 11:00:00+00:00,Fields Delivering into SEGAL,13.0,137.15
 2026-09-07 11:00:00+00:00,Fields Delivering into SEGAL,12.5,131.875
-2026-09-08 11:00:00+00:00,Fields Delivering into SEGAL,14.7,155.085
+2026-09-08 11:00:00+00:00,Fields Delivering into SEGAL,14.6,154.03
 2026-09-01 11:00:00+00:00,Nybro,13.5,142.425
 2026-09-02 11:00:00+00:00,Nybro,13.0,137.15
 2026-09-03 11:00:00+00:00,Nybro,12.6,132.93
@@ -70,7 +70,7 @@ date,point,value_MSm3,value_GWh
 2026-09-05 11:00:00+00:00,Sum Exit Nominations NCS,257.3,2714.515
 2026-09-06 11:00:00+00:00,Sum Exit Nominations NCS,275.5,2906.525
 2026-09-07 11:00:00+00:00,Sum Exit Nominations NCS,282.6,2981.43
-2026-09-08 11:00:00+00:00,Sum Exit Nominations NCS,295.3,3115.415
+2026-09-08 11:00:00+00:00,Sum Exit Nominations NCS,295.2,3114.36
 2026-09-01 11:00:00+00:00,Zeebrugge,43.4,457.87
 2026-09-02 11:00:00+00:00,Zeebrugge,43.3,456.815
 2026-09-03 11:00:00+00:00,Zeebrugge,43.4,457.87
