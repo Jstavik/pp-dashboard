@@ -12,7 +12,7 @@ from config import (
     C_DEFICIT, C_SURPLUS, C_OK, C_WARN, C_NEW, C_TEXT, C_MUTED,
     sparkline_svg, storage_color, data_status_row,
     ENTSOG_NOMINATION_DEFAULT_MONTHS, ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS,
-    RESERVES_FALLBACK_RANGE_DAYS, RESERVES_DEFAULT_RANGE_DAYS,
+    RESERVES_FALLBACK_RANGE_DAYS,
     GAS_FLOWS_DEFAULT_RANGE_DAYS, GASSCO_REPORT_DEFAULT_RANGE_DAYS,
 )
 from data.entsoe import (
@@ -42,7 +42,6 @@ from charts.outages import (
     parse_outages, detect_changes,
     fig_outages_gantt, fig_installed_capacity,
 )
-from charts.reserves import fig_reserve_volumes, fig_reserve_prices
 from charts.dap_map import fig_dap_map
 from data.dap_europe import load_dap_europe, load_dap_europe_all, dap_europe_last_write
 from views.hydro import render_hydro_tab
@@ -53,6 +52,7 @@ from views.electricity_dashboard import render_dashboard_tab
 from views.ceps import render_ceps_tab
 from views.electricity_outages import render_outages_tab
 from views.dap import render_dap_tab
+from views.reserves import render_reserves_tab
 
 
 # ── PAGE CONFIG ─────────────────────────────────────────────────
@@ -321,44 +321,7 @@ if show_ee:
 
     # ──────────── TAB 4: REZERVY ─────────────────────────────────────
     with tab_rezervy:
-        res_start = now.normalize()
-        res_end   = now.normalize() + pd.Timedelta(days=RESERVES_DEFAULT_RANGE_DAYS)
-        if now.month < 7:
-            _a04_label = f"{now.year}-01-01 – {now.year}-07-01"
-        else:
-            _a04_label = f"{now.year}-07-01 – {now.year + 1}-01-01"
-
-        st.markdown(
-            '<div class="section-title">'
-            f'aFRR + mFRR — D0 až D+7 &nbsp;·&nbsp; '
-            f'Solid = A01 denní &nbsp;·&nbsp; Dash = A04 roční ({_a04_label})'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(
-            fig_reserve_volumes(reserves, now, res_start, res_end, height=420),
-            use_container_width=True, config={"displayModeBar": False},
-        )
-        st.plotly_chart(
-            fig_reserve_prices(reserves, now, res_start, res_end, height=420),
-            use_container_width=True, config={"displayModeBar": False},
-        )
-
-        with st.expander("📥 Stáhnout surová data rezerv"):
-            ec1, ec2, ec3, ec4, ec5, ec6 = st.columns(6)
-            for col_obj, df_r, label, fname in [
-                (ec1, reserves["afrr_d_amt"], "aFRR denní obj.", "afrr_d_amount.csv"),
-                (ec2, reserves["afrr_d_pri"], "aFRR denní ceny", "afrr_d_price.csv"),
-                (ec3, reserves["afrr_y_amt"], "aFRR roční obj.", "afrr_y_amount.csv"),
-                (ec4, reserves["afrr_y_pri"], "aFRR roční ceny", "afrr_y_price.csv"),
-                (ec5, reserves["mfrr_d_amt"], "mFRR denní obj.", "mfrr_d_amount.csv"),
-                (ec6, reserves["mfrr_d_pri"], "mFRR denní ceny", "mfrr_d_price.csv"),
-            ]:
-                with col_obj:
-                    if not df_r.empty:
-                        st.download_button(f"⬇ {label}", df_r.to_csv().encode(), fname, "text/csv")
-                    else:
-                        st.caption(f"{label}: —")
+        render_reserves_tab(now, reserves)
 
 
     # ──────────── TAB HYDRO: VODNÍ ZÁSOBNÍKY ─────────────────────────
