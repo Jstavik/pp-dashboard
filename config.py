@@ -395,3 +395,32 @@ def sparkline_svg(values, color="#1565C0", width=140, height=28):
             f'<path d="M{" L".join(pts)}" stroke="{color}" stroke-width="1.5" '
             f'fill="none" vector-effect="non-scaling-stroke"/>'
             f'<circle cx="{lx}" cy="{ly}" r="2" fill="{color}"/></svg>')
+
+
+def data_status_row(sources: list) -> None:
+    """Zobrazí řádek se stavem datových zdrojů."""
+    parts = []
+    for s in sources:
+        name  = s["name"]
+        dt    = s.get("date")
+        max_h = s.get("freshness_hours", 48)
+
+        if dt is None:
+            icon     = "⚠️"
+            date_str = "N/A"
+        else:
+            dt_naive = pd.Timestamp(dt) if not isinstance(dt, pd.Timestamp) else dt
+            if dt_naive.tzinfo is not None:
+                dt_naive = dt_naive.tz_localize(None)
+            age_h = (pd.Timestamp.now() - dt_naive).total_seconds() / 3600
+            icon     = "✅" if age_h <= max_h else "⚠️"
+            date_str = dt_naive.strftime("%d.%m.%Y") if hasattr(dt_naive, "strftime") else str(dt_naive)
+
+        parts.append(f"{icon} **{name}**: {date_str}")
+
+    st.markdown(
+        '<div style="font-size:11px;color:#666;padding:4px 0 8px 0">' +
+        "  &nbsp;|&nbsp;  ".join(parts) +
+        "</div>",
+        unsafe_allow_html=True,
+    )
