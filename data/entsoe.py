@@ -1,3 +1,5 @@
+import concurrent.futures
+
 import pandas as pd
 import streamlit as st
 from entsoe import EntsoePandasClient
@@ -202,12 +204,24 @@ def fetch_reserves():
         except Exception:
             return pd.DataFrame()
 
-    return dict(
-        afrr_d_amt = _q(client.query_contracted_reserve_amount, "A51", "A01", start, end),
-        afrr_d_pri = _q(client.query_contracted_reserve_prices,  "A51", "A01", start, end),
-        afrr_y_amt = _q(client.query_contracted_reserve_amount, "A51", "A04", start_yr, end_yr),
-        afrr_y_pri = _q(client.query_contracted_reserve_prices,  "A51", "A04", start_yr, end_yr),
-        mfrr_d_amt = _q(client.query_contracted_reserve_amount, "A52", "A01", start, end),
-        mfrr_d_pri = _q(client.query_contracted_reserve_prices,  "A52", "A01", start, end),
-        now=now, start=start, end=end,
-    )
+    # Všech 6 dotazů je nezávislých (různé endpointy/období) — paralelně
+    # přes ThreadPoolExecutor místo sekvenčně, ať se čekání na I/O
+    # překrývá místo sčítá (N × timeout). _q() si drží vlastní
+    # try/except beze změny, takže selhání jednoho dotazu neovlivní
+    # ostatní.
+    jobs = {
+        "afrr_d_amt": (client.query_contracted_reserve_amount, "A51", "A01", start, end),
+        "afrr_d_pri": (client.query_contracted_reserve_prices,  "A51", "A01", start, end),
+        "afrr_y_amt": (client.query_contracted_reserve_amount, "A51", "A04", start_yr, end_yr),
+        "afrr_y_pri": (client.query_contracted_reserve_prices,  "A51", "A04", start_yr, end_yr),
+        "mfrr_d_amt": (client.query_contracted_reserve_amount, "A52", "A01", start, end),
+        "mfrr_d_pri": (client.query_contracted_reserve_prices,  "A52", "A01", start, end),
+    }
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        futures = {key: executor.submit(_q, *args) for key, args in jobs.items()}
+        results = {key: fut.result() for key, fut in futures.items()}
+
+    results["now"]   = now
+    results["start"] = start
+    results["end"]   = end
+    return results
