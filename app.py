@@ -1917,8 +1917,6 @@ elif show_gas:
             st.markdown("---")
             st.markdown("#### Zásoby LNG terminálů (GIE ALSI)")
 
-            df_lng_alsi = load_lng()
-
             if df_lng_alsi.empty:
                 st.info("ALSI data nejsou dostupná.")
             else:
