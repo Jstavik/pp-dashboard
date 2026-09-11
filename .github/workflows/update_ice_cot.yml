@@ -1,0 +1,48 @@
+name: Update ICE CoT data
+
+on:
+  schedule:
+    - cron: "0 6 * * 6"   # sobota 6:00 UTC — bezpečný odstup po pátečním 18:30 London publikování
+    - cron: "0 6 * * 2"   # úterý 6:00 UTC — retry, kdyby ICE publikaci posunulo kvůli bankovnímu svátku
+  workflow_dispatch:        # možnost spustit ručně
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests pandas pyarrow streamlit
+
+      - name: Run update script
+        id: update
+        run: python scripts/update_ice_cot.py
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/history/ice_cot.parquet data/history/ice_cot_status.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "data: ICE CoT update ${{ steps.update.outputs.report_date }} (IFEU: ${{ steps.update.outputs.ifeu_status }}, NDEX: ${{ steps.update.outputs.ndex_status }})"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            echo "Retry $i..."
+            sleep 10
+          done
+          exit 1
