@@ -18,7 +18,6 @@ from config import (
 from data.entsoe import (
     fetch_entsoe_data, fetch_installed_capacity, fetch_reserves,
 )
-from data.deltagreen import fetch_deltagreen
 from data.entsog import load_entsog_history, _short_name
 from data.gie import load_gie_all
 from data.hydro import load_hydro
@@ -37,7 +36,6 @@ from charts.entsog_operational import fig_cz_operational
 from data.gassco import load_gassco
 from charts.gassco import fig_gassco_kpi, fig_gassco_timeseries, fig_gassco_seasonality
 from charts.imbalance import parse_imbalance
-from charts.generation import fig_deltagreen
 from charts.outages import (
     parse_outages, detect_changes,
     fig_outages_gantt, fig_installed_capacity,
@@ -53,6 +51,7 @@ from views.ceps import render_ceps_tab
 from views.electricity_outages import render_outages_tab
 from views.dap import render_dap_tab
 from views.reserves import render_reserves_tab
+from views.delta_green import render_delta_green_tab
 
 
 # ── PAGE CONFIG ─────────────────────────────────────────────────
@@ -331,27 +330,7 @@ if show_ee:
 
     # ──────────── TAB 5: DELTA GREEN ─────────────────────────────────
     with tab_dg:
-        dg_key = st.session_state.get("dg_api_key", "").strip()
-        if not dg_key:
-            st.info("Zadejte Delta Green API klíč v levém panelu (⚙️ Nastavení).")
-        else:
-            with st.spinner("Načítám Delta Green…"):
-                try:
-                    df1_dg, df2_dg = fetch_deltagreen(dg_key)
-                    st.plotly_chart(fig_deltagreen(df1_dg, df2_dg), use_container_width=True,
-                                    config={"displayModeBar": False})
-                    last2 = df2_dg.dropna(subset=["upPowerKW","downBatteryPowerKW",
-                                                   "downSolarCurtailmentPowerKW"]).iloc[-1]
-                    last1 = df1_dg.dropna(subset=["batteryPowerKW","consumptionPowerKW",
-                                                   "photovoltaicPowerKW","gridPowerKW"]).iloc[-1]
-                    k1, k2, k3, k4 = st.columns(4)
-                    k1.metric("Baterie",      f"{float(last1['batteryPowerKW']):+.0f} kW")
-                    k2.metric("Fotovoltaika", f"{float(last1['photovoltaicPowerKW']):.0f} kW")
-                    k3.metric("Max UP",       f"{float(last2['upPowerKW']):.0f} kW")
-                    total_down = float(last2["downBatteryPowerKW"]) + float(last2["downSolarCurtailmentPowerKW"])
-                    k4.metric("Max DOWN",     f"{total_down:.0f} kW")
-                except Exception as e:
-                    st.error(f"Delta Green nedostupný: {e}")
+        render_delta_green_tab()
 
 
     # ──────────── TAB 6: SUROVÁ DATA ─────────────────────────────────
