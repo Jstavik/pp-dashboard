@@ -1,0 +1,22 @@
+{
+  "attempts": [
+    {
+      "timestamp": "2026-09-11T17:13:42.574512+00:00",
+      "venue": "IFEU",
+      "report_date": "2026-09-11",
+      "url": "https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders/IFEU_FUT_20260911.csv",
+      "http_status": 429,
+      "success": false,
+      "error": "429 Client Error: Too Many Requests for url: https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders/IFEU_FUT_20260911.csv"
+    },
+    {
+      "timestamp": "2026-09-11T17:13:42.628590+00:00",
+      "venue": "NDEX",
+      "report_date": "2026-09-11",
+      "url": "https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders/NDEX_FUT_20260911.csv",
+      "http_status": 429,
+      "success": false,
+      "error": "429 Client Error: Too Many Requests for url: https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders/NDEX_FUT_20260911.csv"
+    }
+  ]
+}
