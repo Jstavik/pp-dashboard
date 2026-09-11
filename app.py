@@ -48,6 +48,7 @@ from views.gas_seasonality import render_gas_seasonality_tab
 from views.gas_flows import render_gas_flows_tab
 from views.gas_capacity import render_gas_capacity_tab
 from views.gas_nominations import render_gas_nominations_tab
+from views.cot import render_cot_page
 
 
 # ── PAGE CONFIG ─────────────────────────────────────────────────
@@ -104,13 +105,14 @@ with st.sidebar:
     st.markdown("---")
     show_commodity = st.radio(
         "Komodita",
-        ["⚡ Elektřina", "🔵 Plyn", "📋 Report", "🔧 ČEPS odstávky"],
+        ["⚡ Elektřina", "🔵 Plyn", "📋 Report", "🔧 ČEPS odstávky", "📈 CoT"],
         horizontal=False,
     )
     show_ee  = show_commodity == "⚡ Elektřina"
     show_gas = show_commodity == "🔵 Plyn"
     show_rep = show_commodity == "📋 Report"
     show_out = show_commodity == "🔧 ČEPS odstávky"
+    show_cot = show_commodity == "📈 CoT"
 
     st.markdown("---")
     st.markdown("### Zdroje dat")
@@ -148,6 +150,11 @@ with st.sidebar:
         st.caption(
             "**ENTSO-E 16.1.D**  \n"
             "Vodní zásobníky · 20 zemí · Týdenní data"
+        )
+    elif show_cot:
+        st.caption(
+            "**ICE MiFID II Commitments of Traders**  \n"
+            "IFEU (Brent, Gasoil, TTF/USD, ...) + NDEX (TTF, EUA, ...) · Týdenní pozice tradérů"
         )
 
 if auto_refresh:
@@ -762,5 +769,8 @@ elif show_out:
             if not changes["changed_mw"].empty:
                 st.markdown("**⚡ Změny výkonu**")
                 st.dataframe(changes["changed_mw"], use_container_width=True, hide_index=True)
+
+elif show_cot:
+    render_cot_page()
 
 st.session_state.iteration += 1
