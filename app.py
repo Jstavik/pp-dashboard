@@ -27,7 +27,7 @@ from data.entsog_operational import (
     active_capacity_dedup,
 )
 from charts.gas import (
-    fig_gas_point_history, fig_gas_map,
+    fig_gas_map,
     fig_flow_timeseries, fig_flow_seasonality,
 )
 from charts.storage import fig_storage_grid
@@ -53,6 +53,7 @@ from views.dap import render_dap_tab
 from views.reserves import render_reserves_tab
 from views.delta_green import render_delta_green_tab
 from views.dap_map import render_dap_map_tab
+from views.gas_history import render_history_tab
 
 
 # ── PAGE CONFIG ─────────────────────────────────────────────────
@@ -1130,15 +1131,7 @@ elif show_gas:
             render_gassco_tab(df_gassco)
 
         with tab_hist:
-            point_sel = st.selectbox(
-                "Hraniční přechod",
-                options=[c for c in pivot_gas.columns if pivot_gas[c].abs().sum() > 0],
-                key="gas_point_sel",
-            )
-            st.plotly_chart(
-                fig_gas_point_history(pivot_gas, point_sel),
-                use_container_width=True,
-            )
+            render_history_tab(pivot_gas)
 
 elif show_rep:
     # Report jen mapuje (fig_gas_map = poslední 2 celé dny) — žádná
