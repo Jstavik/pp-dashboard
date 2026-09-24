@@ -55,7 +55,16 @@ STATUS_MAX_ENTRIES = 500
 
 BASE_URL = "https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders"
 VENUES = ["IFEU", "NDEX"]
-HEADERS = {"User-Agent": "pp-dashboard-ice-cot/1 (+data pipeline)"}
+# Cloudflare bot-protection na ice.com začala kolem 2026-09-12 blokovat
+# náš dřívější neprohlížečový User-Agent (403 "Attention Required" na
+# CELÉ doméně, ne jen tomhle adresáři — ověřeno naživo, homepage i
+# záměrně neexistující cesta dávaly stejný 403). Obyčejný Chrome UA
+# string projde beze změny zbytku requestu (žádné cookie/session
+# handling, žádný jiný fingerprinting).
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+}
 
 SIDES = ["Long", "Short"]
 SCOPES = ["Risk_Reducing", "Other", "Total"]
