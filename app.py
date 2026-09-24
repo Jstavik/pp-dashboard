@@ -15,7 +15,7 @@ from config import (
     RESERVES_FALLBACK_RANGE_DAYS, GASSCO_REPORT_DEFAULT_RANGE_DAYS,
 )
 from data.entsoe import (
-    fetch_entsoe_data, fetch_installed_capacity, fetch_reserves,
+    fetch_entsoe_data, fetch_reserves,
 )
 from data.entsog import load_entsog_history, _short_name
 from data.gie import load_gie_all
@@ -25,10 +25,7 @@ from charts.storage import fig_storage_grid
 from data.gassco import load_gassco
 from charts.gassco import fig_gassco_kpi, fig_gassco_timeseries, fig_gassco_seasonality
 from charts.imbalance import parse_imbalance
-from charts.outages import (
-    parse_outages, detect_changes,
-    fig_outages_gantt, fig_installed_capacity,
-)
+from charts.outages import parse_outages, detect_changes
 from charts.dap_map import fig_dap_map
 from data.dap_europe import load_dap_europe
 from views.hydro import render_hydro_tab
@@ -49,6 +46,7 @@ from views.gas_flows import render_gas_flows_tab
 from views.gas_capacity import render_gas_capacity_tab
 from views.gas_nominations import render_gas_nominations_tab
 from views.cot import render_cot_page
+from views.ceps_outages_page import render_ceps_outages_page
 
 
 # ── PAGE CONFIG ─────────────────────────────────────────────────
@@ -731,44 +729,7 @@ elif show_rep:
             st.caption("📷 Stáhnout: ikona fotoaparátu v grafu")
 
 elif show_out:
-    st.markdown('<div class="section-title">Instalovaná kapacita podle zdroje (14.1.A)</div>',
-                unsafe_allow_html=True)
-    cap = fetch_installed_capacity()
-    if not cap.empty:
-        st.plotly_chart(fig_installed_capacity(cap), use_container_width=True,
-                        config={"displayModeBar": False})
-
-    st.markdown(f'<div class="section-title">Výrobní jednotky (PU) — {n_pu} aktivních</div>',
-                unsafe_allow_html=True)
-    st.plotly_chart(fig_outages_gantt(df_out, "PU", now, changes),
-                    use_container_width=True, config={"displayModeBar": False})
-
-    st.markdown(f'<div class="section-title">Generační jednotky (GU) — {n_gu} aktivních</div>',
-                unsafe_allow_html=True)
-    st.plotly_chart(fig_outages_gantt(df_out, "GU", now, changes),
-                    use_container_width=True, config={"displayModeBar": False})
-
-    n_ended_tab = len(changes.get("ended", set()))
-    n_chmw_tab  = len(changes["changed_mw"])
-    with st.expander(f"📋 Detail změn  ·  {n_new} nových · {n_ended_tab} ukončených · {n_chmw_tab} změn MW",
-                     expanded=bool(n_new or n_ended_tab or n_chmw_tab)):
-        if not (n_new or n_ended_tab or n_chmw_tab):
-            st.markdown("<em style='color:#888'>Žádné změny od posledního obnovení.</em>",
-                        unsafe_allow_html=True)
-        else:
-            if n_new and not df_out.empty:
-                new_df = (df_out[df_out[["unit_raw","outage_start","outage_end"]]
-                                 .apply(tuple, axis=1).isin(changes["new"])]
-                          .sort_values("unavailable_MW", ascending=False))
-                st.markdown("**🆕 Nové odstávky**")
-                st.dataframe(
-                    new_df[["unit_name","unit_level","outage_start","outage_end",
-                             "installed_MW","unavailable_MW","outage_type"]],
-                    use_container_width=True, hide_index=True,
-                )
-            if not changes["changed_mw"].empty:
-                st.markdown("**⚡ Změny výkonu**")
-                st.dataframe(changes["changed_mw"], use_container_width=True, hide_index=True)
+    render_ceps_outages_page(now, df_out, changes, n_pu, n_gu, n_new)
 
 elif show_cot:
     render_cot_page()
