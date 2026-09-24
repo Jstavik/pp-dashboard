@@ -15,7 +15,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
             continue
         lat, lon = CENTERS[cc]
         color = "#C62828" if r["dod_base"] > 0 else "#2E7D32"
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=[lat], lon=[lon],
             mode="text",
             text=[f"Base: {r['base']:.0f} | Peak: {r['peak']:.0f}<br>Δ {r['dod_base']:+.0f} | Δ {r['dod_peak']:+.0f}"],
@@ -25,7 +25,7 @@ def fig_dap_map(df: pd.DataFrame) -> go.Figure:
         ))
     last_date = str(df["date"].iloc[0]) if len(df) > 0 else ""
     fig.update_layout(
-        mapbox=dict(
+        map=dict(
             style="white-bg",
             center=dict(lat=52, lon=12),
             zoom=3.8,
