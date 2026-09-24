@@ -1,7 +1,24 @@
+import pandas as pd
 import streamlit as st
 
 from data.entsoe import fetch_installed_capacity
 from charts.outages import fig_outages_gantt, fig_installed_capacity
+
+
+def _outages_table(df_out, lvl):
+    """Holá tabulka + CSV download pro jeden unit_level (PU/GU) — dřív
+    duplicitně v app.py::tab_data (_out_tab), teď jediné místo, co tohle
+    dělá."""
+    sub = df_out[df_out["unit_level"] == lvl] if not df_out.empty else pd.DataFrame()
+    if sub.empty:
+        st.info(f"Žádné odstávky {lvl}.")
+        return
+    cols = ["unit_name","outage_start","outage_end","installed_MW",
+            "available_MW","unavailable_MW","available_pct","outage_type"]
+    st.dataframe(sub[[c for c in cols if c in sub.columns]],
+                 use_container_width=True, hide_index=True)
+    st.download_button(f"⬇ CSV {lvl}", sub.to_csv(index=False).encode(),
+                       f"outages_{lvl}.csv", "text/csv")
 
 
 def render_ceps_outages_page(now, df_out, changes, n_pu, n_gu, n_new):
@@ -16,11 +33,15 @@ def render_ceps_outages_page(now, df_out, changes, n_pu, n_gu, n_new):
                 unsafe_allow_html=True)
     st.plotly_chart(fig_outages_gantt(df_out, "PU", now, changes),
                     use_container_width=True, config={"displayModeBar": False})
+    with st.expander("📋 Tabulka PU"):
+        _outages_table(df_out, "PU")
 
     st.markdown(f'<div class="section-title">Generační jednotky (GU) — {n_gu} aktivních</div>',
                 unsafe_allow_html=True)
     st.plotly_chart(fig_outages_gantt(df_out, "GU", now, changes),
                     use_container_width=True, config={"displayModeBar": False})
+    with st.expander("📋 Tabulka GU"):
+        _outages_table(df_out, "GU")
 
     n_ended_tab = len(changes.get("ended", set()))
     n_chmw_tab  = len(changes["changed_mw"])

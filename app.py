@@ -336,7 +336,7 @@ if show_ee:
 
     # ──────────── TAB 6: SUROVÁ DATA ─────────────────────────────────
     with tab_data:
-        t1, t2, t3, t4 = st.tabs(["Odchylka", "Odstávky PU", "Odstávky GU", "Generace"])
+        t1, t2 = st.tabs(["Odchylka", "Generace"])
 
         with t1:
             if not df_imbal.empty:
@@ -344,22 +344,7 @@ if show_ee:
                 st.download_button("⬇ CSV odchylka", df_imbal.to_csv().encode(),
                                    "odchylka.csv", "text/csv")
 
-        def _out_tab(lvl):
-            sub = df_out[df_out["unit_level"] == lvl] if not df_out.empty else pd.DataFrame()
-            if sub.empty:
-                st.info(f"Žádné odstávky {lvl}.")
-                return
-            cols = ["unit_name","outage_start","outage_end","installed_MW",
-                    "available_MW","unavailable_MW","available_pct","outage_type"]
-            st.dataframe(sub[[c for c in cols if c in sub.columns]],
-                         use_container_width=True, hide_index=True)
-            st.download_button(f"⬇ CSV {lvl}", sub.to_csv(index=False).encode(),
-                               f"outages_{lvl}.csv", "text/csv")
-
-        with t2: _out_tab("PU")
-        with t3: _out_tab("GU")
-
-        with t4:
+        with t2:
             if not gen_raw.empty:
                 from config import psr_lookup as _psr_lookup
                 display_gen = gen_raw.copy()
