@@ -1,0 +1,149 @@
+{
+  "public_power::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:29:49.948226",
+    "rows_fetched": 2537528,
+    "error": null,
+    "not_historical": false
+  },
+  "public_power_forecast::cz:solar": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:31:02.101170",
+    "rows_fetched": 122132,
+    "error": null,
+    "not_historical": false
+  },
+  "public_power_forecast::cz:wind_onshore": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:32:52.073853",
+    "rows_fetched": 0,
+    "error": null,
+    "not_historical": false
+  },
+  "public_power_forecast::cz:wind_offshore": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:58:59.001937",
+    "rows_fetched": 0,
+    "error": null,
+    "not_historical": false
+  },
+  "public_power_forecast::cz:load": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:35:36.865776",
+    "rows_fetched": 122132,
+    "error": null,
+    "not_historical": false
+  },
+  "public_power_forecast::cz:wind": {
+    "done": false,
+    "last_attempt": "2026-09-25T05:03:59.346020",
+    "rows_fetched": 0,
+    "error": "ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))",
+    "not_historical": false
+  },
+  "cbet::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:39:23.324069",
+    "rows_fetched": 1531180,
+    "error": null,
+    "not_historical": false
+  },
+  "cbpf::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:42:29.543818",
+    "rows_fetched": 1530680,
+    "error": null,
+    "not_historical": false
+  },
+  "installed_power::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:42:42.921029",
+    "rows_fetched": 168,
+    "error": null,
+    "not_historical": false
+  },
+  "signal::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:42:57.793280",
+    "rows_fetched": 192,
+    "error": null,
+    "not_historical": true
+  },
+  "solar_share::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:43:11.686608",
+    "rows_fetched": 152,
+    "error": null,
+    "not_historical": true
+  },
+  "solar_share_daily_avg::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:45:29.163720",
+    "rows_fetched": 3189,
+    "error": null,
+    "not_historical": false
+  },
+  "wind_onshore_share::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:45:44.144003",
+    "rows_fetched": 40,
+    "error": null,
+    "not_historical": true
+  },
+  "wind_onshore_share_daily_avg::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:47:59.544970",
+    "rows_fetched": 3190,
+    "error": null,
+    "not_historical": false
+  },
+  "wind_offshore_share::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:48:01.017524",
+    "rows_fetched": 0,
+    "error": null,
+    "not_historical": true
+  },
+  "wind_offshore_share_daily_avg::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T05:02:28.722979",
+    "rows_fetched": 0,
+    "error": null,
+    "not_historical": false
+  },
+  "ren_share_daily_avg::cz": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:51:27.136785",
+    "rows_fetched": 3190,
+    "error": null,
+    "not_historical": false
+  },
+  "frequency::DE-Freiburg": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:53:12.940128",
+    "rows_fetched": 708227,
+    "error": null,
+    "not_historical": false
+  },
+  "price::CZ": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:56:15.318700",
+    "rows_fetched": 102479,
+    "error": null,
+    "not_historical": false
+  },
+  "price_current::CZ": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:56:32.476431",
+    "rows_fetched": 1,
+    "error": null,
+    "not_historical": true
+  },
+  "price_next_day::CZ": {
+    "done": true,
+    "last_attempt": "2026-09-25T04:56:33.936205",
+    "rows_fetched": 0,
+    "error": null,
+    "not_historical": true
+  }
+}
