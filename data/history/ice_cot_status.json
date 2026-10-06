@@ -221,6 +221,24 @@
       "http_status": 403,
       "success": false,
       "error": "403 Client Error: Forbidden for url: https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders/NDEX_FUT_20261002.csv"
+    },
+    {
+      "timestamp": "2026-10-06T13:08:07.655247+00:00",
+      "venue": "IFEU",
+      "report_date": "2026-10-02",
+      "url": "https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders/IFEU_FUT_20261002.csv",
+      "http_status": 404,
+      "success": false,
+      "error": "404 Client Error: Not Found for url: https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders/IFEU_FUT_20261002.csv"
+    },
+    {
+      "timestamp": "2026-10-06T13:08:07.736171+00:00",
+      "venue": "NDEX",
+      "report_date": "2026-10-02",
+      "url": "https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders/NDEX_FUT_20261002.csv",
+      "http_status": 404,
+      "success": false,
+      "error": "404 Client Error: Not Found for url: https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders/NDEX_FUT_20261002.csv"
     }
   ]
 }
