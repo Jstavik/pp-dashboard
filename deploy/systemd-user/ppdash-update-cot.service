@@ -10,5 +10,7 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=@VENV@/bin/python scripts/update_all.py --only cot
 TimeoutStartSec=30min
 Nice=10
+CPUWeight=50
+IOWeight=50
 SuccessExitStatus=3
 NoNewPrivileges=yes

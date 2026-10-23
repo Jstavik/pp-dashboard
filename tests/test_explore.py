@@ -157,3 +157,11 @@ def test_saved_views(client, tmp_path):
     assert client.post("/api/explorer/views", json={"name": " "}).status_code == 400
     r = client.delete("/api/explorer/views", params={"name": "CZ jádro"})
     assert r.json()["views"] == []
+
+
+def test_duckdb_limits(hist):
+    cur = ex._connection()
+    mem = cur.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+    assert mem.replace(" ", "").upper() in ("244.1MIB", "256.0MB", "256MB", "244.1MB")
+    assert cur.execute("SELECT current_setting('threads')").fetchone()[0] == 2
+    assert cur.execute("SELECT current_setting('TimeZone')").fetchone()[0] == "Europe/Prague"

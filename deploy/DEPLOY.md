@@ -103,7 +103,7 @@ pro monitoring (případně Access bypass jen pro tuto cestu).
 
 ## Provozní poznámky
 
-- Paměť: web ~430–490 MB RSS po projití všech záložek; aktualizace má
+- Paměť: web ~550 MB RSS ustáleně, špička ~850 MB po projití všech záložek a Průzkumníku (DuckDB limit 256 MB, `PPDASH_DUCKDB_MEM`); aktualizace má
   `MemoryMax=1000M`, live běh 400M. Limity platí, jen když má uživatelský
   manager delegovaný memory controller (Debian 13 ano).
 - Minutový timer spouští krátký Python proces (~1–2 s CPU); WSDL ČEPS je

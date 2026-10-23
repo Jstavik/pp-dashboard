@@ -189,6 +189,79 @@ které komerční použití dovolují) a nastavit `OPENMETEO_BASE_URL`.
   `past_days` + `models=best_match` vrací poslední dny, reálná „cena“ backfillu
   v kvótě. Testováno proti falešným odpovědím ve tvaru Open-Meteo.
 
+### Testy (kolo 3)
+- 0 testů (zelené i s `PPDASH_TEST_EMPTY=1`): nové `tests/test_explore.py`
+  (engine: energie přes změnu času, dvoustupňová agregace, prořezávání
+  partition, zhrubnutí, CSV zrcadlo, sezónnost, pivot/pohledy/cross-filter
+  endpointy, limity DuckDB), `tests/test_entsoe_history.py` (navazování,
+  rozpočet, rate limiter, souběžný zápis, stránka Trh EU nad daty),
+  `tests/test_nordic.py` (NVE, Fingrid stránkování/klíč, Energinet melt,
+  stránka Nordic), `tests/test_weather.py` (modely + fallback, ensemble
+  kvantily, ERA5 backfill s rozpočtem, normál, HDD/CDD, komerční URL,
+  stránka Počasí). Nové stránky jsou i v parametrizovaných smoke testech.
+
+### Paměť a souběh úloh
+- Měřeno: web nad historií z repa + syntetická ENTSO-E data (2024→, 45 zón,
+  toky) + počasí; proklikány **všechny** záložky a grafy všech stránek a
+  Průzkumník přes všechny datasety (celá historie, heatmapy, sezónnost,
+  nativní zrnitost, pivot, i bez filtrů): **max RSS 853 MB**, ustáleně
+  ~550 MB (cíl < 1,2 GB). Největší špička je stávající graf Energy-Charts
+  „Výroba“ za celou historii (+135 MB), Průzkumník bez filtrů na výrobě
+  (14 M řádků) +100 MB.
+- DuckDB `memory_limit` sníženo na **256 MB** (při 512 MB dělal dotaz bez
+  filtrů +330 MB RSS; 256 MB je stejně rychlé — 4.7 s — a spilluje na disk),
+  2 vlákna, sdílený limit pro všechny souběžné dotazy (jedna instance).
+- Web: `MemoryHigh=1300M`, `MemoryMax=1600M` (4 GB LXC).
+- Minutový `ppdash-live` nic neblokuje: vlastní zámky `.live.lock`,
+  `.entsoe.lock`, `.weather.lock`, `.update.lock` (každá skupina zapisuje do
+  jiných datasetů); live má `CPUWeight/IOWeight=200`, dlouhé aktualizace
+  `Nice=10`, `CPUWeight/IOWeight=50`. Součet `MemoryMax` všech služeb
+  (web 1.6 G + update 1 G + entsoe 0.8 G + weather 0.5 G + live 0.4 G) je
+  nad 4 GB jen teoreticky — typicky běží současně nejvýš 2 aktualizace.
+- **NEOVĚŘENO**: že uživatelský systemd má delegované `cpu`/`io`
+  controllery (bez nich se `CPUWeight/IOWeight` ignorují — neškodí);
+  skutečná paměť s plnou historií ENTSO-E od 2019 (data ~5× větší než
+  syntetická; dotazy jsou ale omezené DuckDB limitem a stropem výsledku).
+
+### Katalog datasetů (stav kola 3)
+| Dataset (history/) | Úloha | Timer / frekvence | Rozlišení | Od |
+|---|---|---|---|---|
+| `ceps/<ds>/` | ceps | live, 1 min | 1 min | provoz |
+| `gassco_realtime/`, `gassco_umm*` | gassco_realtime, gassco_umm | live, 1 min | publikace | provoz |
+| `entsog_flows/`, `entsog_operational/`, `gie_all_storage/`, `lng_storage/`, `gassco_nominations/` | entsog*, gie, lng, gassco | update 06:00+17:00 | den | 2011–2021 |
+| `hydro_reservoirs/` | hydro | update 2× denně | týden, země | 2019-12 |
+| `dap_europe/` | dap_europe | update 2× denně | den (base/peak) | 2026-06 |
+| `generation/<CC>/` (16 zemí) | generation | update 2× denně | 15 min/h | 2020 |
+| `outages*` | outages | update 2× denně | události | rolling |
+| `energy_charts/…` | energy_charts | update 2× denně | 15 min / 5 min | 2018 |
+| `nve_reservoirs*.parquet` | nve | update 2× denně (NVE st) | týden | 1995 |
+| `fingrid/` | fingrid (klíč) | update 2× denně | 15 min | 2019 |
+| `energinet/<ds>/` | energinet | update 2× denně | hodina | 2019 |
+| `entsoe_prices/`, `entsoe_load/`, `entsoe_ws_forecast/` | entsoe_* | entsoe 07:10/13:20/19:10 | 15 min/h | 2019 |
+| `entsoe_flows/` | entsoe_flows | entsoe 3× denně | 15 min/h | 2021 |
+| `weather_daily/`, `weather_fc*/`, `weather_ens/` | weather | weather 4× denně | den / hodina | 1991 (ERA5) |
+| `ice_cot.parquet` | cot | st 14:00+19:00, čt+so 08:00 | týden | 2022 |
+
+Sémantický katalog pro Průzkumník = `core/datasets.py::EXPLORE` (26 datasetů),
+záložka Průzkumník → Katalog dat ukazuje rozsah a stáří živě.
+
+### Co má ověřit sezení v kontejneru (kolo 3)
+1. `git pull && deploy/install_user.sh --no-seed` (doinstaluje `duckdb`,
+   nové unity `ppdash-update-entsoe`, `ppdash-update-weather`), `deploy/status.sh`.
+2. Web: `/pruzkumnik`, `/trh-eu`, `/nordic`, `/pocasi` vrací stránky;
+   `/healthz` `rss_mb` po proklikání < 1200.
+3. ENTSO-E: `update_all.py --only entsoe_prices -v` (rychlé) → zkontrolovat
+   zóny bez dat / chyby v logu (IE_SEM, IT_CALA, ME, MK), pak `--only entsoe`
+   na pozadí přes timer; ověřit `CZ–DE_LU` toky (případně změnit na `DE`),
+   load `NO/SE/DK`, že limiter drží < 400 req/min (journal: `requests`).
+   Výroba nových zemí: `--only generation` (rozpočet 30 min/zemi).
+4. Nordic: `--only nve -v` (tvar JSON NVE!), `--only energinet -v`,
+   Fingrid s `FINGRID_API_KEY` (ID datasetů v `data/nordic.py`).
+5. Počasí: `--only weather -v` — názvy modelů (`ecmwf_aifs025_single`,
+   `gfs025`), že ensemble vrací členy, kvóta. **Rozhodnout licenci**
+   Open-Meteo (komerční klíč / vlastní instance), viz rešerše výš.
+6. ICE CoT ve středu 14:00/19:00 — `journalctl --user -u ppdash-update-cot`.
+
 ## Kolo 2 (2026-10-23): vlastní databáze, živá data, Energy-Charts, export, nasazení bez roota
 
 ### Audit historie (`data/history` → `PPDASH_DATA_DIR/history`)

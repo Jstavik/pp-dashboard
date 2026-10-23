@@ -12,6 +12,8 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=@VENV@/bin/python scripts/update_all.py
 TimeoutStartSec=3h
 Nice=10
+CPUWeight=50
+IOWeight=50
 MemoryMax=1000M
 # exit 3 = jiná aktualizace právě běží — není to chyba
 SuccessExitStatus=3

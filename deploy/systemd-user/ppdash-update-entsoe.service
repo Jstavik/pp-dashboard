@@ -15,6 +15,7 @@ ExecStart=@VENV@/bin/python scripts/update_all.py --only entsoe
 TimeoutStartSec=4h
 Nice=10
 CPUWeight=50
+IOWeight=50
 MemoryMax=800M
 SuccessExitStatus=3
 NoNewPrivileges=yes

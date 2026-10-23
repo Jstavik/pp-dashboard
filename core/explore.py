@@ -13,7 +13,7 @@ Agregace je dvoustupňová (jako „measure“ v Power BI):
    tj. MW → MWh i přes změnu času).
 
 Paměť (web na 4 GB LXC vedle aktualizací): DuckDB má vlastní limit
-(PPDASH_DUCKDB_MEM, default 512MB; nad něj spilluje do cache/duckdb_tmp),
+(PPDASH_DUCKDB_MEM, default 256MB; nad něj spilluje do cache/duckdb_tmp),
 čte jen potřebné sloupce a jen soubory v časovém okně (měsíční/denní
 partitiony podle názvu, podadresáře podle filtru partition dimenze).
 Do pandas/prohlížeče jde jen výsledek, a ten má strop MAX_ROWS — při
@@ -73,7 +73,7 @@ def _connection():
                 tmp = cache_root() / "duckdb_tmp"
                 tmp.mkdir(parents=True, exist_ok=True)
                 _con = duckdb.connect(config={
-                    "memory_limit": env("PPDASH_DUCKDB_MEM", "512MB"),
+                    "memory_limit": env("PPDASH_DUCKDB_MEM", "256MB"),
                     "threads": int(env("PPDASH_DUCKDB_THREADS", "2")),
                     "preserve_insertion_order": False,
                     "temp_directory": str(tmp),

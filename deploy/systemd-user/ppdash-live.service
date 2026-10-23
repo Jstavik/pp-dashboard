@@ -14,6 +14,9 @@ ExecStart=@VENV@/bin/python scripts/update_all.py --only live -q
 # běh se nesmí překrývat s dalším (timer další spustí, až tenhle skončí)
 TimeoutStartSec=170s
 Nice=5
+# přednost před dlouhými aktualizacemi (ty mají CPUWeight/IOWeight=50)
+CPUWeight=200
+IOWeight=200
 MemoryMax=400M
 SuccessExitStatus=3
 NoNewPrivileges=yes
