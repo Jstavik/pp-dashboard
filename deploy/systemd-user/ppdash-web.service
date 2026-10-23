@@ -1,7 +1,7 @@
 # Uživatelská unita (systemctl --user). Šablona: @REPO@, @VENV@, @DATA@
 # doplní deploy/install_user.sh a zkopíruje do ~/.config/systemd/user/.
 [Unit]
-Description=PP Dashboard — web (FastAPI/uvicorn, 127.0.0.1:8501)
+Description=PP Dashboard — web (FastAPI/uvicorn, 0.0.0.0:8501, LAN + tunel)
 StartLimitIntervalSec=10min
 StartLimitBurst=10
 
@@ -13,14 +13,15 @@ Environment=PPDASH_DATA_DIR=@DATA@
 Environment=ARROW_DEFAULT_MEMORY_POOL=system
 Environment=MALLOC_ARENA_MAX=2
 Environment=PYTHONUNBUFFERED=1
-# Jen localhost — ven se publikuje přes Cloudflare Tunnel (+ Access).
-ExecStart=@VENV@/bin/uvicorn web.app:app --host 127.0.0.1 --port 8501 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
+# Poslouchá na všech rozhraních — Cloudflare Tunnel (+ Access) běží na jiných
+# strojích v LAN; X-Forwarded-* se věří jen od localhostu a těchto strojů.
+ExecStart=@VENV@/bin/uvicorn web.app:app --host 0.0.0.0 --port 8501 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1,192.168.68.124,192.168.68.103 --no-access-log
 Restart=on-failure
 RestartSec=5
-# 2 GB RAM: web drží ~0.5 GB, aktualizace běží vedle něj. Limity platí,
+# 4 GB RAM: web drží ~0.5–1.2 GB, aktualizace běží vedle něj. Limity platí,
 # jen když uživatelský manager má delegovaný memory controller (Debian 13 ano).
-MemoryHigh=1100M
-MemoryMax=1400M
+MemoryHigh=1300M
+MemoryMax=1600M
 NoNewPrivileges=yes
 
 [Install]

@@ -1,9 +1,12 @@
 # Nasazení PP Dashboard bez roota (uživatelské systemd unity)
 
-Kontejner (Debian 13 LXC, 2 jádra, 2 GB RAM), běžný uživatel **`claude`
-bez sudo**. Všechno běží jako `systemctl --user`. Web poslouchá jen na
-`127.0.0.1:8501`, ven ho publikuje **Cloudflare Tunnel** a přístup hlídá
-**Cloudflare Access** (mimo tento návod).
+Kontejner (Debian 13 LXC, 2 jádra, 4 GB RAM), běžný uživatel **`claude`
+bez sudo**. Všechno běží jako `systemctl --user`. Web poslouchá na
+`0.0.0.0:8501` (LAN), ven ho publikuje **Cloudflare Tunnel** z jiného
+stroje v LAN a přístup hlídá **Cloudflare Access** (mimo tento návod).
+Hlavičkám `X-Forwarded-*` se věří jen od `127.0.0.1`, `192.168.68.124`
+a `192.168.68.103` (`--forwarded-allow-ips` v `ppdash-web.service` —
+při změně stroje s tunelem upravit tam).
 
 | Cesta | Obsah |
 |---|---|
@@ -53,10 +56,10 @@ nano ~/.config/ppdash/env                        # ENTSOE_TOKEN=…, GIE_API_KEY
 
 | Unita | Kdy | Co |
 |---|---|---|
-| `ppdash-web.service` | trvale | uvicorn, 1 worker, `MemoryMax=1400M` |
+| `ppdash-web.service` | trvale | uvicorn, 1 worker, `MemoryHigh=1300M`, `MemoryMax=1600M` |
 | `ppdash-live.timer` | každou minutu (:20 s) | `update_all.py --only live -q`: ČEPS minutová data (odchylka, SVR, zatížení, výroba, OZE, frekvence, toky, cena odchylky), GASSCO realtime nominace, GASSCO UMM |
 | `ppdash-update.timer` | 06:00 a 17:00 Praha | `update_all.py`: ENTSO-G toky/allocation/operational, GIE, LNG, GASSCO nominace, hydro, DAP, výroba, odstávky, Energy-Charts |
-| `ppdash-update-cot.timer` | so + út 08:00 Praha | `update_all.py --only cot` (dohání i chybějící týdny) |
+| `ppdash-update-cot.timer` | st 14:00 a 19:00, čt + so 08:00 Praha | `update_all.py --only cot` (ICE vydává report za pátek ve středu; dohání i chybějící týdny) |
 
 Všechny aktualizace jsou inkrementální: zjistí konec uložených dat, stáhnou
 jen novější (s malým překryvem kvůli revizím) a zapíšou upsertem s dedupem —
@@ -93,7 +96,7 @@ cd ~/pp-dashboard && git pull && deploy/install_user.sh --no-seed
 ## 4. Cloudflare Tunnel + Access
 
 Mimo rozsah tohoto skriptu; vzor konfigurace `cloudflared-config.example.yml`
-(služba `http://127.0.0.1:8501`). `/healthz` je levný (nečte data) — vhodný
+(služba `http://<IP kontejneru>:8501`, z kontejneru samotného `http://127.0.0.1:8501`). `/healthz` je levný (nečte data) — vhodný
 pro monitoring (případně Access bypass jen pro tuto cestu).
 
 ## Provozní poznámky

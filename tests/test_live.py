@@ -218,7 +218,31 @@ def test_update_cot_catches_up(monkeypatch):
     monkeypatch.setattr(ic, "fetch_ice_cot", lambda d, venues=ic.VENUES: fetched.append(str(d)) or
                         {v: {"success": True, "rows_fetched": 1, "rows_in_store": 1} for v in ic.VENUES})
     res = updaters.update_cot(pd.Timestamp("2026-10-24", tz="UTC"))
-    assert fetched == ["2026-10-16", "2026-10-23"] and res["errors"] == 0
+    assert fetched == ["2026-10-16"] and res["errors"] == 0   # 10-23 vyjde až ve středu 10-28
+    fetched.clear()
+    updaters.update_cot(pd.Timestamp("2026-10-28 13:00", tz="UTC"))
+    assert fetched == ["2026-10-16", "2026-10-23"]
+
+
+def test_last_published_friday():
+    from datetime import date
+    from core.updaters import last_published_friday
+    assert last_published_friday(pd.Timestamp("2026-10-20")) == date(2026, 10, 9)   # út
+    assert last_published_friday(pd.Timestamp("2026-10-21")) == date(2026, 10, 16)  # st = publikace
+    assert last_published_friday(pd.Timestamp("2026-10-24")) == date(2026, 10, 16)  # so
+
+
+def test_update_cot_not_yet_published_is_warn(monkeypatch):
+    from core import updaters
+    import data.ice_cot as ic
+    monkeypatch.setattr(ic, "probe_rate_limit", lambda venue="IFEU": {"rate_limited": False})
+    monkeypatch.setattr(ic, "load_ice_cot", lambda: pd.DataFrame({"report_date": ["2026-10-09"]}))
+    monkeypatch.setattr(ic, "fetch_ice_cot", lambda d, venues=ic.VENUES:
+                        {v: {"success": False, "http_status": 404} for v in ic.VENUES})
+    res = updaters.update_cot(pd.Timestamp("2026-10-21 12:00", tz="UTC"))
+    assert res["errors"] == 2
+    with pytest.raises(updaters.UpdateError):
+        updaters.update_cot(pd.Timestamp("2026-10-23 12:00", tz="UTC"))
 
 
 # ── registr datasetů ────────────────────────────────────────────────────

@@ -55,11 +55,14 @@ Ověřená podezření:
   `cot` — v `data/gassco.py`, `data/lng.py`, `data/ice_cot.py`, jen
   registrované v `update_all.py`); v repu jsou aktuální (23.10.).
   `entsog_capacity` updater nemá a nikdo ho nečte → mrtvé (viz výš).
-- **ICE CoT zastarává**: poslední data `report_date` 2026-09-18, od
-  2026-09-25 vrací ICE na URL `…/IFEU_FUT_YYYYMMDD.csv` 404 (viz
-  `ice_cot_status.json`). Úloha `cot` teď dohání všechny chybějící pátky
-  (max 8 týdnů), takže se po opravě sama doplní — ale příčina 404
-  (změna URL / formátu na straně ICE?) je **NEOVĚŘENÁ** a neopravená.
+- **ICE CoT** (opraveno v kole 3): URL `…/IFEU_FUT_YYYYMMDD.csv` i
+  `NDEX_FUT_…` **fungují** (ověřeno v kontejneru: 200 až do 20261016).
+  Dřívější 404 v `ice_cot_status.json` měly dvě příčiny: blokovaná síť
+  v cloudovém prostředí a hlavně to, že ICE vydává report za pátek až
+  **následující středu** — sobotní/úterní běh chtěl pátek, který ještě
+  nevyšel. Úloha `cot` teď bere nejnovější pátek + 5 dní ≤ dnes
+  (`last_published_friday`), timer běží st 14:00 a 19:00 + záloha čt/so
+  08:00; 404 v den publikace je jen WARN. Chybějící pátky dohání (max 8).
 - **Energy-Charts v repu končí 2026-09-25** — workflow na `main` je
   nespouští (`update_gas_history.py` je vynechává), aktualizuje je až
   timer v kontejneru (navazuje od konce dat).
@@ -73,7 +76,7 @@ Ověřená podezření:
 |---|---|---|
 | `ppdash-live.timer` | každou minutu (:20 s) | `update_all.py --only live -q` = `ceps`, `gassco_realtime`, `gassco_umm` |
 | `ppdash-update.timer` | 06:00 a 17:00 Europe/Prague | výchozí běh = vše kromě `live` a `cot` |
-| `ppdash-update-cot.timer` | so + út 08:00 Europe/Prague | `cot` |
+| `ppdash-update-cot.timer` | st 14:00 + 19:00, čt + so 08:00 Europe/Prague | `cot` |
 
 - **ČEPS**: v kódu se všechny minutové řady volají s `agregation="MI"`
   (výroba a cena odchylky po čtvrthodinách) a web je obnovuje po 60 s
@@ -170,7 +173,7 @@ Ověřená podezření:
 4. Ověřit živá API (níže NEOVĚŘENO), hlavně ČEPS SOAP odpovědi (názvy
    sérií, `Frekvence` bez parametrů, rozsah víc dní) a že web na
    Elektřině po spuštění timeru čte z úložiště (stejná čísla jako dřív).
-5. Zjistit příčinu 404 u ICE CoT (URL od 2026-09-25).
+5. ~~Zjistit příčinu 404 u ICE CoT~~ — vyřešeno (publikace ve středu, viz výš).
 6. Prohlédnout export PNG/SVG u mapy (MapLibre) — v headless Chromiu
    ověřen jen sloupcový graf.
 

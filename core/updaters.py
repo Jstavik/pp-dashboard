@@ -691,6 +691,17 @@ def last_friday(today: pd.Timestamp):
     return (today - pd.Timedelta(days=offset)).date()
 
 
+# ICE publikuje report za pátek (název souboru …_YYYYMMDD = pátek) až
+# následující STŘEDU — dřívější sobotní/úterní běh chtěl pátek, který ještě
+# nevyšel (odtud 404 v ice_cot_status.json).
+COT_PUBLICATION_LAG_DAYS = 5
+
+
+def last_published_friday(today: pd.Timestamp):
+    """Nejnovější pátek, jehož report už měl vyjít (pátek + 5 dní ≤ dnes)."""
+    return last_friday(today - pd.Timedelta(days=COT_PUBLICATION_LAG_DAYS))
+
+
 COT_MAX_CATCHUP_WEEKS = 8
 
 
@@ -709,19 +720,21 @@ def _cot_pending_fridays(report_date, stored_max) -> list:
 
 
 def update_cot(today: pd.Timestamp = None) -> dict:
-    """Týdenní CoT: nejbližší minulý pátek (report_date), IFEU + NDEX přes
-    data/ice_cot.py::fetch_ice_cot (merge + status log) — a k tomu všechny
-    dřívější pátky, které v úložišti chybí (inkrementálně od posledního
-    uloženého report_date, max COT_MAX_CATCHUP_WEEKS), takže týden, kdy
-    ICE soubor nevydalo včas, se dožene příští běh. Sobotní i úterní běh se
-    trefí do STEJNÉHO report_date (už uložený týden se znovu nestahuje).
+    """Týdenní CoT: nejnovější už publikovaný pátek (report_date, vychází
+    ve středu), IFEU + NDEX přes data/ice_cot.py::fetch_ice_cot (merge +
+    status log) — a k tomu všechny dřívější pátky, které v úložišti chybí
+    (inkrementálně od posledního uloženého report_date, max
+    COT_MAX_CATCHUP_WEEKS), takže týden, kdy ICE soubor nevydalo včas, se
+    dožene příští běh. Středeční i záložní běhy (čt, so) se trefí do
+    STEJNÉHO report_date (už uložený týden se znovu nestahuje). 404 v den
+    publikace (středa 14:00 může být dřív než ICE) = WARN, ne chyba.
     Při rate-limitu (429) se fetch přeskočí (není to chyba — zkusí se
     příští běh). Výsledek se hodnotí podle posledního pátku: selhání
     jednoho venue = WARN, obou = chyba."""
     from data.ice_cot import fetch_ice_cot, load_ice_cot, probe_rate_limit, VENUES
 
     today = today or pd.Timestamp.now(tz="UTC")
-    report_date = last_friday(today)
+    report_date = last_published_friday(today)
     try:
         stored = load_ice_cot()
         stored_max = pd.to_datetime(stored["report_date"]).max().date() if not stored.empty else None
@@ -755,6 +768,11 @@ def update_cot(today: pd.Timestamp = None) -> dict:
             http_status = entry.get("http_status")
             summary[venue] = f"FAILED {http_status}" if http_status else "FAILED"
             log.warning(f"  {venue}: SELHALO — http_status={http_status}, error={entry.get('error')}")
+    publication_day = report_date + timedelta(days=COT_PUBLICATION_LAG_DAYS)
+    if failed == len(VENUES) and today.date() <= publication_day and all(
+            results.get(v, {}).get("http_status") == 404 for v in VENUES):
+        log.warning(f"ICE CoT {report_date}: zatím nepublikováno (404 v den publikace) — zkusí další běh")
+        return {"report_date": report_date, "venues": summary, "errors": failed}
     if failed == len(VENUES):
         raise UpdateError(f"ICE CoT {report_date}: všechny venues selhaly ({summary})")
     return {"report_date": report_date, "venues": summary, "errors": failed}

@@ -137,7 +137,10 @@ def test_user_units():
     assert "--only live -q" in (UNITS / "ppdash-live.service").read_text()
     assert "OnCalendar=*-*-* *:*:20" in (UNITS / "ppdash-live.timer").read_text()
     assert "Europe/Prague" in (UNITS / "ppdash-update.timer").read_text()
-    assert "127.0.0.1 --port 8501" in (UNITS / "ppdash-web.service").read_text()
+    web = (UNITS / "ppdash-web.service").read_text()
+    assert "--host 0.0.0.0 --port 8501" in web and "--forwarded-allow-ips 127.0.0.1,192.168.68.124,192.168.68.103" in web
+    cot = (UNITS / "ppdash-update-cot.timer").read_text()
+    assert "OnCalendar=Wed *-*-* 14:00:00 Europe/Prague" in cot and "Thu,Sat" in cot
     assert "WantedBy=default.target" in (UNITS / "ppdash-web.service").read_text()
 
 
