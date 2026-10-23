@@ -138,6 +138,57 @@ výsledkem dotazu (malá tabulka), kdyby byl drag&drop potřeba.
   Energinet parametry `start/end/timezone=utc/limit=0` a názvy datasetů
   (Energinet je občas přejmenovává — chyba jednoho = WARN).
 
+### Počasí — rešerše (co je zdarma a legálně použitelné)
+| Zdroj | Co | Licence / podmínky | Použití tady |
+|---|---|---|---|
+| **Open-Meteo** API | forecast (ECMWF IFS 0.25°, AIFS, GFS, ICON, …), ensemble (ECMWF ENS 51 čl., GEFS, ICON-EPS), archive (ERA5/ERA5-Land od 1940) | data **CC BY 4.0** (uvést „Weather data by Open-Meteo.com“ + odkaz); **free API jen nekomerčně**, < 10 000 volání/den, 5 000/h, 600/min ([terms](https://open-meteo.com/en/terms)). Komerčně: placený klíč (`customer-*` hosty) nebo vlastní instance (open-source, AGPL) | **implementováno** — `OPENMETEO_API_KEY` přepne na komerční hosty, `OPENMETEO_BASE_URL` na vlastní instanci |
+| **ECMWF open data** (přímo GRIB2) | IFS + AIFS 0.25°, ENS, posledních ~12 běhů | **CC BY 4.0 + ECMWF Terms of Use** — i komerčně s atribucí ([open data](https://www.ecmwf.int/en/forecasts/datasets/open-data)) | neimplementováno (GRIB → potřeba eccodes/cfgrib, ~stovky MB/běh); legální alternativa k Open-Meteo pro komerční použití |
+| **ECMWF charts** (charts.ecmwf.int) | mapy, meteogramy | podmínky pro grafiku nejsou jasně CC BY (open data ano) | **jen odkaz** |
+| **Tropical Tidbits** | obrázky map modelů | žádné zveřejněné podmínky pro vkládání/stahování; obrázky autora → bez svolení **jen odkaz**, nestahovat, neembedovat | odkaz |
+| **DWD Open Data** | ICON/ICON-EU GRIB, pozorování stanic, klima | zdarma i komerčně, atribuce („Quelle: Deutscher Wetterdienst“, GeoNutzV / CC BY 4.0) | odkaz; kandidát na DE stanice |
+| **ČHMÚ open data** (opendata.chmi.cz) | stanice, klimatologie | otevřená data (CC BY 4.0) | odkaz; kandidát na CZ stanice/normály |
+| **Windy** | interaktivní mapa | oficiální embed widget je k vkládání určený | embed v záložce Mapy |
+| Copernicus CDS (ERA5) | reanalýza | zdarma i komerčně (Copernicus licence, atribuce) | přes Open-Meteo archive |
+
+**Pozor:** PP Dashboard je interní nástroj firmy → Open-Meteo **free API
+pravděpodobně nesplňuje „nekomerční použití“**. Doporučení: koupit Open-Meteo
+API předplatné (nejjednodušší, kód připravený — jen `OPENMETEO_API_KEY`) nebo
+provozovat vlastní Open-Meteo instanci (Docker, stahuje ECMWF/DWD open data,
+které komerční použití dovolují) a nastavit `OPENMETEO_BASE_URL`.
+
+### Počasí — implementace (`data/weather.py`, stránka **Počasí**)
+- Oblasti CZ, DE, NORDIC; pro každou veličinu vlastní vážené body (teplota
+  ~ obyvatelstvo, vítr 100 m ~ větrné parky, slunce ~ FVE, srážky jen
+  Nordic = hydro povodí NO). Váhy jsou hrubý odhad v `REGIONS`.
+- Datasety: `weather_daily/<R>/` (ERA5 denně od 1991 kvůli normálu
+  1991–2020 + posledních ~6 dní z forecast API, ERA5 je pak přepíše),
+  `weather_fc/<R>/` (hodinová předpověď modelů, poslední běh),
+  `weather_fc_daily/<R>/` (denní snapshot každého dne vydání → změna
+  předpovědi proti včerejšku), `weather_ens/<R>.parquet` (p10/p50/p90
+  ensemblu, poslední běh).
+- Timer **`ppdash-update-weather`** 05:50/11:50/17:50/23:50 (po bězích
+  00/06/12/18 UTC), zámek `.weather.lock`; ~30 volání na běh + backfill
+  ERA5 s rozpočtem `PPDASH_WEATHER_BUDGET_CALLS=2500` „volání“ na běh
+  (Open-Meteo váží volání délkou období a počtem míst; celý backfill od 1991
+  ≈ 2–3 dny běhů, pod denním limitem).
+- Modely `PPDASH_WEATHER_MODELS` (default `ecmwf_ifs025,ecmwf_aifs025_single,
+  gfs_seamless,icon_seamless`), ensemble `PPDASH_WEATHER_ENS_MODELS`
+  (`ecmwf_ifs025,gfs025`); neznámý model (HTTP 400) → zkusí se modely
+  jednotlivě a vadný se přeskočí.
+- Stránka `/pocasi`: Teplota a HDD, Vítr 100 m, Slunce, Srážky (Nordic) —
+  denní výhled (skutečnost + modely + ENS p10–p90 + normál ±1σ), tabulka
+  7/14 dní po modelech vs. normál (u teploty HDD vs. normál), kumulované HDD
+  v topné sezóně (letos + ECMWF předpověď vs. loni vs. normál), hodinová
+  předpověď s ensemble pásmem, změna předpovědi proti předchozímu dni.
+  Záložka Mapy: odkazy (ECMWF, TT, DWD, ČHMÚ, yr.no) + Windy embed.
+- HDD/CDD podle Eurostatu (HDD = 18 − Tm pro Tm ≤ 15 °C; CDD = Tm − 21 pro
+  Tm ≥ 24 °C). V Průzkumníku datasety Počasí (denní vč. HDD/CDD měr,
+  hodinová předpověď, denní předpovědi podle dne vydání).
+- **NEOVĚŘENO**: názvy modelů v Open-Meteo (`ecmwf_aifs025_single`, `gfs025`
+  pro ensemble), tvar klíčů ensemble (`<var>_memberNN_<model>`), že
+  `past_days` + `models=best_match` vrací poslední dny, reálná „cena“ backfillu
+  v kvótě. Testováno proti falešným odpovědím ve tvaru Open-Meteo.
+
 ## Kolo 2 (2026-10-23): vlastní databáze, živá data, Energy-Charts, export, nasazení bez roota
 
 ### Audit historie (`data/history` → `PPDASH_DATA_DIR/history`)

@@ -56,6 +56,11 @@ DATASETS = [
     Dataset("nve_reservoirs_stats.parquet", "nve", float("inf")),
     Dataset("fingrid", "fingrid", 36, "time"),
     Dataset("energinet", "energinet", 72, "time", subdirs=True),
+    # počasí (timer ppdash-update-weather, 4× denně, data/weather.py)
+    Dataset("weather_daily", "weather", 24 * 8, "date", subdirs=True),
+    Dataset("weather_fc", "weather", 14, "time", subdirs=True),
+    Dataset("weather_fc_daily", "weather", 30, "issued", subdirs=True),
+    Dataset("weather_ens", "weather", 14),
     # týdně (timer ppdash-update-cot, st + záloha čt/so)
     Dataset("ice_cot.parquet", "cot", 24 * 12, "report_date"),
     Dataset("ice_cot_status.json", "cot", 24 * 11),
@@ -317,6 +322,35 @@ EXPLORE = [
         "Energinet Energi Data Service", "energinet", native="1h", default_days=14, default_cat="series",
         default_filters=(("dataset", ("ProductionConsumptionSettlement",)),),
         description="Obecně převedené sloupce datasetů (série = název sloupce, u prognóz typ|sloupec)."),
+    ExploreSpec(
+        "weather_daily", "Počasí — denní pozorování (ERA5)", "Počasí", "weather_daily/*/*.parquet",
+        "CAST(\"date\" AS TIMESTAMPTZ)",
+        (Measure("v", "Hodnota (°C | m/s | kWh/m² | mm)", "value", "", "avg", "avg"),
+         Measure("hdd", "HDD (Eurostat, jen teplota)", "CASE WHEN value <= 15 THEN 18 - value ELSE 0 END", "°C·den",
+                 "avg", "sum"),
+         Measure("cdd", "CDD (Eurostat, jen teplota)", "CASE WHEN value >= 24 THEN value - 21 ELSE 0 END", "°C·den",
+                 "avg", "sum")),
+        (Dim("region", "Oblast", "region", partition=True), Dim("var", "Veličina"), Dim("src", "Zdroj")),
+        "Open-Meteo archive (ERA5) + poslední dny z forecast API", "weather_daily", native="1D",
+        default_days=3 * 365, default_cat="region", default_filters=(("var", ("temp",)),),
+        description="Vážené průměry bodů oblasti. var: temp °C, wind100 m/s, solar kWh/m²/den, precip mm/den. "
+                    "HDD/CDD dávají smysl jen s filtrem var=temp."),
+    ExploreSpec(
+        "weather_fc", "Počasí — hodinová předpověď (modely)", "Počasí", "weather_fc/*/*.parquet",
+        "CAST(\"time\" AS TIMESTAMPTZ)",
+        (Measure("v", "Hodnota (°C | m/s | W/m² | mm/h)", "value", "", "avg", "avg"),),
+        (Dim("region", "Oblast", "region", partition=True), Dim("var", "Veličina"), Dim("model", "Model")),
+        "Open-Meteo forecast (ECMWF IFS/AIFS, GFS, ICON)", "weather_fc", native="1h", default_days=16,
+        default_cat="model", default_filters=(("region", ("CZ",)), ("var", ("temp",)))),
+    ExploreSpec(
+        "weather_fc_daily", "Počasí — denní předpovědi podle dne vydání", "Počasí", "weather_fc_daily/*/*.parquet",
+        "CAST(\"date\" AS TIMESTAMPTZ)",
+        (Measure("v", "Hodnota", "value", "", "avg", "avg"),),
+        (Dim("region", "Oblast", "region", partition=True), Dim("var", "Veličina"), Dim("model", "Model"),
+         Dim("issued", "Vydáno", "strftime(CAST(issued AS TIMESTAMPTZ), '%Y-%m-%d')")),
+        "Open-Meteo forecast (snapshot dne vydání)", "weather_fc_daily", native="1D", default_days=16,
+        default_cat="issued", default_filters=(("region", ("CZ",)), ("var", ("temp",)), ("model", ("ecmwf_ifs025",))),
+        description="Jak se předpověď pro dané dny měnila mezi dny vydání (kategorie = Vydáno)."),
     ExploreSpec(
         "entsog_flows", "Toky plynu (ENTSO-G, denní)", "Plyn", "entsog_flows/*.parquet",
         "CAST(\"date\" AS TIMESTAMPTZ)",

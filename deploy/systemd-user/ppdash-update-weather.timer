@@ -1,0 +1,11 @@
+[Unit]
+Description=PP Dashboard — počasí 4× denně (po bězích modelů 00/06/12/18 UTC)
+
+[Timer]
+# ECMWF/GFS/ICON běhy jsou v Open-Meteo dostupné ~4–6 h po termínu
+OnCalendar=*-*-* 05,11,17,23:50:00 Europe/Prague
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

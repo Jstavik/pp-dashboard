@@ -18,6 +18,7 @@ Použití:
     entsoe = entsoe_prices, entsoe_load, entsoe_ws, entsoe_flows (vlastní timer, 3× denně — ve výchozím běhu NE)
     cot    = cot (ICE MiFID II, týdenní — ve výchozím běhu se NEspouští)
     energy_charts
+    weather = weather (Open-Meteo, vlastní timer 4× denně — ve výchozím běhu NE)
     nordic = nve, fingrid (jen s FINGRID_API_KEY), energinet
     all    = všechno včetně live a cot
 
@@ -107,6 +108,10 @@ def _tasks() -> dict:
             return getattr(eh, name)()
         return run
 
+    def weather():
+        from data.weather import update_weather
+        return update_weather()
+
     def nordic(name):
         def run():
             from data import nordic as nd
@@ -133,6 +138,7 @@ def _tasks() -> dict:
         "nve":                ("NVE nádrže Norsko (týdně, NO + NO1–5)", nordic("update_nve")),
         "fingrid":            ("Fingrid open data FI (jen s FINGRID_API_KEY)", nordic("update_fingrid")),
         "energinet":          ("Energinet Energi Data Service DK", nordic("update_energinet")),
+        "weather":            ("Počasí Open-Meteo: předpověď (modely + ensemble) a historie ERA5", weather),
         "entsoe_prices":      ("ENTSO-E day-ahead ceny všech bidding zón", entsoe("update_prices")),
         "entsoe_load":        ("ENTSO-E spotřeba skutečná + prognóza D-1", entsoe("update_load")),
         "entsoe_ws":          ("ENTSO-E prognóza větru a slunce (day-ahead)", entsoe("update_ws_forecast")),
@@ -144,7 +150,7 @@ TASK_ORDER = [
     "ceps", "gassco_realtime", "gassco_umm",
     "entsog", "entsog_allocation", "gie", "hydro", "entsog_operational", "lng",
     "gassco", "dap_europe", "generation", "outages", "energy_charts", "nve", "fingrid", "energinet", "cot",
-    "entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows",
+    "entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows", "weather",
 ]
 LIVE_TASKS = ["ceps", "gassco_realtime", "gassco_umm"]
 ENTSOE_TASKS = ["entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows"]
@@ -154,9 +160,10 @@ GROUPS = {
     "live":  list(LIVE_TASKS),
     "entsoe": list(ENTSOE_TASKS),
     "nordic": ["nve", "fingrid", "energinet"],
+    "weather": ["weather"],
     "all":   list(TASK_ORDER),
 }
-DEFAULT_EXCLUDE = {"cot", *LIVE_TASKS, *ENTSOE_TASKS}
+DEFAULT_EXCLUDE = {"cot", "weather", *LIVE_TASKS, *ENTSOE_TASKS}
 
 
 def resolve(only: list, skip: list) -> list:
@@ -283,7 +290,8 @@ def main(argv=None) -> int:
     # vlastní zámky: minutový live běh a ENTSO-E backfill (hodiny) nesmí
     # blokovat denní běh ani sebe navzájem — zapisují do jiných datasetů
     lock_name = (".live.lock" if set(names) <= set(LIVE_TASKS)
-                 else ".entsoe.lock" if set(names) <= set(ENTSOE_TASKS) else ".update.lock")
+                 else ".entsoe.lock" if set(names) <= set(ENTSOE_TASKS)
+                 else ".weather.lock" if set(names) == {"weather"} else ".update.lock")
     lock = _Lock(history_root() / lock_name)
     if not args.no_lock and not lock.acquire():
         log.error(f"jiná aktualizace právě běží (zámek {lock.path})")

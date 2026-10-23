@@ -1,0 +1,17 @@
+{% import "macros.html" as m %}
+<div class="card panel">
+  {{ m.section("Mapy předpovědí — odkazy") }}
+  <ul class="link-list">
+    <li><a href="https://charts.ecmwf.int/" target="_blank" rel="noopener">ECMWF charts</a> — IFS/AIFS, ensemble meteogramy, anomálie (open charts, CC BY 4.0 pro open data; pouze odkaz)</li>
+    <li><a href="https://www.tropicaltidbits.com/analysis/models/" target="_blank" rel="noopener">Tropical Tidbits — model maps</a> (ECMWF, GFS, ICON, ensembly; bez zveřejněných podmínek pro vkládání/stahování → jen odkaz)</li>
+    <li><a href="https://www.dwd.de/DE/leistungen/opendata/opendata.html" target="_blank" rel="noopener">DWD Open Data</a> / <a href="https://www.dwd.de/DE/leistungen/beobachtung/beobachtung.html" target="_blank" rel="noopener">DWD pozorování</a></li>
+    <li><a href="https://www.chmi.cz/" target="_blank" rel="noopener">ČHMÚ</a> — předpovědi a výstrahy, <a href="https://opendata.chmi.cz/" target="_blank" rel="noopener">otevřená data ČHMÚ</a></li>
+    <li><a href="https://www.yr.no/" target="_blank" rel="noopener">yr.no</a> (MET Norway) — Nordic</li>
+    <li><a href="https://www.windy.com/" target="_blank" rel="noopener">Windy.com</a></li>
+  </ul>
+</div>
+<div class="card panel">
+  {{ m.section("Windy — vítr nad Evropou (oficiální embed widget)") }}
+  <div class="embed-wrap"><iframe title="Windy" loading="lazy" src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=%C2%B0C&metricWind=m%2Fs&zoom=4&overlay=wind&product=ecmwf&level=100m&lat=54&lon=13" frameborder="0"></iframe></div>
+  <p class="muted small">Načítá se z windy.com až při otevření záložky (iframe, žádná data se neukládají).</p>
+</div>

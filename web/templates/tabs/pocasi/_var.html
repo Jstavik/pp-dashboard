@@ -1,0 +1,15 @@
+{% import "macros.html" as m %}
+{% if c.empty %}
+<div class="alert">Data počasí zatím nejsou (timer <code>ppdash-update-weather</code>, 4× denně; historie ERA5 od 1991 se dohání po částech).</div>
+{% else %}
+<form class="controls">
+  {{ m.select("region", c.regions, c.region, "Oblast", c.names) }}
+  {{ m.select("past", [14, 45, 90, 365], c.past or 45, "Historie v grafu [dní]") }}
+</form>
+{{ m.chart("outlook", 460) }}
+{% if c.outlook %}<div class="card panel">{{ m.section("Výhled po modelech vs. normál" ~ (" (" ~ c.normal_years ~ ")" if c.normal_years else "")) }}{{ m.table(c.outlook) }}</div>{% endif %}
+{% if c.var == "temp" %}{{ m.chart("hdd", 400) }}{% endif %}
+{{ m.chart("hourly", 420) }}
+{{ m.chart("change", 340) }}
+<p class="muted small">Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0) — ECMWF IFS/AIFS, NOAA GFS, DWD ICON; historie ERA5 (Copernicus). Hodnoty jsou vážené průměry bodů oblasti (váhy v <code>data/weather.py</code>).</p>
+{% endif %}
