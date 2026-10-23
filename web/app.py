@@ -49,7 +49,7 @@ pd.set_option("mode.copy_on_write", True)
 
 def _load_tabs() -> None:
     # Import modulů záložek = registrace (pořadí určuje pořadí v navigaci)
-    from web.tabs import electricity, gas, report, energy_charts, ceps_outages, cot  # noqa: F401
+    from web.tabs import electricity, gas, report, energy_charts, explorer, ceps_outages, cot  # noqa: F401
 
 
 _load_tabs()
@@ -225,6 +225,44 @@ def chart_data(request: Request, page_key: str, tab_key: str, chart_id: str, fmt
         body = export.to_xlsx_bytes(fig, {"graf": f"{page_key}/{tab_key}/{chart_id}", "parametry": str(p)})
         mt = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return Response(body, media_type=mt, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/explorer/pivot")
+def explorer_pivot(request: Request, fmt: str = "csv"):
+    """Kontingenční tabulka Průzkumníku jako CSV/XLSX (stejné parametry jako záložka)."""
+    from web import export
+    from web.tabs.explorer import pivot_export
+    if fmt not in ("csv", "xlsx"):
+        raise HTTPException(404, "Neznámý formát")
+    p = Params.from_request(request)
+    p._items = [(k, v) for k, v in p._items if k != "fmt"]
+    df, base = pivot_export(p)
+    if df.empty:
+        raise HTTPException(404, "Pivot nemá data")
+    stamp = pd.Timestamp.now(tz="Europe/Prague").strftime("%Y%m%d-%H%M")
+    filename = f"{base}_{stamp}.{fmt}"
+    if fmt == "csv":
+        body, mt = ("\ufeff" + df.to_csv()).encode("utf-8"), "text/csv; charset=utf-8"
+    else:
+        body = export.dataframe_xlsx_bytes(df.reset_index(), {"pohled": str(p)})
+        mt = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return Response(body, media_type=mt, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.post("/api/explorer/views")
+async def explorer_view_save(request: Request):
+    from web.tabs.explorer import save_view
+    body = await request.json()
+    try:
+        return {"views": save_view(str(body.get("name", "")), str(body.get("query", "")))}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/explorer/views")
+def explorer_view_delete(name: str):
+    from web.tabs.explorer import delete_view
+    return {"views": delete_view(name)}
 
 
 @app.get("/api/csv/{name}")

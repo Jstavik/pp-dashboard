@@ -118,7 +118,7 @@
   function chartUrl(el) {
     var frag = el.closest(".frag");
     return "/api/chart/" + frag.dataset.page + "/" + frag.dataset.tab + "/" + el.dataset.chart +
-      "?" + (frag.dataset.query || "");
+      "?" + (frag.dataset.query || "") + (el._ppExtra ? "&" + el._ppExtra : "");
   }
 
   function showMsg(el, text, cls) {
@@ -137,8 +137,77 @@
     if (card) card.classList.add("has-fig");
     var f = themed(payload.figure);
     if (!el.querySelector(".plot-container")) el.innerHTML = "";
-    return Plotly.react(el, f.data || [], f.layout || {}, cfg);
+    return Plotly.react(el, f.data || [], f.layout || {}, cfg).then(function () { bindCrossFilter(el); });
   }
+
+  /* ── cross-filtering (Průzkumník) ──────────────────────────────────── */
+  // [data-xrange]: zoom časového grafu přepočítá grafy [data-xfilter] jen
+  // pro vybrané okno; [data-xfilter="f_<dim>"]: klik na sloupec nastaví
+  // filtr dimenze na tuto hodnotu (znovu = zrušit) a přenačte záložku.
+  function isoDay(v) { return String(v).slice(0, 10); }
+
+  function bindCrossFilter(el) {
+    if (el._ppXBound || !el.on) return;
+    var panel = el.closest(".tab-panel");
+    var xr = el.closest("[data-xrange]"), xf = el.closest("[data-xfilter]");
+    if (!panel || (!xr && !xf)) return;
+    el._ppXBound = true;
+    if (xr) el.on("plotly_relayout", function (ev) {
+      var extra = null;
+      var r = ev["xaxis.range"] || (ev["xaxis.range[0]"] !== undefined ? [ev["xaxis.range[0]"], ev["xaxis.range[1]"]] : null);
+      if (r) extra = "xf_from=" + isoDay(r[0]) + "&xf_to=" + isoDay(r[1]);
+      else if (!ev["xaxis.autorange"]) return;
+      panel.querySelectorAll("[data-xfilter] .chart[data-chart]").forEach(function (t) {
+        t._ppExtra = extra; loadChart(t, true);
+      });
+    });
+    if (xf) el.on("plotly_click", function (ev) {
+      var pt = ev.points && ev.points[0];
+      if (!pt) return;
+      var val = String(pt.customdata !== undefined ? pt.customdata : pt.y);
+      var name = xf.dataset.xfilter;
+      var boxes = Array.prototype.slice.call(panel.querySelectorAll('input[type=checkbox][name="' + name + '"]'));
+      var checked = boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+      var only = checked.length === 1 && checked[0] === val;
+      var found = false;
+      boxes.forEach(function (b) { b.checked = !only && b.value === val; if (b.value === val) found = true; });
+      if (!found && !only) {
+        var form = panel.querySelector("form.explorer-filters") || panel.querySelector("form.controls");
+        var h = document.createElement("input");
+        h.type = "hidden"; h.name = name; h.value = val; form.appendChild(h);
+        var set = document.createElement("input");
+        set.type = "hidden"; set.name = name + "__set"; set.value = "1"; form.appendChild(set);
+      }
+      loadTab(panel, formQuery(panel));
+    });
+  }
+
+  /* ── uložené pohledy (Průzkumník) ──────────────────────────────────── */
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-view-save],[data-view-delete],[data-copy-link]");
+    if (!t) return;
+    var panel = t.closest(".tab-panel");
+    if (t.hasAttribute("data-copy-link")) {
+      var done = function () { t.textContent = "Zkopírováno ✓"; setTimeout(function () { t.textContent = "Kopírovat odkaz"; }, 1500); };
+      if (navigator.clipboard) navigator.clipboard.writeText(location.href).then(done, function () { prompt("Odkaz:", location.href); });
+      else prompt("Odkaz:", location.href);
+      return;
+    }
+    if (!panel) return;
+    var req;
+    if (t.hasAttribute("data-view-save")) {
+      var inp = panel.querySelector(".view-name");
+      var name = inp && inp.value.trim();
+      if (!name) { if (inp) inp.focus(); return; }
+      req = fetch("/api/explorer/views", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name, query: panel.dataset.query || "" }) });
+    } else {
+      if (!confirm("Smazat pohled „" + t.dataset.viewDelete + "“?")) return;
+      req = fetch("/api/explorer/views?name=" + encodeURIComponent(t.dataset.viewDelete), { method: "DELETE" });
+    }
+    req.then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); loadTab(panel, panel.dataset.query || ""); })
+      .catch(function (err) { alert("Uložení pohledu selhalo: " + err.message); });
+  });
 
   function loadChart(el, quiet) {
     if (!quiet) { el.classList.add("loading"); }

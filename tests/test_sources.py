@@ -352,7 +352,7 @@ def test_update_cot_rate_limited(monkeypatch):
     import data.ice_cot as ic
     monkeypatch.setattr(ic, "probe_rate_limit", lambda venue="IFEU": {"rate_limited": True, "retry_after_s": "60"})
     res = updaters.update_cot(pd.Timestamp("2026-10-24", tz="UTC"))
-    assert res["skipped"] and str(res["report_date"]) == "2026-10-23"
+    assert res["skipped"] and str(res["report_date"]) == "2026-10-16"  # 10-23 vyjde až ve středu
 
 
 # ── Energy-Charts ───────────────────────────────────────────────────────

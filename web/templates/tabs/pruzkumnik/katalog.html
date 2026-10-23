@@ -1,0 +1,16 @@
+{% import "macros.html" as m %}
+<div class="card panel">
+  {{ m.section("Katalog datasetů") }}
+  <p class="muted small">Vše, co je uložené v historii (PPDASH_DATA_DIR) a dá se procházet v Průzkumníku. Stáří = od posledních dat (nebo úpravy souborů).</p>
+  <div class="table-wrap"><table class="data">
+    <thead><tr><th>Skupina</th><th>Dataset</th><th>Míry</th><th>Dimenze</th><th>Rozlišení</th><th>Aktualizace</th><th>Od</th><th>Do</th><th>Stáří [h]</th><th>MB</th><th>Zdroj</th></tr></thead>
+    <tbody>{% for r in c.rows %}<tr>
+      <td>{{ r.group }}</td>
+      <td><a href="/pruzkumnik?tab=pohled&ds={{ r.key }}&ds_prev=">{{ r.label }}</a>{% if r.description %}<div class="muted small">{{ r.description }}</div>{% endif %}</td>
+      <td>{{ r.measures }}</td><td>{{ r.dims }}</td><td>{{ r.native }}</td><td>{{ r.schedule }}</td>
+      <td>{{ r.first }}</td><td>{{ r.last }}</td>
+      <td><span class="status {{ 'ok' if r.ok else 'stale' }}">{{ r.age if r.age is not none else '—' }}</span></td>
+      <td>{{ r.size if r.size is not none else '—' }}</td><td class="small">{{ r.source }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</div>

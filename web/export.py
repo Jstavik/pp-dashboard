@@ -213,3 +213,17 @@ def to_xlsx_bytes(fig, info: dict = None) -> bytes:
                 width = max((len(str(c.value)) for c in col[:200] if c.value is not None), default=8)
                 ws.column_dimensions[col[0].column_letter].width = min(max(width + 2, 10), 60)
     return buf.getvalue()
+
+
+def dataframe_xlsx_bytes(df: pd.DataFrame, info: dict = None, sheet: str = "data") -> bytes:
+    """Obecná tabulka (např. pivot Průzkumníku) → XLSX s listy data + info."""
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+        _clean(df, excel=True).to_excel(xw, sheet_name=sheet, index=False)
+        meta = {**(info or {}), "exportováno": pd.Timestamp.now(tz=TZ).strftime("%Y-%m-%d %H:%M")}
+        pd.DataFrame(list(meta.items()), columns=["položka", "hodnota"]).to_excel(xw, sheet_name="info", index=False)
+        for ws in xw.book.worksheets:
+            for col in ws.columns:
+                width = max((len(str(c.value)) for c in col[:200] if c.value is not None), default=8)
+                ws.column_dimensions[col[0].column_letter].width = min(max(width + 2, 10), 60)
+    return buf.getvalue()

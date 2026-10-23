@@ -4,3 +4,4 @@ scratch/
 .cache/
 .pytest_cache/
 *.egg-info/
+data/explorer_views.json

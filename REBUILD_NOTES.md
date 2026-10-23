@@ -1,6 +1,6 @@
 # REBUILD_NOTES — přechod ze Streamlitu na FastAPI (větev `rebuild/fastapi`)
 
-Stav k 2026-10-23 (kolo 2 níže). Větev založená z `main` @ 7a36a68. `main` ani
+Stav k 2026-10-23 (kolo 3 a 2 níže). Větev založená z `main` @ 7a36a68. `main` ani
 `.github/workflows` se neměnily, `data/history/` v repu zůstává.
 
 **Důležité omezení ověření:** v pracovním prostředí nebyly k dispozici API
@@ -9,6 +9,60 @@ tokeny a síť k datovým zdrojům byla zablokovaná (povolené jen PyPI).
 je otestované jen proti mockovaným odpovědím ve tvaru odvozeném z kódu
 (ne ze skutečných odpovědí). Web a výpočty jsou ověřené nad skutečnými
 daty z `data/history/` v repu.
+
+## Kolo 3 (2026-10-23): Průzkumník, ENTSO-E naplno, Nordic, počasí
+
+### Průzkumník (`/pruzkumnik`) — à la Power BI
+- **Katalog** datasetů je v `core/datasets.py::EXPLORE` (sémantický model:
+  časový sloupec, míry s výchozí agregací, dimenze, nativní rozlišení,
+  zdroj, výchozí filtry). Záložka **Katalog dat** ukazuje vše uložené
+  (rozsah dat, stáří, velikost, frekvence aktualizace, odkaz do Průzkumníku).
+- **Engine** `core/explore.py`: DuckDB přímo nad parquet (CSV datasety přes
+  parquet zrcadlo v `cache/explore_mirror` — `read_csv(union_by_name)` na
+  ~190 souborech GIE trval 8–15 s, zrcadlo 0.1 s; přepočítá se jen změněný
+  soubor podle mtime). Čtou se jen soubory v okně (měsíční/denní partitiony
+  podle názvu) a jen podadresáře podle filtru partition dimenze (země).
+- **Agregace dvoustupňová**: (1) sloučení ostatních dimenzí v časovém bodě
+  (`cagg`: součet/průměr/min/max; série s 15min a hodinovým rozlišením se
+  nejdřív zarovnají na hodinu), (2) agregace v čase (`agg`: součet, průměr,
+  min, max, poslední, **energie** = Σ hodinových průměrů výkonu → MWh/GWh,
+  správně i přes změnu času a pro neúplný měsíc).
+- **Ovládání**: dataset, míra, agregace, období (předvolby), zrnitost
+  (auto/nativní/15 min/hodina/den/týden/měsíc/kvartál/rok), kategorie
+  (libovolná dimenze), slicery = multiselect pro každou dimenzi (kaskádové
+  — nabídka se omezuje filtry ostatních dimenzí), typ grafu: čára,
+  skládané sloupce, skládaná plocha, **porovnání let** (aktuální rok tučně,
+  pásmo min–max a medián předchozích let), **heatmapa rok×den** a **den×hodina**.
+- **Kontingenční tabulka**: řádky čas/kategorie/rok/měsíc × sloupce
+  kategorie/rok/měsíc/—, Σ u součtů; export CSV/XLSX (`/api/explorer/pivot`).
+  Grafy mají export PNG/SVG/CSV/XLSX jako jinde.
+- **Cross-filtering**: graf „Podle: <kategorie>“ (souhrn za období) — klik na
+  sloupec = filtr na tuto kategorii (znovu = zrušit); zoom hlavního
+  časového grafu přepočítá souhrn jen pro vybrané okno (`xf_from/xf_to`).
+- **Pohledy**: celý stav je v URL (sdílení odkazem, „Kopírovat odkaz“);
+  pojmenované pohledy se ukládají na server do
+  `<PPDASH_DATA_DIR>/explorer_views.json` (bez autentizace — chrání Access).
+- **Limity paměti**: DuckDB `memory_limit` 512 MB (`PPDASH_DUCKDB_MEM`),
+  2 vlákna, spill do `cache/duckdb_tmp`; výsledek max 150 000 bodů
+  (`PPDASH_EXPLORE_MAX_ROWS`) — zrnitost se podle odhadu (kusy × kategorie)
+  zhrubne předem, s varováním; max 30 kategorií (největší). Výsledky
+  v TTL cache 5 min. Detaily dotazu (SQL, čas, počet bodů) v rozbalovacím bloku.
+- Výkon nad daty z repa: typický dotaz 0.05–0.6 s, výroba DE celá historie
+  1.3 s (zhrubnuto na den), heatmapa rok×den celé výroby 0.6 s.
+
+**Perspective vs. vlastní UI — zvoleno vlastní UI + DuckDB.** FINOS
+Perspective (WASM, pivot drag&drop) potřebuje data v prohlížeči (nebo
+server s perspective-python, který drží tabulky v RAM a posílá přes
+websocket) — u našich objemů (výroba 14 M řádků, ENTSOG operational 4.6 M,
+ENTSO-E rozšíření řádově víc) by to znamenalo buď posílat do prohlížeče
+desítky–stovky MB, nebo držet kopie tabulek v paměti webu na 4 GB LXC.
+Zadání chce agregaci na serveru a do prohlížeče jen výsledek; DuckDB to
+dělá přímo nad parquet bez kopie dat a s limitem paměti. Vlastní UI navíc
+zná doménu (energie z výkonu přes změnu času, zarovnání 15min/hodina,
+porovnání let, české názvy a barvy zdrojů), sdílí export a vzhled se zbytkem
+webu a nepřidává ~5 MB WASM. Cena: pivot se ovládá výběrem řádků/sloupců,
+ne drag&drop. Perspective by šlo později přidat jako „viewer“ jen nad
+výsledkem dotazu (malá tabulka), kdyby byl drag&drop potřeba.
 
 ## Kolo 2 (2026-10-23): vlastní databáze, živá data, Energy-Charts, export, nasazení bez roota
 

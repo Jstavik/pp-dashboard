@@ -1,0 +1,69 @@
+{% import "macros.html" as m %}
+<form class="controls explorer-controls">
+  <input type="hidden" name="ds_prev" value="{{ c.ds }}">
+  <label class="field"><span class="field-label">Dataset</span>
+  <select name="ds">
+    {% for grp, items in c.groups.items() %}<optgroup label="{{ grp }}">
+      {% for key, label in items %}<option value="{{ key }}"{% if key == c.ds %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </optgroup>{% endfor %}
+  </select></label>
+  {% if not c.empty %}
+  {{ m.select("m", c.measure_ids, c.m, "Míra", c.measure_labels) }}
+  {{ m.select("agg", c.agg_choices, c.agg, "Agregace v čase", c.agg_labels) }}
+  {% if c.cat %}{{ m.select("cagg", c.cagg_choices, c.cagg, "Sloučení ostatních dimenzí", c.agg_labels) }}{% endif %}
+  {% endif %}
+</form>
+{% if c.empty %}
+<div class="alert">Dataset <strong>{{ c.spec.label }}</strong> zatím nemá uložená data (úloha <code>{{ c.spec.dataset }}</code>).</div>
+{% else %}
+<form class="controls explorer-controls">
+  {{ m.daterange(c.d_from, c.d_to, "📆 Období", c.presets, c.min_d, c.max_d) }}
+  {{ m.select("g", c.grain_choices, c.g, "Zrnitost", c.grain_labels) }}
+  {{ m.select("cat", c.cat_choices, c.cat, "Kategorie (série)", c.cat_labels) }}
+  {{ m.select("chart", c.chart_choices, c.chart, "Graf", c.chart_labels) }}
+</form>
+<form class="controls explorer-controls explorer-filters">
+  {% for d in c.dims %}{{ m.multiselect("f_" ~ d.id, d.options, d.selected, d.label) }}{% endfor %}
+</form>
+{% if c.warnings %}<div class="alert">{% for w in c.warnings %}<div>⚠ {{ w }}</div>{% endfor %}</div>{% endif %}
+<div class="chart-card-wrap" data-xrange="1">{{ m.chart("main", 460) }}</div>
+{% if c.has_breakdown %}<div data-xfilter="f_{{ c.cat }}">{{ m.chart("breakdown", 300) }}</div>{% endif %}
+
+<div class="card panel">
+  <div class="panel-head">
+    {{ m.section("Kontingenční tabulka") }}
+    <form class="controls explorer-controls inline">
+      {{ m.select("pr", c.pr_choices, c.pr, "Řádky", c.pr_labels) }}
+      {{ m.select("pc", c.pc_choices, c.pc, "Sloupce", c.pc_labels) }}
+    </form>
+    <span class="dl-links">
+      <a href="/api/explorer/pivot?fmt=csv&{{ c.query }}" download>CSV</a>
+      <a href="/api/explorer/pivot?fmt=xlsx&{{ c.query }}" download>XLSX</a>
+    </span>
+  </div>
+  {{ m.table(c.pivot, "Žádná data pro zvolené filtry.") }}
+</div>
+
+<div class="card panel explorer-views">
+  {{ m.section("Pohledy") }}
+  <p class="muted small">Celý stav je v adrese stránky — odkaz jde sdílet nebo uložit jako záložku. Pojmenované pohledy se ukládají na server.</p>
+  <div class="views-row">
+    <input type="text" class="view-name" placeholder="Název pohledu" maxlength="80" aria-label="Název pohledu">
+    <button type="button" class="btn" data-view-save>Uložit pohled</button>
+    <button type="button" class="btn" data-copy-link>Kopírovat odkaz</button>
+  </div>
+  {% if c.views %}<ul class="views-list">
+    {% for v in c.views %}<li><a href="/pruzkumnik?tab=pohled&{{ v.query }}">{{ v.name }}</a> <span class="muted small">{{ v.created }}</span>
+      <button type="button" class="link-btn" data-view-delete="{{ v.name }}" title="Smazat pohled">✕</button></li>{% endfor %}
+  </ul>{% endif %}
+</div>
+
+<details class="card panel">
+  <summary>Detaily dotazu</summary>
+  <p class="muted small">Zdroj: {{ c.spec.source }} · nativní rozlišení {{ c.spec.native }} · aktualizace {{ c.schedule }} ·
+    data {{ c.min_d|fmt }}–{{ c.max_d|fmt }} · výsledek {{ c.n_rows }} bodů, {{ c.n_cats }} kategorií, zrnitost {{ c.grain_labels[c.rg] }},
+    {{ '%.2f'|format(c.elapsed) }} s</p>
+  {% if c.spec.description %}<p class="small">{{ c.spec.description }}</p>{% endif %}
+  <pre class="sql">{{ c.sql }}</pre>
+</details>
+{% endif %}
