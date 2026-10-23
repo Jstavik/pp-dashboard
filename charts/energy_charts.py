@@ -246,6 +246,7 @@ def fig_forecast_vs_actual(actual: pd.DataFrame, forecast: pd.DataFrame, country
     fig.update_layout(title=_title(f"{country_name} — prognóza vs. skutečnost",
                                    RESOLUTIONS.get(resolution, resolution)),
                       height=max(height, 260 * len(pairs)), **layout)
+    fig.update_yaxes(title_text="MW")
     return fig
 
 

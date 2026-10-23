@@ -211,10 +211,11 @@ def chart(request: Request, page_key: str, tab_key: str, chart_id: str):
         return JSONResponse({"error": f"Graf se nepodařilo vytvořit ({type(e).__name__}: {e})"})
     if fig is None:
         return JSONResponse({"empty": True})
-    from web.consistency import apply_entity_colors, is_empty
+    from web.consistency import apply_entity_colors, is_empty, localize_times
     if is_empty(fig):
         return JSONResponse({"empty": True})
     apply_entity_colors(fig)
+    localize_times(fig)
     payload = '{"config": %s, "figure": %s}' % (json.dumps(spec.config), _figure_json(fig))
     log.debug("graf %s/%s/%s %.2fs", page_key, tab_key, chart_id, time.monotonic() - t0)
     return Response(payload, media_type="application/json")

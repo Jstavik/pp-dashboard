@@ -482,6 +482,13 @@
     });
   }
 
+  // navigace: otevřená smí být jen jedna skupina
+  document.querySelectorAll("details.navgroup").forEach(function (d) {
+    d.addEventListener("toggle", function () {
+      if (d.open) document.querySelectorAll("details.navgroup[open]").forEach(function (o) { if (o !== d) o.open = false; });
+    });
+  });
+
   // zavřít otevřený multiselect klikem mimo
   document.addEventListener("click", function (e) {
     document.querySelectorAll("details.ms[open], details.navgroup[open]").forEach(function (d) {

@@ -18,7 +18,7 @@
 {% if c.products %}<form class="controls">{{ m.select("product", c.products, c.product, "Komodita (všech " ~ c.products|length ~ " dostupných)", c.product_labels) }}</form>{% endif %}
 {{ m.chart("positioning", 650) }}
 {{ m.section("Finanční net pozice (spekulanti) — percentil vůči historii") }}
-{% if not c.kpi %}<p class="muted">Data nejsou dostupná.</p>
+{% if not c.kpi %}<p class="muted">Data se dotahují — zatím nejsou k dispozici.</p>
 {% else %}
 <div class="kpi-row">
   {{ m.kpi("Aktuální net pozice", "%+.0f"|format(c.kpi.current_value), unit=c.kpi.unit_label) }}

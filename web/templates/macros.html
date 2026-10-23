@@ -11,7 +11,7 @@
 </div>
 {%- endmacro %}
 
-{% macro table(t, empty="Žádná data.", cls="") -%}
+{% macro table(t, empty="Data se dotahují — zatím nejsou k dispozici.", cls="") -%}
 {% if not t or not t.rows %}
 <p class="muted">{{ empty }}</p>
 {% else %}

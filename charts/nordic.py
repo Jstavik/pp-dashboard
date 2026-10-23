@@ -57,6 +57,8 @@ def fig_country_hydro(df: pd.DataFrame) -> go.Figure:
             g = d[d["year"] == y]
             fig.add_trace(go.Scatter(x=g["x"], y=g["v"] / 1000, name=str(y), legendgroup=str(y), showlegend=show,
                                      line=dict(color=year_color(int(y)), width=3 if y == cur else 1.3)), row=1, col=i)
-    fig.update_layout(**_LAYOUT, title=_title("Nádrže NO / SE / FI (ENTSO-E 16.1.D)", "zásoba energie [TWh] po týdnech"),
-                      height=400, margin=dict(l=60, r=20, t=95, b=80))
+    fig.update_layout(**{**_LAYOUT, "margin": dict(l=60, r=20, t=95, b=80)},
+                      title=_title("Nádrže NO / SE / FI (ENTSO-E 16.1.D)", "zásoba energie [TWh] po týdnech"),
+                      height=400)
+    fig.update_yaxes(title_text="TWh", col=1)
     return fig

@@ -1,5 +1,5 @@
 {% import "macros.html" as m %}
 <h3 class="section-title">GASSCO — norský export plynu</h3>
-{% if c.empty %}<div class="alert alert-warn">Data nejsou k dispozici.</div>
+{% if c.empty %}<div class="alert alert-warn">Data se dotahují — zatím nejsou k dispozici.</div>
 {% else %}{{ m.chart("kpi", 400) }}{{ m.chart("timeseries", 400) }}{{ m.chart("season", 400) }}
 <p class="muted small">📷 Stáhnout: ikona fotoaparátu v grafu.</p>{% endif %}
