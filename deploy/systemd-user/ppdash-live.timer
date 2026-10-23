@@ -1,0 +1,12 @@
+[Unit]
+Description=PP Dashboard — živá data každou minutu
+
+[Timer]
+# ČEPS publikuje minutová data → 1× za minutu (20 s po celé minutě, ať je
+# minuta uzavřená); běžící instance se nespouští dvakrát.
+OnCalendar=*-*-* *:*:20
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=PP Dashboard — aktualizace historie 06:00 a 17:00 (Praha)
+
+[Timer]
+# Časové pásmo přímo v OnCalendar — nezávisí na nastavení kontejneru (bez roota).
+OnCalendar=*-*-* 06:00:00 Europe/Prague
+OnCalendar=*-*-* 17:00:00 Europe/Prague
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

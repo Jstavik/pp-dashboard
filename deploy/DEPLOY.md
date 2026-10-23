@@ -1,128 +1,109 @@
-# Nasazení PP Dashboard (Debian 13 LXC, 2 jádra, 2 GB RAM)
+# Nasazení PP Dashboard bez roota (uživatelské systemd unity)
 
-Web běží jako `uvicorn` na `127.0.0.1:8501`, ven se publikuje přes
-**Cloudflare Tunnel** a přístup hlídá **Cloudflare Access**. Historie dat
-leží mimo git v `/var/lib/ppdash/history`, aktualizuje ji systemd timer
-(`scripts/update_all.py`). Tajné klíče jen v `~/.config/ppdash/env`.
-
-Rozložení:
+Kontejner (Debian 13 LXC, 2 jádra, 2 GB RAM), běžný uživatel **`claude`
+bez sudo**. Všechno běží jako `systemctl --user`. Web poslouchá jen na
+`127.0.0.1:8501`, ven ho publikuje **Cloudflare Tunnel** a přístup hlídá
+**Cloudflare Access** (mimo tento návod).
 
 | Cesta | Obsah |
 |---|---|
-| `/opt/ppdash/app` | klon repozitáře (větev `rebuild/fastapi`, později `main`) |
-| `/opt/ppdash/venv` | Python virtualenv |
-| `/var/lib/ppdash/history` | historie (parquet/CSV, stejná struktura jako dřív `data/history/`) |
-| `/var/lib/ppdash/cache` | disková TTL cache výsledků API (lze kdykoli smazat) |
-| `/home/ppdash/.config/ppdash/env` | tokeny (`chmod 600`), vzor `deploy/env.example` |
+| `/home/claude/pp-dashboard` | klon repozitáře (větev `rebuild/fastapi`) |
+| `/home/claude/pp-dashboard/.venv` | Python virtualenv |
+| `/home/claude/ppdash-data/history` | vlastní „databáze“ — parquet/CSV historie (`PPDASH_DATA_DIR`) |
+| `/home/claude/ppdash-data/cache` | disková TTL cache API (lze kdykoli smazat) |
+| `~/.config/ppdash/env` | `ENTSOE_TOKEN`, `GIE_API_KEY` (`chmod 600`), vzor `deploy/env.example` |
+| `~/.config/systemd/user/ppdash-*` | unity (generuje `install_user.sh` z `deploy/systemd-user/`) |
 
-## 1. Systém
-
-```bash
-apt update && apt install -y python3 python3-venv python3-pip git curl
-timedatectl set-timezone Europe/Prague        # časy timerů jsou lokální
-adduser --system --group --home /home/ppdash --shell /usr/sbin/nologin ppdash
-mkdir -p /opt/ppdash /var/lib/ppdash/history /var/lib/ppdash/cache
-chown -R ppdash:ppdash /opt/ppdash /var/lib/ppdash
-```
-
-## 2. Aplikace
+## 0. Jednou admin (root)
 
 ```bash
-sudo -u ppdash git clone -b rebuild/fastapi https://github.com/Jstavik/pp-dashboard.git /opt/ppdash/app
-sudo -u ppdash python3 -m venv /opt/ppdash/venv
-sudo -u ppdash /opt/ppdash/venv/bin/pip install -r /opt/ppdash/app/requirements-web.txt
+loginctl enable-linger claude      # uživatelské služby běží i bez přihlášení a po rebootu
+apt install -y python3-venv rsync curl   # pokud v obrazu chybí
 ```
 
-Debian 13 má Python 3.13 — ověřeno s pandas 2.3, pyarrow 26, plotly 7.1,
-fastapi 0.161.
+Časové pásmo kontejneru měnit není potřeba — timery mají `Europe/Prague`
+přímo v `OnCalendar`.
 
-## 3. Tokeny
+## 1. Instalace (uživatel claude)
 
 ```bash
-sudo -u ppdash mkdir -p /home/ppdash/.config/ppdash
-sudo -u ppdash cp /opt/ppdash/app/deploy/env.example /home/ppdash/.config/ppdash/env
-sudo -u ppdash chmod 600 /home/ppdash/.config/ppdash/env
-sudo -u ppdash nano /home/ppdash/.config/ppdash/env    # ENTSOE_TOKEN, GIE_API_KEY, DELTAGREEN_API_KEY
+git clone -b rebuild/fastapi https://github.com/Jstavik/pp-dashboard.git ~/pp-dashboard
+~/pp-dashboard/deploy/install_user.sh            # venv, adresáře, historie z repa, unity, start
+nano ~/.config/ppdash/env                        # ENTSOE_TOKEN=…, GIE_API_KEY=…
+~/pp-dashboard/deploy/install_user.sh --initial-update   # restart webu + jednou doběhnout aktualizaci
 ```
 
-> GIE klíč byl dřív natvrdo v repu (`data/gie.py`, `data/lng.py`,
-> `scripts/update_gas_history.py`) a je tedy v git historii — doporučuji
-> si na agsi.gie.eu vygenerovat nový.
+`install_user.sh` je idempotentní (přepínače `--no-seed`, `--no-start`,
+`--initial-update`):
 
-## 4. Počáteční data
+1. `.venv` + `pip install -r requirements-web.txt` (jen při změně souboru),
+2. `~/ppdash-data/{history,cache}`, `~/.config/ppdash/env` ze vzoru,
+3. historie z `data/history` v repu přes `rsync -a --ignore-existing` —
+   doplní jen chybějící soubory, novější data v `~/ppdash-data` nikdy
+   nepřepíše; **mrtvé datasety** (`scripts/data_status.py --dead`:
+   `hu_generation`, `nuclear_fr_generation`, `entsog_capacity`,
+   `hydro_reservoirs.csv`) vynechá,
+4. unity do `~/.config/systemd/user`, `daemon-reload`, `enable --now`
+   timerů, restart webu a kontrola `/healthz`.
 
-Historie z repa (dokud `data/history/` v repu zůstává):
+> GIE klíč byl dřív natvrdo v repu a je v git historii — doporučuji ho
+> na agsi.gie.eu přegenerovat.
+
+## 2. Služby a timery
+
+| Unita | Kdy | Co |
+|---|---|---|
+| `ppdash-web.service` | trvale | uvicorn, 1 worker, `MemoryMax=1400M` |
+| `ppdash-live.timer` | každou minutu (:20 s) | `update_all.py --only live -q`: ČEPS minutová data (odchylka, SVR, zatížení, výroba, OZE, frekvence, toky, cena odchylky), GASSCO realtime nominace, GASSCO UMM |
+| `ppdash-update.timer` | 06:00 a 17:00 Praha | `update_all.py`: ENTSO-G toky/allocation/operational, GIE, LNG, GASSCO nominace, hydro, DAP, výroba, odstávky, Energy-Charts |
+| `ppdash-update-cot.timer` | so + út 08:00 Praha | `update_all.py --only cot` (dohání i chybějící týdny) |
+
+Všechny aktualizace jsou inkrementální: zjistí konec uložených dat, stáhnou
+jen novější (s malým překryvem kvůli revizím) a zapíšou upsertem s dedupem —
+opakovaný běh nic nezdvojí, nezměněný soubor se nepřepisuje. Live běh má
+vlastní zámek (`history/.live.lock`), takže ho dlouhý denní běh neblokuje.
 
 ```bash
-sudo -u ppdash rsync -a /opt/ppdash/app/data/history/ /var/lib/ppdash/history/
+deploy/status.sh                 # služby, timery, poslední běhy, /healthz, stáří dat per dataset
+deploy/status.sh --logs          # + posledních 15 řádků logu každé služby
+journalctl --user -u ppdash-web -f
+journalctl --user -u ppdash-update -n 200
+systemctl --user start ppdash-update.service     # ruční aktualizace
+systemctl --user list-timers 'ppdash*'
 ```
 
-Pak jednou ručně doběhnout aktualizaci (navazuje od konce dat):
+Ruční spuštění z shellu (načte `~/.config/ppdash/env`, data bere z
+`~/ppdash-data`, pokud existuje):
 
 ```bash
-cd /opt/ppdash/app
-sudo -u ppdash env PPDASH_DATA_DIR=/var/lib/ppdash \
-  bash -c 'set -a; . /home/ppdash/.config/ppdash/env; /opt/ppdash/venv/bin/python scripts/update_all.py'
+cd ~/pp-dashboard && .venv/bin/python scripts/update_all.py --list
+.venv/bin/python scripts/update_all.py --only energy_charts -v
+.venv/bin/python scripts/data_status.py
 ```
 
-Užitečné přepínače: `--list` (co by se spustilo), `--only gas,cot`,
-`--skip outages`, `-v`. Exit kódy: 0 OK (i s varováním), 1 některá úloha
-selhala, 2 špatné argumenty, 3 jiná aktualizace běží.
+Exit kódy `update_all.py`: 0 OK (i s varováním), 1 některá úloha selhala,
+2 špatné argumenty, 3 jiná aktualizace běží.
 
-## 5. systemd
+## 3. Aktualizace aplikace
 
 ```bash
-cp /opt/ppdash/app/deploy/systemd/ppdash-*.{service,timer} /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now ppdash-web.service
-systemctl enable --now ppdash-update.timer ppdash-update-cot.timer
-systemctl list-timers 'ppdash*'
-curl -s http://127.0.0.1:8501/healthz
+cd ~/pp-dashboard && git pull && deploy/install_user.sh --no-seed
 ```
 
-- `ppdash-web.service` — uvicorn, 1 worker, `MemoryMax=1400M`.
-- `ppdash-update.timer` — 06:00 a 17:00 → `update_all.py` (vše kromě COT).
-- `ppdash-update-cot.timer` — so + út 08:00 → `update_all.py --only cot`.
+## 4. Cloudflare Tunnel + Access
 
-Logy: `journalctl -u ppdash-web -f`, `journalctl -u ppdash-update -n 200`.
-Ruční spuštění aktualizace: `systemctl start ppdash-update.service`.
-
-## 6. Cloudflare Tunnel + Access
-
-```bash
-# repo Cloudflare: https://pkg.cloudflare.com/
-apt install -y cloudflared
-cloudflared tunnel login
-cloudflared tunnel create ppdash
-cloudflared tunnel route dns ppdash ppdash.example.com
-cp /opt/ppdash/app/deploy/cloudflared-config.example.yml /etc/cloudflared/config.yml   # doplň UUID + hostname
-cloudflared service install && systemctl enable --now cloudflared
-```
-
-V Zero Trust → Access → Applications přidej *Self-hosted* aplikaci pro
-`ppdash.example.com` s politikou (např. e-maily / One-time PIN). Aplikace
-sama žádné přihlášení nemá a poslouchá jen na localhostu.
-
-`/healthz` je levný (nečte data) — vhodný pro monitoring; pokud ho chceš
-mít dostupný bez přihlášení, přidej v Access bypass politiku jen pro
-cestu `/healthz`.
-
-## 7. Aktualizace aplikace
-
-```bash
-cd /opt/ppdash/app && sudo -u ppdash git pull
-sudo -u ppdash /opt/ppdash/venv/bin/pip install -r requirements-web.txt
-systemctl restart ppdash-web
-```
+Mimo rozsah tohoto skriptu; vzor konfigurace `cloudflared-config.example.yml`
+(služba `http://127.0.0.1:8501`). `/healthz` je levný (nečte data) — vhodný
+pro monitoring (případně Access bypass jen pro tuto cestu).
 
 ## Provozní poznámky
 
-- Paměť: po projití všech záložek drží web ~430–490 MB RSS (cache dat
-  ~180 MB). Parquet se čte jen v potřebných sloupcích, textové sloupce
-  rovnou jako category; `ARROW_DEFAULT_MEMORY_POOL=system` a
-  `MALLOC_ARENA_MAX=2` v unitě vrací uvolněnou paměť OS.
-- Cache: v paměti s TTL jako dřív ve Streamlitu (ČEPS 60 s, ENTSO-E
-  15–30 min, historie 5 min–6 h), výsledky API i na disku. „Obnovit data“
-  v patičce webu cache smaže.
+- Paměť: web ~430–490 MB RSS po projití všech záložek; aktualizace má
+  `MemoryMax=1000M`, live běh 400M. Limity platí, jen když má uživatelský
+  manager delegovaný memory controller (Debian 13 ano).
+- Minutový timer spouští krátký Python proces (~1–2 s CPU); WSDL ČEPS je
+  cachovaný na disku (`cache/zeep-wsdl.db`), takže se nestahuje každou minutu.
+- Objem live dat: ČEPS ~10–15 MB/měsíc, GASSCO realtime < 1 MB/měsíc
+  (zapisuje se jen při nové publikaci feedu).
 - Stará Streamlit app jde dočasně spustit (`pip install -r requirements.txt`,
   `streamlit run app.py`) — čte stejná data přes `PPDASH_DATA_DIR`.

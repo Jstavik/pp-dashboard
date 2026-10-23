@@ -1,0 +1,14 @@
+[Unit]
+Description=PP Dashboard — ICE Commitments of Traders (týdně)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/ppdash/env
+Environment=PPDASH_DATA_DIR=@DATA@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@VENV@/bin/python scripts/update_all.py --only cot
+TimeoutStartSec=30min
+Nice=10
+SuccessExitStatus=3
+NoNewPrivileges=yes

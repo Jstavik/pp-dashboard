@@ -9,11 +9,12 @@ Pořadí zdrojů pro každou proměnnou:
    Streamlit nainstalovaný a běží — viz secret().
 
 Cesty k datům:
-- PPDASH_DATA_DIR (default /var/lib/ppdash) — kořen dat mimo git:
+- PPDASH_DATA_DIR — kořen dat mimo git (bez nastavení: ~/ppdash-data, pokud
+  existuje — nasazení přes deploy/install_user.sh —, jinak /var/lib/ppdash):
     <DATA_DIR>/history/   historie (stejná struktura jako dřív data/history/)
     <DATA_DIR>/cache/     disková TTL cache (core/cache.py)
-- Vývojový fallback: když PPDASH_DATA_DIR není nastavené a /var/lib/ppdash
-  neexistuje, použije se data/history/ v repu (a .cache/ v repu) — stará
+- Vývojový fallback: když PPDASH_DATA_DIR není nastavené a žádný z výchozích
+  adresářů neexistuje, použije se data/history/ v repu (a .cache/ v repu) — stará
   app.py i GitHub Actions workflow tak dál fungují beze změny.
 """
 import logging
@@ -25,7 +26,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DATA_DIR = Path("/var/lib/ppdash")
+DEFAULT_DATA_DIRS = (Path(os.path.expanduser("~/ppdash-data")), Path("/var/lib/ppdash"))
 ENV_FILE = Path(os.path.expanduser("~/.config/ppdash/env"))
 
 
@@ -88,8 +89,9 @@ def data_dir() -> Path:
     configured = env("PPDASH_DATA_DIR")
     if configured:
         return Path(configured)
-    if DEFAULT_DATA_DIR.exists():
-        return DEFAULT_DATA_DIR
+    for candidate in DEFAULT_DATA_DIRS:
+        if candidate.exists():
+            return candidate
     return REPO_ROOT / "data"
 
 

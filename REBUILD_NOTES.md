@@ -1,6 +1,6 @@
 # REBUILD_NOTES — přechod ze Streamlitu na FastAPI (větev `rebuild/fastapi`)
 
-Stav k 2026-10-23. Větev založená z `main` @ 7a36a68. `main` ani
+Stav k 2026-10-23 (kolo 2 níže). Větev založená z `main` @ 7a36a68. `main` ani
 `.github/workflows` se neměnily, `data/history/` v repu zůstává.
 
 **Důležité omezení ověření:** v pracovním prostředí nebyly k dispozici API
@@ -10,7 +10,171 @@ je otestované jen proti mockovaným odpovědím ve tvaru odvozeném z kódu
 (ne ze skutečných odpovědí). Web a výpočty jsou ověřené nad skutečnými
 daty z `data/history/` v repu.
 
-## Hotovo
+## Kolo 2 (2026-10-23): vlastní databáze, živá data, Energy-Charts, export, nasazení bez roota
+
+### Audit historie (`data/history` → `PPDASH_DATA_DIR/history`)
+
+Registr všech datasetů je v kódu: `core/datasets.py` (zapisující úloha,
+max. stáří, mrtvá data) — používá ho `scripts/data_status.py`,
+`deploy/status.sh` i `deploy/install_user.sh` (vynechání mrtvých dat).
+
+| Dataset | Zapisuje (úloha `update_all.py`) | Čte | Zobrazení |
+|---|---|---|---|
+| `ceps/<ds>/<YYYY-MM-DD>.parquet` **nové** | `ceps` (live, 1 min) | `data/ceps.load_ceps_from_store` ← `fetch_ceps_all` | Elektřina: hlavička KPI, Odchylka & Generace, ČEPS |
+| `gassco_realtime/<YYYY-MM-DD>.parquet` **nové** | `gassco_realtime` (live, 1 min) | `data/gassco.fetch_realtime_nominations` ← `load_gassco`, `charts/gas.fig_gas_map` | Plyn: Mapa, GASSCO (dnešek); Report: Toky, GASSCO |
+| `gassco_umm.parquet` | `gassco_umm` (live, 1 min; dřív 2× denně) | `load_gassco_umm` | Plyn → GASSCO (UMM tabulky, výhled) |
+| `gassco_umm_snapshots/` | `gassco_umm` (1 snapshot/den) | `load_gassco_umm_snapshot`, `list_available_umm_snapshot_dates` | Plyn → GASSCO (změny UMM) |
+| `gassco_nominations/` | `gassco` (2× denně) | `load_gassco_history`/`load_gassco` | Plyn → GASSCO, Mapa; Report → GASSCO |
+| `entsog_flows/` | `entsog`, `entsog_allocation` | `data/entsog.load_entsog_history` | Plyn: Mapa, Toky, Sezonnost, Historie; Report → Toky |
+| `entsog_operational/` | `entsog_operational` | `load_operational_point`, `operational_index`, `load_eu_operational_open_ended` | Plyn: Nominace, Kapacity |
+| `gie_all_storage/` | `gie` | `data/gie.load_gie_all` | Plyn → Zásobníky; Report → Zásobníky |
+| `lng_storage/` | `lng` | `data/lng.load_lng` | Plyn → LNG |
+| `hydro_reservoirs/` | `hydro` | `data/hydro.load_hydro` | Elektřina → Hydro |
+| `dap_europe/` | `dap_europe` | `load_dap_europe(_all)` | Elektřina → DAP mapa; Report → DAP |
+| `generation/<CC>/` | `generation` | `data/generation.load_generation` | Elektřina → Výroba |
+| `outages.parquet`, `outages_snapshots/` | `outages` | `data/outages.load_outages(_snapshot)` | Elektřina → Výroba/Odstávky |
+| `energy_charts/<ep>/`, `energy_charts.parquet` | `energy_charts` | `load_energy_charts_wide`, `load_energy_charts` | **Energy-Charts (nová stránka)** |
+| `energy_charts_progress.json` | jen ruční `run_backfill()` | `run_backfill()` | — |
+| `ice_cot.parquet`, `ice_cot_status.json` | `cot` (so/út) | `load_ice_cot(_status)` | CoT |
+| `hu_generation/` | **nikdo** | **nikdo** | — mrtvé |
+| `nuclear_fr_generation/` | **nikdo** | **nikdo** | — mrtvé |
+| `entsog_capacity/` | **nikdo** | **nikdo** | — mrtvé |
+| `hydro_reservoirs.csv` | **nikdo** | **nikdo** | — mrtvé |
+
+Ověřená podezření:
+- `hu_generation` a `nuclear_fr_generation` jsou **zastaralé kopie** —
+  jediný odkaz byl smazaný migrační skript; data končí 2026-08-29 resp.
+  2026-08-18, aktuální řady jsou v `generation/HU` a `generation/FR`
+  (do 2026-10-23). Stejně `entsog_capacity/` (kapacity teď v
+  `entsog_operational`, žádný čtenář ani zapisovatel) a
+  `hydro_reservoirs.csv` (nahrazeno `hydro_reservoirs/`). Ve větvi ani na
+  `main` se z gitu nemažou; `install_user.sh` je do `PPDASH_DATA_DIR`
+  nenahrává (`scripts/data_status.py --dead`), test hlídá, že je nikdo nečte.
+- `gassco_nominations`, `gassco_umm_snapshots`, `lng_storage`,
+  `ice_cot_status.json` **updater mají** (`gassco`, `gassco_umm`, `lng`,
+  `cot` — v `data/gassco.py`, `data/lng.py`, `data/ice_cot.py`, jen
+  registrované v `update_all.py`); v repu jsou aktuální (23.10.).
+  `entsog_capacity` updater nemá a nikdo ho nečte → mrtvé (viz výš).
+- **ICE CoT zastarává**: poslední data `report_date` 2026-09-18, od
+  2026-09-25 vrací ICE na URL `…/IFEU_FUT_YYYYMMDD.csv` 404 (viz
+  `ice_cot_status.json`). Úloha `cot` teď dohání všechny chybějící pátky
+  (max 8 týdnů), takže se po opravě sama doplní — ale příčina 404
+  (změna URL / formátu na straně ICE?) je **NEOVĚŘENÁ** a neopravená.
+- **Energy-Charts v repu končí 2026-09-25** — workflow na `main` je
+  nespouští (`update_gas_history.py` je vynechává), aktualizuje je až
+  timer v kontejneru (navazuje od konce dat).
+- Mrtvý kód smazán: `scripts/migrate_partitioned_step0.py`,
+  `migrate_step1_generation_outages.py`, `migrate_step2_gassco.py`
+  (četly soubory, které už neexistují).
+
+### Frekvence aktualizací (vše inkrementálně, upsert bez duplicit)
+
+| Timer | Kdy | Úlohy |
+|---|---|---|
+| `ppdash-live.timer` | každou minutu (:20 s) | `update_all.py --only live -q` = `ceps`, `gassco_realtime`, `gassco_umm` |
+| `ppdash-update.timer` | 06:00 a 17:00 Europe/Prague | výchozí běh = vše kromě `live` a `cot` |
+| `ppdash-update-cot.timer` | so + út 08:00 Europe/Prague | `cot` |
+
+- **ČEPS**: v kódu se všechny minutové řady volají s `agregation="MI"`
+  (výroba a cena odchylky po čtvrthodinách) a web je obnovuje po 60 s
+  (`refresh=60`, `ttl_cache(ttl=60)`) — 5s polling v kódu nebyl a nemá
+  smysl. Úloha `ceps` navazuje od posledního uloženého času − 30 min
+  (ČEPS dopočítává poslední minuty), cena odchylky vždy od začátku dne,
+  první běh od půlnoci včerejška, výpadek timeru se dohání max 7 dní
+  (po dnech). Ukládá long formát `time, series_id, series, value` do
+  denních souborů (`upsert_partitioned(period="day")`), frekvenci jako
+  minutový průměr. Web čte dnešek z úložiště, když je čerstvé (≤ 10 min),
+  jinak živě přes SOAP jako dřív. WSDL se cachuje na disk (1 den).
+- **GASSCO**: realtime nominace (`realTimeAtom.xml`, 1 request) se ukládají
+  po publikacích (dedup na `updated, point` — beze změny feedu se nic
+  nezapíše); UMM (`xlexport`) se přepisuje jen při změně obsahu, snapshot
+  1×/den. Denní nominace (`/ch/2Y`, ~30 requestů) zůstávají 2× denně.
+- Live běh má vlastní zámek `history/.live.lock` (denní běh trvá i hodiny
+  a zapisuje do jiných datasetů), `-q` = jen varování + 1 řádek souhrnu.
+- `scripts/update_gas_history.py` (workflow na `main`) dál spouští plyn +
+  elektřinu + GASSCO UMM jako dřív, bez live a Energy-Charts.
+
+### Energy-Charts stránka (`/energy-charts`)
+- Záložky (líně jako ostatní): **Frekvence sítě** (5min, KPI průměr/min/max/
+  směr. odchylka/% mimo ±50 mHz, histogram odchylky; delší rozsahy průměr +
+  pásmo min–max), **Přeshraniční toky** (cbet i cbpf po sousedech + saldo,
+  tabulka energie import/export/saldo), **Výroba a prognóza** (public_power
+  stack podle zdroje se zatížením/reziduálním zatížením/obchodem, day-ahead
+  prognóza vs. skutečnost + MAE/bias/MAPE), **Instalovaný výkon** (roční).
+- Výběr země z uložených dat (teď jen `cz`), rozsah s předvolbami, rozlišení
+  auto/15 min/hodina/den. Paleta a české názvy sdílené s ENTSO-E grafy.
+- Znaménko přeshraničních řad **ověřeno na datech**: výroba + obchod ≈
+  zatížení → kladné = import, záporné = export.
+- Výkon: `load_energy_charts_wide()` čte a agreguje v pyarrow; ISO časy
+  s offsetem se parsují v pyarrow (pandas `to_datetime` na 2.5M řádků
+  ~12 s → <1 s). Celá historie CZ výroby: ~4 s (denní průměry), 7 dní 0.4 s.
+
+### Delta Green
+- Z nového webu odstraněno úplně: záložka, šablona, `deltagreen_api_key()`,
+  `DELTAGREEN_API_KEY` v `env.example`, test. Stará Streamlit app ji má dál
+  (`views/delta_green.py` + `data/deltagreen.py`, klíč ze sidebaru).
+
+### Export pro reporty
+- U každého grafu (i GASSCO — vizuálně beze změny, lišta se ukáže až při
+  najetí myší) tlačítka **PNG / SVG / CSV / XLSX**.
+- PNG/SVG renderuje klient z poslední figury, **vždy ve světlém režimu
+  s bílým pozadím**, šířka ≥ 1600 px, PNG 3× (např. 4800×1380).
+- CSV/XLSX: `/api/chart-data/<page>/<tab>/<id>?fmt=csv|xlsx&<parametry>` —
+  data přímo z Plotly figury (= co je v grafu): „wide“ (osa x × série),
+  když to jde, jinak „long“; tabulky (go.Table) jako tabulka. XLSX má listy
+  `data`, `long`, `info` (titulek, parametry, čas). Časy v Europe/Prague
+  (v XLSX bez tz), CSV s BOM kvůli Excelu.
+- Vedlejší oprava tmavého režimu: osy bez explicitního nastavení měly bílou
+  mřížku ze šablony `plotly_white`; téměř černé čáry se zesvětlí.
+
+### Nasazení bez roota (`deploy/`)
+- `deploy/systemd-user/*` — uživatelské unity (`systemctl --user`) se
+  zástupnými `@REPO@/@VENV@/@DATA@`; `deploy/systemd/` (systémové unity
+  pro uživatele `ppdash`) smazáno.
+- `deploy/install_user.sh` — idempotentní: venv (pip jen při změně
+  requirements), adresáře, `~/.config/ppdash/env` (600), historie z repa
+  `rsync -a --ignore-existing` bez mrtvých datasetů, unity, `enable --now`
+  timerů, restart webu, kontrola `/healthz`. `--no-seed`, `--no-start`,
+  `--initial-update`.
+- `deploy/status.sh` — stav služeb, poslední běhy (start/konec/výsledek/
+  exit), timery, `/healthz`, posledních 5 live běhů, stáří dat per dataset,
+  disk; `--logs`. Exit 1, když něco neběží nebo jsou data stará.
+- `core/settings.py`: bez `PPDASH_DATA_DIR` se bere `~/ppdash-data`, pokud
+  existuje (ruční spuštění skriptů z shellu tak nepíše do repa).
+- Ověřeno v tomto prostředí: `systemd-analyze --user verify` unit bez chyb,
+  `systemd-analyze calendar` časů timerů, `install_user.sh --no-start`
+  jako neprivilegovaný uživatel (venv, env 600, kopie historie bez mrtvých
+  dat, nepřepisuje existující soubory, unity s doplněnými cestami; bez
+  uživatelského systemd skončí jasnou hláškou o `enable-linger`),
+  `status.sh` bez systemd. Větev s `rsync` neověřena (rsync tu není,
+  ověřena záložní větev `cp`).
+
+### Testy
+- 171 testů (+38): `tests/test_live.py` (ČEPS live zápis/idempotence/
+  navazování/tvar dat z úložiště = živý tvar/fallback, frekvence po
+  minutách, GASSCO realtime + preferování čerstvého úložiště, UMM bez
+  přepisu, denní partitiony, live skupina a zámky, CoT dohánění, registr
+  datasetů, mrtvá data nikdo nečte), `tests/test_export.py` (figura →
+  wide/long/tabulka, XLSX listy, endpoint, parsování časů, agregace
+  Energy-Charts přes změnu času, znaménko toků, unity, skripty, env).
+  Nová stránka a její grafy jsou v parametrizovaných smoke testech webu.
+  Zelené i s `PPDASH_TEST_EMPTY=1`.
+
+### Co má udělat sezení v cílovém kontejneru
+1. Admin jednou: `loginctl enable-linger claude` (+ `apt install rsync
+   python3-venv`, pokud chybí).
+2. `git clone -b rebuild/fastapi … ~/pp-dashboard && ~/pp-dashboard/deploy/install_user.sh`,
+   doplnit `~/.config/ppdash/env`, pak `install_user.sh --initial-update`.
+3. `deploy/status.sh` — po 2–3 minutách musí mít `ceps` a `gassco_realtime`
+   stáří v minutách; `journalctl --user -u ppdash-live -n 20` bez chyb.
+4. Ověřit živá API (níže NEOVĚŘENO), hlavně ČEPS SOAP odpovědi (názvy
+   sérií, `Frekvence` bez parametrů, rozsah víc dní) a že web na
+   Elektřině po spuštění timeru čte z úložiště (stejná čísla jako dřív).
+5. Zjistit příčinu 404 u ICE CoT (URL od 2026-09-25).
+6. Prohlédnout export PNG/SVG u mapy (MapLibre) — v headless Chromiu
+   ověřen jen sloupcový graf.
+
+## Kolo 1 — hotovo
 
 ### 1. `core/` — datová vrstva bez Streamlitu
 - `core/settings.py` — konfigurace z env + `~/.config/ppdash/env`;
@@ -27,8 +191,8 @@ daty z `data/history/` v repu.
   Streamlit neimportuje (jen `data_status_row` pro starou app, líně).
 - Tokeny jen z env: `ENTSOE_TOKEN`, `GIE_API_KEY` (dřív natvrdo v
   `data/gie.py`, `data/lng.py`, `scripts/update_gas_history.py` — **klíč
-  je v git historii, doporučuji ho na GIE přegenerovat**),
-  `DELTAGREEN_API_KEY` (dřív se zadával v sidebaru).
+  je v git historii, doporučuji ho na GIE přegenerovat**).
+  (Delta Green z nového webu v kole 2 odstraněn.)
 - Stará `app.py` jde spustit (`streamlit run app.py`); ověřeno přes
   Streamlit AppTest: Plyn, Report, CoT bez výjimek. Elektřina a ČEPS
   odstávky bez tokenu spadnou na chybějícím ENTSOE_TOKEN (dřív app bez
@@ -90,7 +254,7 @@ Závěr: **příčina je na straně API**, kód ji ale zhoršoval.
 ### 3. `web/` — FastAPI + Jinja2 + Plotly
 - Stránky a záložky podle dnešních sekcí:
   - **Elektřina**: Odchylka & Generace, ČEPS, Výroba/Odstávky, DAP ceny,
-    Rezervy, Hydro, Delta Green, Data, DAP mapa (+ banner a KPI nahoře)
+    Rezervy, Hydro, Data, DAP mapa (+ banner a KPI nahoře)
   - **Plyn**: Mapa, Toky, Sezonnost, Kapacity, Nominace, Zásobníky, LNG,
     GASSCO, Historie
   - **Report**: Toky plynu, GASSCO, Zásobníky, DAP mapa
@@ -115,8 +279,7 @@ Závěr: **příčina je na straně API**, kód ji ale zhoršoval.
 - plotly.js se servíruje z nainstalovaného balíku `plotly` (žádné CDN).
 - Obsah grafů zachován — web volá stejné funkce z `charts/`. Výjimky:
   KPI hlavička z ČEPS (viz výš), CoT historie net pozice je Plotly graf
-  místo `st.line_chart`, Delta Green klíč z env místo sidebaru,
-  nastavení baterie je ve formuláři záložky DAP místo sidebaru,
+  místo `st.line_chart`, nastavení baterie je ve formuláři záložky DAP místo sidebaru,
   přepínače „načíst celou historii“ zmizely (celá historie je vždy).
 
 ### 4. Výkon pro 2 GB RAM
@@ -156,21 +319,20 @@ Závěr: **příčina je na straně API**, kód ji ale zhoršoval.
 | `sys.path.insert` absolutní cesta | už opraveno dřív |
 
 ### 5. `deploy/`
-- `systemd/ppdash-web.service` (uvicorn `127.0.0.1:8501`, MemoryMax 1400M,
-  hardening), `ppdash-update.service` + `.timer` (06:00, 17:00),
-  `ppdash-update-cot.service` + `.timer` (so + út 08:00).
+- (kolo 1: systémové unity pro uživatele `ppdash` — v kole 2 nahrazeny
+  uživatelskými unitami `deploy/systemd-user/`, viz výš)
 - `env.example` (bez hodnot), `cloudflared-config.example.yml`,
   `DEPLOY.md` (LXC, uživatel, venv, migrace dat, timery, Tunnel + Access).
 - `requirements-web.txt` (bez Streamlitu), `requirements-dev.txt`.
 
-### 6. Testy (`pytest`, 133 testů, ~12 s)
+### 6. Testy (`pytest`, 133 testů v kole 1, ~12 s)
 - `tests/test_core.py` — cache (TTL, kopie, výjimky, disk), env soubor,
   partitioned čtení/zápis (idempotence).
 - `tests/test_sources.py` — každý zdroj s mockovanou sítí: ČEPS, ENTSO-E
   (fetchery i updatery hydro/DAP Europe/výroba/odstávky), ENTSO-G toky,
   ENTSOG operational, GIE, ALSI/LNG, GASSCO (nominace, realtime, UMM
   xlexport), ICE CoT, Energy-Charts (inkrementální update, frequency
-  5 min, retry), Delta Green, `update_all.py` (výběr úloh, exit kódy, zámek).
+  5 min, retry), `update_all.py` (výběr úloh, exit kódy, zámek).
 - `tests/test_web.py` — každá stránka, každý fragment a každý graf vrací
   200 (bez tokenů a se zakázanou sítí: grafy živých API vrací JSON
   s chybou/prázdnem, ne 500), CSV exporty, `/healthz`.
@@ -185,8 +347,8 @@ Závěr: **příčina je na straně API**, kód ji ale zhoršoval.
   každém vykreslení mapy; teď přes cachovanou `fetch_realtime_nominations`.
 
 ## Nehotovo / další kroky
-- Energy-Charts data nejsou ve webu (žádná stránka je zatím nepoužívá);
-  `update_energy_charts` běží jen pro `cz`.
+- `update_energy_charts` běží jen pro `cz` (stránka Energy-Charts umí
+  víc zemí, jakmile budou data — přidat do `update_all.py`, `countries=`).
 - `data/history/` v repu se nemaže (dle zadání) a workflow na `main` dál
   commitují data — po přechodu na LXC workflow vypnout a historii z repa
   odstranit (případně i z git historie, má stovky MB).
@@ -201,7 +363,7 @@ Závěr: **příčina je na straně API**, kód ji ale zhoršoval.
 ## NEOVĚŘENO (nutno zkontrolovat po nasazení s tokeny)
 - **Všechna živá API**: ENTSO-E, ČEPS SOAP (včetně zeep `Transport`
   timeoutů), ENTSO-G, GIE AGSI+/ALSI, GASSCO (UMM xlexport, nominace,
-  realTimeAtom), ICE CoT, Energy-Charts, Delta Green. Testy používají
+  realTimeAtom), ICE CoT, Energy-Charts. Testy používají
   odpovědi odvozené z parsovacího kódu, ne skutečné vzorky.
 - Že ČEPS hlavička (odchylka jako ISP MWh z minutových MW, výroba jako
   součet sloupců `Generation`) dává smysluplná čísla — sloupce ČEPS
@@ -212,8 +374,16 @@ Závěr: **příčina je na straně API**, kód ji ale zhoršoval.
 - Chování Energy-Charts pro `production_type=wind` (viz analýza výš) a
   že inkrementální update správně navazuje na skutečná data (testováno
   jen s mockem).
-- systemd unity a Cloudflare Tunnel nebyly spuštěné (v prostředí není
-  systemd) — syntaxi ověřit `systemd-analyze verify`.
+- Uživatelské systemd unity nebyly spuštěné (v prostředí není systemd ani
+  linger) — syntaxe ověřena `systemd-analyze --user verify`; běh timerů,
+  `MemoryMax` v uživatelském manageru a Cloudflare Tunnel NEOVĚŘENO.
+- ČEPS live: že `Frekvence` bez parametrů vrací rozumná data, že dotaz na
+  víc dní (dohánění výpadku) projde, a že čísla z úložiště = živá čísla.
+- GASSCO realtime: že `atom:updated` se mění jen při nové publikaci (jinak
+  by se zapisovalo každou minutu — pořád bez duplicit, jen víc řádků).
+- Zátěž minutového timeru na 2 jádrech (start Pythonu + pandas ~1–2 s CPU
+  za minutu) — změřit `systemd-cgtop`/`journalctl`.
+- Objem live dat (odhad ČEPS ~10–15 MB/měsíc) — změřit `status.sh`.
 - Výkon/paměť naměřené na vývojovém stroji s daty z repa; na LXC změřit
   `journalctl`/`/healthz` (`rss_mb`) po pár dnech provozu.
 - Vzhled ověřen screenshoty v headless Chromiu (desktop světlý/tmavý,

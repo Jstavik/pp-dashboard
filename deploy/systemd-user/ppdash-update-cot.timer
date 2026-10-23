@@ -1,10 +1,10 @@
 [Unit]
-Description=PP Dashboard — ICE CoT sobota (primárně) + úterý (retry po svátcích)
+Description=PP Dashboard — ICE CoT sobota (primárně) + úterý (dohánění)
 
 [Timer]
 # ICE publikuje v pátek ~18:30 London; úterý = záloha, když se publikace posune
-OnCalendar=Sat *-*-* 08:00:00
-OnCalendar=Tue *-*-* 08:00:00
+OnCalendar=Sat *-*-* 08:00:00 Europe/Prague
+OnCalendar=Tue *-*-* 08:00:00 Europe/Prague
 RandomizedDelaySec=10min
 Persistent=true
 

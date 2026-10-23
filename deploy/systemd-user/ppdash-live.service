@@ -1,0 +1,19 @@
+[Unit]
+Description=PP Dashboard — živá data (ČEPS minutová, GASSCO realtime + UMM)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/ppdash/env
+Environment=PPDASH_DATA_DIR=@DATA@
+Environment=ARROW_DEFAULT_MEMORY_POOL=system
+Environment=MALLOC_ARENA_MAX=2
+Environment=PYTHONUNBUFFERED=1
+# -q: jen varování + jeden řádek souhrnu za běh (journald se nezahltí)
+ExecStart=@VENV@/bin/python scripts/update_all.py --only live -q
+# běh se nesmí překrývat s dalším (timer další spustí, až tenhle skončí)
+TimeoutStartSec=170s
+Nice=5
+MemoryMax=400M
+SuccessExitStatus=3
+NoNewPrivileges=yes
