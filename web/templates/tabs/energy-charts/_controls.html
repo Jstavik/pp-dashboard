@@ -1,0 +1,5 @@
+<form class="controls">
+  {% if c.countries %}{{ m.select("country", c.countries, c.country, "Země", c.names) }}{% endif %}
+  {{ m.daterange(c.d_from, c.d_to, "📆 Rozsah", c.presets, c.min_d, c.max_d) }}
+  {{ m.radio("res", c.res_choices, c.res, "Rozlišení", c.res_labels) }}
+</form>

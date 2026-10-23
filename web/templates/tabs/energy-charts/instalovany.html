@@ -1,0 +1,8 @@
+{% import "macros.html" as m %}
+{% if c.empty %}{% include "tabs/energy-charts/_empty.html" %}{% else %}
+<form class="controls">
+  {{ m.select("country", c.countries, c.country, "Země", c.names) }}
+</form>
+{{ m.chart("bars", 460) }}
+<div class="card panel">{{ m.section("Instalovaný výkon [GW], posledních 6 let") }}{{ m.table(c.table) }}</div>
+{% endif %}

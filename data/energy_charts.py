@@ -593,14 +593,111 @@ def update_energy_charts(countries: list = ("cz",), endpoints: list = None, toda
 
 # ── public read API ─────────────────────────────────────────────────────────
 
+def _ts_seconds(arr):
+    """pyarrow string pole ISO časů s offsetem → (utc_s, local_s) jako
+    int64 pyarrow pole (sekundy od epochy; local = místní čas bez offsetu)."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    local = pc.cast(pc.strptime(pc.utf8_slice_codeunits(arr, 0, 19), format="%Y-%m-%dT%H:%M:%S", unit="s"),
+                    pa.int64())
+    tail = pc.utf8_slice_codeunits(arr, 19, 25)
+    has_off = pc.greater_equal(pc.utf8_length(tail), 6)
+    sign = pc.if_else(pc.equal(pc.utf8_slice_codeunits(tail, 0, 1), "-"), -1, 1)
+    hh = pc.cast(pc.if_else(has_off, pc.utf8_slice_codeunits(tail, 1, 3), "0"), pa.int64())
+    mm = pc.cast(pc.if_else(has_off, pc.utf8_slice_codeunits(tail, 4, 6), "0"), pa.int64())
+    off_s = pc.multiply(pc.add(pc.multiply(hh, 3600), pc.multiply(mm, 60)), sign)
+    return pc.subtract(local, off_s), local
+
+
+def parse_timestamps(values) -> pd.Series:
+    """ISO řetězce s offsetem ("2026-09-01T02:00:00+02:00", jak je ukládá
+    _rows_from_body) → datetime64[ns, UTC]. Přes pyarrow: místní čas
+    (prvních 19 znaků) minus offset — pd.to_datetime(utc=True) na smíšených
+    offsetech (+01:00/+02:00) trvá u celé historie CZ public_power (2.5M
+    řádků) ~12 s, tohle <1 s. Hodnoty bez offsetu se berou jako UTC."""
+    import pyarrow as pa
+    arr = pa.array(values, type=pa.string()) if not isinstance(values, (pa.Array, pa.ChunkedArray)) else values
+    utc, _ = _ts_seconds(arr)
+    out = pd.to_datetime(utc.to_numpy(zero_copy_only=False), unit="s", utc=True)
+    return pd.Series(out).astype("datetime64[ns, UTC]")
+
+
+@ttl_cache(ttl=3600, maxsize=24)
+def load_energy_charts_wide(endpoint: str, geo_key: str, date_from, date_to,
+                            resolution: str = None, series_ids: tuple = None) -> pd.DataFrame:
+    """Wide data pro grafy: index čas (Europe/Prague), sloupce series_id.
+
+    Čte a agreguje v pyarrow (bez materializace tidy řádků v pandas) —
+    celá historie CZ public_power (2.5M řádků) tak zabere ~1 s a desítky MB
+    místo ~15 s a ~1 GB. resolution: None/"15min"/"5min" = nativní hodnoty,
+    "1h" = hodinový průměr (UTC hodiny), "1D" = denní průměr podle
+    místního (pražského) dne. date_from/date_to = tz-aware Timestamp."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    from data.partitioned_store import _select_files
+
+    filters = [("geo_key", "==", geo_key)]
+    if series_ids:
+        filters.append(("series_id", "in", list(series_ids)))
+    cols = ["timestamp", "series_id", "value"]
+    if endpoint in PARTITIONED_ENDPOINTS:
+        files = _select_files(_partitioned_base_dir(endpoint), "parquet", date_from, date_to)
+        tables = [pq.read_table(f, columns=cols, filters=filters) for f in files]
+    elif os.path.exists(DATA_PATH):
+        tables = [pq.read_table(DATA_PATH, columns=cols, filters=filters + [("endpoint", "==", endpoint)])]
+    else:
+        tables = []
+    tables = [t for t in tables if t.num_rows]
+    if not tables:
+        return pd.DataFrame()
+    t = pa.concat_tables([tb.cast(pa.schema([("timestamp", pa.string()), ("series_id", pa.string()),
+                                             ("value", pa.float64())])) for tb in tables])
+    utc, local = _ts_seconds(t.column("timestamp"))
+    mask = None
+    if date_from is not None:
+        mask = pc.greater_equal(utc, int(pd.Timestamp(date_from).timestamp()))
+    if date_to is not None:
+        m2 = pc.less(utc, int(pd.Timestamp(date_to).timestamp()))
+        mask = m2 if mask is None else pc.and_(mask, m2)
+    if resolution == "1D":
+        key, step = local, 86400
+    elif resolution == "1h":
+        key, step = utc, 3600
+    else:
+        key, step = utc, None
+    if step:
+        key = pc.multiply(pc.divide(key, step), step)  # int64 dělení = floor pro kladné časy
+    g = pa.table({"k": key, "series_id": t.column("series_id"), "value": t.column("value")})
+    if mask is not None:
+        g = g.filter(mask)
+    if not g.num_rows:
+        return pd.DataFrame()
+    agg = g.group_by(["k", "series_id"]).aggregate([("value", "mean")]).to_pandas()
+    w = agg.pivot(index="k", columns="series_id", values="value_mean").sort_index()
+    w.columns.name = None
+    if resolution == "1D":
+        idx = pd.to_datetime(w.index, unit="s").tz_localize("Europe/Prague")
+    else:
+        idx = pd.to_datetime(w.index, unit="s", utc=True).tz_convert("Europe/Prague")
+    w.index = pd.DatetimeIndex(idx, name="timestamp")
+    return w
+
+
 @ttl_cache(ttl=3600, maxsize=8)
 def load_energy_charts(endpoint: str = None, geo_key: str = None, date_from=None, date_to=None,
-                       series_ids: tuple = None) -> pd.DataFrame:
+                       series_ids: tuple = None, columns: tuple = None) -> pd.DataFrame:
     """Tidy data (TIDY_COLUMNS). date_from/date_to omezí čtení měsíčních
     souborů i řádků, geo_key a series_ids se filtrují už při čtení —
     BEZ nich by public_power pro všechny země a roky znamenalo GB v paměti
     (2.5M řádků jen pro CZ ≈ 1.2 GB jako object). Volající ve webu by
-    měl vždy zadat endpoint + geo_key + okno."""
+    měl vždy zadat endpoint + geo_key + okno.
+
+    timestamp se vrací jako datetime64[ns, UTC] (v souborech je ISO
+    řetězec s offsetem, viz parse_timestamps). columns = jen tyto sloupce
+    (timestamp se přidá vždy) — šetří paměť u dlouhých rozsahů."""
+    cols = None
+    if columns:
+        cols = ["timestamp"] + [c for c in columns if c != "timestamp"]
     frames = []
     endpoints_to_read = [endpoint] if endpoint else list(ENDPOINTS.keys())
     filters = []
@@ -612,7 +709,7 @@ def load_energy_charts(endpoint: str = None, geo_key: str = None, date_from=None
     for ep in endpoints_to_read:
         if ep in PARTITIONED_ENDPOINTS:
             df = read_partitioned(_partitioned_base_dir(ep), date_from=date_from, date_to=date_to,
-                                  filters=filters or None,
+                                  filters=filters or None, columns=cols,
                                   categories=["endpoint", "geo_key", "geo_type", "series_id",
                                               "series_name", "unit", "resolution"])
             if not df.empty:
@@ -622,15 +719,19 @@ def load_energy_charts(endpoint: str = None, geo_key: str = None, date_from=None
         flat_filters = list(filters)
         if endpoint is not None:
             flat_filters.append(("endpoint", "==", endpoint))
-        flat = pq.read_table(DATA_PATH, filters=flat_filters or None).to_pandas()
+        flat = pq.read_table(DATA_PATH, filters=flat_filters or None, columns=cols).to_pandas()
         if not flat.empty:
             frames.append(flat)
 
-    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=TIDY_COLUMNS)
+    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=cols or TIDY_COLUMNS)
     if df.empty:
         return df.reset_index(drop=True)
+    if pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    else:
+        df["timestamp"] = parse_timestamps(df["timestamp"].astype(str).to_numpy()).to_numpy()
     if date_from is not None or date_to is not None:
-        ts = pd.to_datetime(df["timestamp"], utc=True)
+        ts = df["timestamp"]
         mask = pd.Series(True, index=df.index)
         if date_from is not None:
             lo = pd.Timestamp(date_from)

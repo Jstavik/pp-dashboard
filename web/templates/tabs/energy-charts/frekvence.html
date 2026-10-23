@@ -1,0 +1,16 @@
+{% import "macros.html" as m %}
+{% if c.empty %}{% include "tabs/energy-charts/_empty.html" %}{% else %}
+{% include "tabs/energy-charts/_controls.html" %}
+{% if c.stats %}
+<div class="kpi-row">
+  {{ m.kpi("Průměr", "%.3f"|format(c.stats.mean), unit="Hz") }}
+  {{ m.kpi("Minimum (5min)", "%.3f"|format(c.stats.min), unit="Hz") }}
+  {{ m.kpi("Maximum (5min)", "%.3f"|format(c.stats.max), unit="Hz") }}
+  {{ m.kpi("Směr. odchylka", "%.1f"|format(c.stats.std_mhz), unit="mHz") }}
+  {{ m.kpi("Mimo ±50 mHz", "%.2f"|format(c.stats.share_out_50), unit="% času") }}
+</div>
+{% endif %}
+{{ m.chart("line", 420) }}
+{{ m.chart("hist", 340) }}
+<p class="muted small">Zdroj: Energy-Charts, měření DE-Freiburg (synchronní oblast kontinentální Evropy), uloženo jako 5min průměry. Poslední data: {{ c.max_d|fmt }}.</p>
+{% endif %}
