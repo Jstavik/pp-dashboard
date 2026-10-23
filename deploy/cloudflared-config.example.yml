@@ -1,0 +1,9 @@
+# /etc/cloudflared/config.yml — příklad. Tunel vytvoř přes `cloudflared tunnel create ppdash`
+# (nebo token z dashboardu Zero Trust). Přístup chraň Cloudflare Access aplikací
+# na stejném hostname (Zero Trust → Access → Applications → Self-hosted).
+tunnel: <TUNNEL-UUID>
+credentials-file: /etc/cloudflared/<TUNNEL-UUID>.json
+ingress:
+  - hostname: ppdash.example.com
+    service: http://127.0.0.1:8501
+  - service: http_status:404

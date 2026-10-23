@@ -1,0 +1,23 @@
+[Unit]
+Description=PP Dashboard — ICE Commitments of Traders (týdně)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ppdash
+Group=ppdash
+WorkingDirectory=/opt/ppdash/app
+EnvironmentFile=-/home/ppdash/.config/ppdash/env
+Environment=PPDASH_DATA_DIR=/var/lib/ppdash
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/ppdash/venv/bin/python scripts/update_all.py --only cot
+TimeoutStartSec=30min
+Nice=10
+SuccessExitStatus=3
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/ppdash

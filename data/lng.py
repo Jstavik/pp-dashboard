@@ -44,60 +44,39 @@ def fetch_lng_all(from_date: date = None, to_date: date = None) -> pd.DataFrame:
     if to_date is not None:
         date_param += f"&to={to_date}"
 
-    # Per země
-    for cc in COUNTRIES_ALSI:
+    def fetch_pages(query: str, cc: str) -> list:
+        """Všechny stránky pro jeden dotaz. Dřív `break` po poslední
+        stránce / chybě / prázdné odpovědi ukončil jen smyčku pokusů a
+        stránkování běželo dál (až 29 requestů na zemi)."""
+        rows_all = []
         for page in range(1, 30):
+            data = None
             for attempt in range(3):
                 try:
                     r = requests.get(
-                        f"https://alsi.gie.eu/api?country={cc}{date_param}"
-                        f"&size=300&page={page}",
+                        f"https://alsi.gie.eu/api?{query}{date_param}&size=300&page={page}",
                         headers={"x-key": alsi_key},
                         timeout=20,
                     )
-                    if r.status_code != 200:
-                        break
-                    data = r.json()
-                    rows = data.get("data", [])
-                    if not rows:
-                        break
-                    for row in rows:
-                        row["country_code"] = cc
-                    all_frames.extend(rows)
-                    if page >= data.get("last_page", 1):
-                        break
-                    time.sleep(0.3)
+                    data = r.json() if r.status_code == 200 else {}
                     break
                 except Exception as e:
                     log.warning(f"ALSI {cc} page {page}: {e}")
                     time.sleep(2)
-
-    # EU agregát
-    for page in range(1, 30):
-        for attempt in range(3):
-            try:
-                r = requests.get(
-                    f"https://alsi.gie.eu/api?type=eu{date_param}"
-                    f"&size=300&page={page}",
-                    headers={"x-key": alsi_key},
-                    timeout=20,
-                )
-                if r.status_code != 200:
-                    break
-                data = r.json()
-                rows = data.get("data", [])
-                if not rows:
-                    break
-                for row in rows:
-                    row["country_code"] = "EU"
-                all_frames.extend(rows)
-                if page >= data.get("last_page", 1):
-                    break
-                time.sleep(0.3)
+            rows = (data or {}).get("data", [])
+            if not rows:
                 break
-            except Exception as e:
-                log.warning(f"ALSI EU page {page}: {e}")
-                time.sleep(2)
+            for row in rows:
+                row["country_code"] = cc
+            rows_all.extend(rows)
+            if page >= data.get("last_page", 1):
+                break
+            time.sleep(0.3)
+        return rows_all
+
+    for cc in COUNTRIES_ALSI:
+        all_frames.extend(fetch_pages(f"country={cc}", cc))
+    all_frames.extend(fetch_pages("type=eu", "EU"))
 
     if not all_frames:
         return pd.DataFrame()
