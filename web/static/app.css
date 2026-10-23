@@ -360,3 +360,8 @@ pre.sql { white-space: pre-wrap; font-size: .72rem; max-height: 320px; overflow:
 .chart-card.is-empty .chart-msg { min-height: 90px; }
 .report-doc .chart-card.is-empty { opacity: .8; }
 @media print { .report-doc .chart-card.is-empty { display: none; } }
+tr.st-fail td { color: var(--bad); } tr.st-warn td:first-child { color: var(--warn); }
+table.data td.wrap { white-space: normal; min-width: 220px; }
+.status-link { font-size: .8rem; color: var(--muted); text-decoration: none; white-space: nowrap; }
+.status-link:hover { color: var(--accent); }
+.stav-grid { display: grid; gap: 12px; } .stav-grid > * { min-width: 0; }

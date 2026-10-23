@@ -44,11 +44,20 @@ else
   echo "  !! /healthz neodpovídá: $out"; rc=1
 fi
 
+hdr "Úlohy — poslední běhy a chyby (history/.runs.json)"
+PY="$VENV/bin/python"; [ -x "$PY" ] || PY=python3
+(cd "$REPO" && "$PY" scripts/runs_status.py --errors) | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+for s in "${SERVICES[@]}"; do
+  [ "$s" = ppdash-web ] && continue
+  n=$(journalctl --user -u "$s.service" --since "-24h" -p err --no-pager -q 2>/dev/null | wc -l)
+  [ "${n:-0}" -gt 0 ] && echo "  $s: $n chybových řádků v journalu za 24 h (deploy/status.sh --logs)"
+done
+
 hdr "Živá úloha — posledních 5 běhů"
 journalctl --user -u ppdash-live.service -n 5 --no-pager -o short-iso 2>/dev/null | sed 's/^/  /'
 
 hdr "Data ($PPDASH_DATA_DIR/history)"
-PY="$VENV/bin/python"; [ -x "$PY" ] || PY=python3
 (cd "$REPO" && "$PY" scripts/data_status.py) | sed 's/^/  /'
 [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
 

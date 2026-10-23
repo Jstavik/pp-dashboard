@@ -97,6 +97,12 @@ def index(request: Request):
     return templates.TemplateResponse(request, "overview.html", {"o": context(), "nav_active": "prehled"})
 
 
+@app.get("/stav", response_class=HTMLResponse, include_in_schema=False)
+def status_page(request: Request):
+    from web.status import context
+    return templates.TemplateResponse(request, "stav.html", {"s": context(), "nav_active": "stav"})
+
+
 @app.get("/frag-overview", response_class=HTMLResponse, include_in_schema=False)
 def overview_fragment(request: Request):
     from web.overview import context

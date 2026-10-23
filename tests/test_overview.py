@@ -68,3 +68,22 @@ def test_runlog(hist):
     s = runlog.summary()
     assert s[0]["task"] == "energinet" and s[0]["status"] == "WARN" and s[0]["fails"] == 1
     assert json.loads((hist / ".runs.json").read_text())["cot"][0]["status"] == "OK"
+
+
+def test_status_page(hist):
+    from core import runlog
+    from web.app import app
+    runlog.record([("energinet", "FAIL", 3.2, "UpdateError: Energinet: všechny datasety selhaly")])
+    cl = TestClient(app)
+    r = cl.get("/stav")
+    assert r.status_code == 200 and "Energinet" in r.text and "všechny datasety selhaly" in r.text
+    assert "Datasety" in r.text
+
+
+def test_runs_status_script(hist, capsys):
+    from core import runlog
+    from scripts import runs_status
+    runlog.record([("cot", "OK", 1.0, ""), ("weather", "FAIL", 2.0, "QuotaExceeded")])
+    assert runs_status.main(["--errors"]) == 1
+    out = capsys.readouterr().out
+    assert "weather" in out and "QuotaExceeded" in out

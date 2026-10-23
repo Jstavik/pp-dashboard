@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Stav dat · PP Dashboard{% endblock %}
+{% block content %}
+<div class="ov-head"><h1 class="ov-title">Stav dat a aktualizací <span class="muted">· {{ s.now }}</span></h1>
+<span class="muted small">obnoví se po minutě</span></div>
+<div class="alert alert-{{ 'bad' if s.state == 'bad' else ('warn' if s.state == 'warn' else 'info') }}">
+  {% if s.state == "ok" %}✓ Všechno běží — {{ s.n_ok }} datasetů čerstvých, poslední běhy úloh bez chyby.
+  {% else %}{% if s.n_fail %}⚠ {{ s.n_fail }} úloh skončilo posledním během chybou. {% endif %}{% if s.n_bad %}⚠ {{ s.n_bad }} datasetů je starších než obvykle nebo se teprve dotahují. {% endif %}Ostatní ({{ s.n_ok }}) v pořádku.{% endif %}
+</div>
+<div class="stav-grid">
+<div class="card panel">
+  <h3 class="section-title">Úlohy — poslední běh</h3>
+  {% if not s.runs %}<p class="muted">Zatím žádný zaznamenaný běh — záznam vzniká po první aktualizaci.</p>{% else %}
+  <div class="table-wrap"><table class="data">
+    <thead><tr><th></th><th>Úloha</th><th>Poslední běh</th><th>Trvání</th><th>Chyby (FAIL/WARN z běhů)</th><th>Detail</th></tr></thead>
+    <tbody>{% for r in s.runs %}<tr class="st-{{ r.status|lower }}">
+      <td>{{ '✗' if r.status == 'FAIL' else ('~' if r.status == 'WARN' else '✓') }}</td><td>{{ r.label }}</td><td>{{ r.last_local }}</td>
+      <td>{{ r.secs_txt }} s</td><td>{{ r.fails }}/{{ r.warns }} z {{ r.runs }}</td>
+      <td class="wrap">{{ r.detail }}{% if r.err_txt %}<br><span class="muted small">{{ r.err_txt }}</span>{% endif %}</td></tr>{% endfor %}</tbody>
+  </table></div>{% endif %}
+  <p class="muted small">WARN = část dat se nestáhla nebo backfill pokračuje příštím během (to je v pořádku). FAIL = úloha nedoběhla.</p>
+  <h3 class="section-title">Ostatní</h3>
+  <ul class="stat-list small">
+    <li>Přehled dne přepočten: {{ s.ov.built or "—" }} (plný přepočet {{ s.ov.full or "—" }}){% if s.ov.errors %} — dílčí chyby: {{ s.ov.errors|join("; ") }}{% endif %}</li>
+    {% if s.quota %}<li>Open-Meteo dnes (UTC {{ s.quota.date }}): ~{{ s.quota.used|round|int }} volání z denního limitu{% if s.quota.exhausted %} — <strong>kvóta vyčerpána</strong>, backfill pokračuje zítra{% endif %}</li>{% endif %}
+    <li>Podrobnosti ze serveru: <code>deploy/status.sh --logs</code></li>
+  </ul>
+</div>
+<div class="card panel">
+  <h3 class="section-title">Datasety — stáří dat</h3>
+  <div class="table-wrap" style="max-height: 760px"><table class="data">
+    <thead><tr><th></th><th>Dataset</th><th>Zdroj (úloha)</th><th>Poslední data</th><th>Stáří</th><th>Limit</th><th>MB</th></tr></thead>
+    <tbody>{% for d in s.datasets %}<tr class="{{ '' if d.ok else 'st-warn' }}">
+      <td>{{ '✓' if d.ok else ('…' if d.missing else '⚠') }}</td><td>{{ d.name }}</td><td>{{ d.task }}</td>
+      <td>{{ d.last if not d.missing else 'data se dotahují' }}</td><td>{{ d.age }}</td><td>{{ d.limit }}</td><td>{{ d.size }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+</div>
+<script>setTimeout(function () { if (!document.hidden) location.reload(); }, 60000);</script>
+{% endblock %}
