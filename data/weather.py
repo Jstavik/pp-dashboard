@@ -101,14 +101,107 @@ def _url(kind: str) -> str:
     return f"https://{'customer-' if key else ''}{host}{path}"
 
 
+# ── kvóta free API ──────────────────────────────────────────────────────
+# Free tier: < 10 000 „volání“/den, 5 000/h, 600/min. Volání je vážené
+# (místa × délka období/14 dní × proměnné/10; počítáme konzervativně i ×
+# počet modelů). Spotřeba za den (UTC) se drží v history/.openmeteo_quota.json,
+# backfill ERA5 dostane jen zbytek denní kvóty (rozloží se do více běhů/dní).
+
+def _free_tier() -> bool:
+    return not (env("OPENMETEO_API_KEY") or env("OPENMETEO_BASE_URL"))
+
+
+def _quota_path() -> str:
+    return os.path.join(os.path.dirname(DAILY_DIR), ".openmeteo_quota.json")
+
+
+def daily_limit() -> float:
+    return float(env("PPDASH_OPENMETEO_DAILY_LIMIT", "9000"))  # rezerva pod 10 000
+
+
+def _quota_load() -> dict:
+    import json
+    today = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d")
+    try:
+        with open(_quota_path(), encoding="utf-8") as f:
+            q = json.load(f)
+        if q.get("date") == today:
+            return q
+    except (OSError, ValueError):
+        pass
+    return {"date": today, "used": 0.0, "exhausted": False}
+
+
+def _quota_save(q: dict):
+    import json
+    path = _quota_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(q, f)
+    os.replace(tmp, path)
+
+
+def quota_left() -> float:
+    if not _free_tier():
+        return float("inf")
+    q = _quota_load()
+    return 0.0 if q.get("exhausted") else max(0.0, daily_limit() - float(q.get("used", 0)))
+
+
+def _quota_add(weight: float, exhausted: bool = False):
+    if not _free_tier():
+        return
+    q = _quota_load()
+    q["used"] = round(float(q.get("used", 0)) + weight, 2)
+    q["exhausted"] = bool(q.get("exhausted")) or exhausted
+    _quota_save(q)
+
+
+def request_weight(kind: str, params: dict) -> float:
+    n = len(str(params.get("latitude", "")).split(","))
+    if kind == "archive":
+        days = (pd.Timestamp(params["end_date"]) - pd.Timestamp(params["start_date"])).days + 1
+    else:
+        days = int(params.get("forecast_days", 7)) + int(params.get("past_days", 0))
+    n_vars = len(str(params.get("hourly", "")).split(","))
+    models = str(params.get("models", ""))
+    n_models = 1 if models in ("", "best_match") else len(models.split(","))
+    return _call_weight(n, days, n_vars) * n_models
+
+
+class QuotaExceeded(requests.HTTPError):
+    """Denní/hodinová kvóta Open-Meteo — dál se v tomto běhu nevolá."""
+
+
 def _get(session, kind: str, params: dict) -> list:
+    from core.http import retry_after_s
     key = env("OPENMETEO_API_KEY")
+    weight = request_weight(kind, params)
+    if _free_tier() and quota_left() < weight:
+        raise QuotaExceeded(f"denní kvóta Open-Meteo vyčerpána (limit {daily_limit():.0f})")
     if key:
         params = {**params, "apikey": key}
-    for attempt in range(3):
+    for attempt in range(4):
         r = session.get(_url(kind), params=params, headers=UA, timeout=120)
         if r.status_code == 429:
-            time.sleep(60 * (attempt + 1))
+            try:
+                reason = str(r.json().get("reason", ""))
+            except Exception:
+                reason = getattr(r, "text", "")[:200]
+            low = reason.lower()
+            if "daily" in low:
+                _quota_add(0, exhausted=True)
+                raise QuotaExceeded(f"HTTP 429: {reason}")
+            if "hourly" in low:
+                raise QuotaExceeded(f"HTTP 429: {reason}")
+            # minutový limit (600/min) → Retry-After nebo 60 s, 120 s, …
+            wait = retry_after_s(r) or 60 * 2 ** attempt
+            log.info("Open-Meteo 429 (%s) — čekám %.0f s", reason or "limit", wait)
+            time.sleep(min(wait, 300))
+            continue
+        if r.status_code in (502, 503, 504):
+            time.sleep(min(300, retry_after_s(r) or 10 * 2 ** attempt))
             continue
         if r.status_code >= 400:
             try:
@@ -116,9 +209,10 @@ def _get(session, kind: str, params: dict) -> list:
             except Exception:
                 reason = r.text[:200] if hasattr(r, "text") else ""
             raise requests.HTTPError(f"HTTP {r.status_code}: {reason}")
+        _quota_add(weight)
         j = r.json()
         return j if isinstance(j, list) else [j]
-    raise requests.HTTPError("HTTP 429 (opakovaně)")
+    raise requests.HTTPError(f"HTTP {r.status_code} (opakovaně)")
 
 
 def _points(region: str, var: str):
@@ -205,11 +299,13 @@ def update_weather_history(session=None, budget_calls: float = None) -> dict:
     """ERA5 denní řady (inkrementálně, backfill po 2 letech) + posledních
     7 dní z forecast API (dokud ERA5 nedožene)."""
     s = session or requests.Session()
-    budget = float(budget_calls if budget_calls is not None else env("PPDASH_WEATHER_BUDGET_CALLS", "2500"))
+    budget = float(budget_calls if budget_calls is not None else env("PPDASH_WEATHER_BUDGET_CALLS", "2000"))
+    # rezerva na předpověď dalších běhů dne (~350 volání/běh, 4 běhy/den)
+    budget = min(budget, quota_left() - float(env("PPDASH_WEATHER_FC_RESERVE", "1100")))
     start0 = pd.Timestamp(env("PPDASH_WEATHER_START", "1991-01-01")).date()
     today = pd.Timestamp.now(tz="Europe/Prague").normalize().date()
     era5_end = today - pd.Timedelta(days=6)
-    used, rows, errors, pending = 0.0, 0, 0, 0
+    used, rows, errors, pending, quota_hit = 0.0, 0, 0, 0, False
     for region, cfg in REGIONS.items():
         base = os.path.join(DAILY_DIR, region)
         for var in VAR_API:
@@ -220,7 +316,7 @@ def update_weather_history(session=None, budget_calls: float = None) -> dict:
             while cur <= era5_end:
                 b = min(cur + pd.Timedelta(days=730), era5_end)
                 w = _call_weight(len(cfg[var]), (b - cur).days + 1)
-                if used + w > budget:
+                if quota_hit or used + w > budget:
                     pending += 1
                     break
                 try:
@@ -229,6 +325,11 @@ def update_weather_history(session=None, budget_calls: float = None) -> dict:
                     if not df.empty:
                         touched = upsert_partitioned(df, base, "date", ["date", "var"], fmt="parquet")
                         rows += sum(n for _, n, wr in touched if wr)
+                except QuotaExceeded as e:
+                    log.warning("Počasí archiv: %s — backfill pokračuje příští běh", e)
+                    quota_hit = True
+                    pending += 1
+                    break
                 except Exception as e:
                     log.warning("Počasí archiv %s/%s %s: %s", region, var, cur, e)
                     errors += 1
@@ -236,6 +337,8 @@ def update_weather_history(session=None, budget_calls: float = None) -> dict:
                 cur = b + pd.Timedelta(days=1)
                 time.sleep(0.5)
             # poslední dny (ERA5 ještě není) — jen dny po konci ERA5
+            if quota_hit:
+                continue
             try:
                 rec = _fetch_daily(s, "forecast", region, var, None, None, past_days=8)
                 used += _call_weight(len(cfg[var]), 9)
@@ -245,10 +348,14 @@ def update_weather_history(session=None, budget_calls: float = None) -> dict:
                 rec = rec[rec["date"].dt.tz_convert("Europe/Prague").dt.date < today]
                 if not rec.empty:
                     upsert_partitioned(rec, base, "date", ["date", "var"], fmt="parquet")
+            except QuotaExceeded as e:
+                log.warning("Počasí recent: %s", e)
+                quota_hit = True
             except Exception as e:
                 log.warning("Počasí recent %s/%s: %s", region, var, e)
                 errors += 1
-    log.info("Počasí historie: %d řádků, ~%.0f volání, %d řad čeká na další běh, %d chyb", rows, used, pending, errors)
+    log.info("Počasí historie: %d řádků, ~%.0f volání, %d řad čeká na další běh, %d chyb, zbývá kvóty dnes %s",
+             rows, used, pending, errors, "∞" if not _free_tier() else f"{quota_left():.0f}")
     if errors and not rows and errors >= sum(len([v for v in VAR_API if v in c]) for c in REGIONS.values()):
         from core.updaters import UpdateError
         raise UpdateError("Počasí: všechna volání selhala")
@@ -359,6 +466,10 @@ def update_weather_forecast(session=None) -> dict:
                                                       .tz_convert("UTC"))
                     upsert_partitioned(daily, os.path.join(FC_DAILY_DIR, region), "issued",
                                        ["issued", "date", "var", "model"], fmt="parquet")
+            except QuotaExceeded as e:
+                log.warning("Počasí předpověď: %s", e)
+                errors += 1
+                continue
             except Exception as e:
                 log.warning("Počasí předpověď %s/%s: %s", region, var, e)
                 errors += 1
@@ -380,6 +491,8 @@ def update_weather_forecast(session=None) -> dict:
 def _fetch_models(session, kind, params, models, parse):
     try:
         return parse(_get(session, kind, {**params, "models": ",".join(models)}), models)
+    except QuotaExceeded:
+        raise
     except requests.HTTPError as e:
         if "400" not in str(e) or len(models) == 1:
             raise
@@ -387,6 +500,8 @@ def _fetch_models(session, kind, params, models, parse):
     for m in models:
         try:
             frames.append(parse(_get(session, kind, {**params, "models": m}), [m]))
+        except QuotaExceeded:
+            raise
         except requests.HTTPError as e:
             log.warning("Open-Meteo %s model %s: %s", kind, m, e)
     frames = [f for f in frames if not f.empty]
@@ -408,7 +523,7 @@ def _replace_ens(region: str, var: str, ens: pd.DataFrame):
 def update_weather(session=None) -> dict:
     a = update_weather_forecast(session)
     b = update_weather_history(session)
-    return {"rows": a["rows"] + b["rows"], "errors": a["errors"] + b["errors"]}
+    return {"rows": a["rows"] + b["rows"], "errors": a["errors"] + b["errors"], "pending": b.get("pending", 0)}
 
 
 # ── čtení pro web ───────────────────────────────────────────────────────

@@ -25,6 +25,7 @@ import time
 import pandas as pd
 import requests
 
+from core.http import RateLimited, get_with_backoff
 from core.settings import env, history_path
 from data.partitioned_store import last_date_partitioned, upsert_partitioned
 
@@ -186,13 +187,10 @@ def _fingrid_fetch(session, ds_id: int, start: pd.Timestamp, end: pd.Timestamp, 
         params = {"startTime": start.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
                   "endTime": end.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
                   "format": "json", "pageSize": 20000, "page": page, "sortBy": "startTime", "sortOrder": "asc"}
-        for attempt in range(4):
-            r = session.get(FINGRID_BASE.format(id=ds_id), params=params,
-                            headers={**UA, "x-api-key": key}, timeout=60)
-            if r.status_code == 429:  # ~10 req/min na klíč
-                time.sleep(15 * (attempt + 1))
-                continue
-            break
+        # limit ~10 req/min na klíč: 429 → Retry-After / backoff 15, 30, 60, 120 s
+        r = get_with_backoff(session, FINGRID_BASE.format(id=ds_id), params=params,
+                             headers={**UA, "x-api-key": key}, timeout=60, tries=5, base_s=15,
+                             cap_s=300, max_wait_s=900, sleep=time.sleep, label=f"Fingrid {ds_id}")
         r.raise_for_status()
         j = r.json()
         data = j.get("data", []) if isinstance(j, dict) else j
@@ -233,7 +231,7 @@ def update_fingrid(session=None, budget_s: float = None) -> dict:
     deadline = time.monotonic() + budget
     start0 = pd.Timestamp(env("PPDASH_NORDIC_START", "2019-01-01"), tz=TZ)
     now = pd.Timestamp.now(tz=TZ)
-    rows, errors = 0, 0
+    rows, errors, pending = 0, 0, 0
     for ds_id, name in FINGRID_DATASETS.items():
         last = _last_series_time(FINGRID_DIR, name)
         cur = max(start0, last.tz_convert(TZ) - pd.Timedelta(days=2)) if last is not None else start0
@@ -245,16 +243,22 @@ def update_fingrid(session=None, budget_s: float = None) -> dict:
                 if not df.empty:
                     touched = upsert_partitioned(df, FINGRID_DIR, "time", ["time", "series"], fmt="parquet")
                     rows += sum(n for _, n, w in touched if w)
+            except RateLimited as e:
+                log.warning("Fingrid %s (%s) %s: %s — pokračuje příští běh", ds_id, name, cur.date(), e)
+                break
             except Exception as e:
                 log.warning("Fingrid %s (%s) %s: %s", ds_id, name, cur.date(), e)
                 errors += 1
+                cur = None
                 break
             cur = b
             time.sleep(6.5)
+        if cur is not None and cur < end:  # 429 nebo vypršel rozpočet → navazuje příští běh
+            pending += 1
     if errors == len(FINGRID_DATASETS):
         from core.updaters import UpdateError
         raise UpdateError("Fingrid: všechny datasety selhaly")
-    return {"rows": rows, "errors": errors}
+    return {"rows": rows, "errors": errors, "pending": pending}
 
 
 # ── Energinet ───────────────────────────────────────────────────────────
@@ -293,36 +297,73 @@ def melt_energinet(records: list) -> pd.DataFrame:
     return res[cols]
 
 
-def update_energinet(session=None, budget_s: float = None) -> dict:
+def update_energinet(session=None, budget_s: float = None, sleep=None) -> dict:
+    """Energi Data Service: max **1 dotaz za minutu na IP a dataset**
+    (energidataservice.dk/support-service; jinak 429 „Try again in X
+    seconds“, při opakování blokace IP). Proto: datasety se střídají
+    (každý má vlastní minutový rozestup PPDASH_ENERGINET_INTERVAL_S=65),
+    backfill po velkých oknech (PPDASH_ENERGINET_WINDOW_DAYS=92 — 1 dotaz
+    vrátí celé okno, limit=0), každé okno se hned zapíše, 429 respektuje
+    Retry-After; když server chce čekat déle, dataset se odloží na další běh
+    (pokračuje od posledního uloženého). 429 není chyba běhu."""
+    from core.http import Pacer, RateLimited, get_with_backoff
+    sleep = sleep or time.sleep
     s = session or requests.Session()
     budget = float(budget_s if budget_s is not None else env("PPDASH_ENERGINET_BUDGET_S", "900"))
+    interval = float(env("PPDASH_ENERGINET_INTERVAL_S", "65"))
+    window = pd.Timedelta(days=int(env("PPDASH_ENERGINET_WINDOW_DAYS", "92")))
     deadline = time.monotonic() + budget
     start0 = pd.Timestamp(env("PPDASH_NORDIC_START", "2019-01-01"), tz="UTC")
     now = pd.Timestamp.now(tz="UTC").ceil("h")
-    rows, errors = 0, 0
+    pacer = Pacer(interval, sleep=sleep)
+    state = {}
     for name in ENERGINET_DATASETS:
         base = os.path.join(ENERGINET_DIR, name)
         last = last_date_partitioned(base, "time", "parquet")
         cur = max(start0, last - pd.Timedelta(days=3)) if last is not None else start0
         end = now + (pd.Timedelta(days=2) if "Forecast" in name else pd.Timedelta(0))
-        while cur < end and time.monotonic() < deadline:
-            b = min(cur + pd.Timedelta(days=31), end)
-            try:
-                r = s.get(ENERGINET_BASE.format(name=name), headers=UA, timeout=90,
-                          params={"start": cur.strftime("%Y-%m-%dT%H:%M"), "end": b.strftime("%Y-%m-%dT%H:%M"),
-                                  "timezone": "utc", "limit": 0})
-                r.raise_for_status()
-                df = melt_energinet(r.json().get("records", []))
-                if not df.empty:
-                    touched = upsert_partitioned(df, base, "time", ["time", "area", "series"], fmt="parquet")
-                    rows += sum(n for _, n, w in touched if w)
-            except Exception as e:
-                log.warning("Energinet %s %s: %s", name, cur.date(), e)
-                errors += 1
-                break
-            cur = b
-            time.sleep(0.5)
+        state[name] = {"base": base, "cur": cur, "end": end, "status": "run"}
+    rows, errors, pending, requests_n = 0, 0, 0, 0
+    while True:
+        active = [n for n, st in state.items() if st["status"] == "run" and st["cur"] < st["end"]]
+        if not active:
+            break
+        name = min(active, key=pacer.ready_in)
+        st = state[name]
+        if time.monotonic() + pacer.ready_in(name) > deadline:
+            break
+        pacer.wait(name)
+        cur, b = st["cur"], min(st["cur"] + window, st["end"])
+        try:
+            r = get_with_backoff(s, ENERGINET_BASE.format(name=name), headers=UA, timeout=180,
+                                 params={"start": cur.strftime("%Y-%m-%dT%H:%M"),
+                                         "end": b.strftime("%Y-%m-%dT%H:%M"), "timezone": "utc", "limit": 0},
+                                 tries=3, base_s=interval, cap_s=300, max_wait_s=600, sleep=sleep,
+                                 label=f"Energinet {name}")
+            requests_n += 1
+            if r.status_code == 403:
+                raise RuntimeError("HTTP 403 — IP možná zablokovaná kvůli počtu dotazů (počkat, kontaktovat Energinet)")
+            r.raise_for_status()
+            df = melt_energinet(r.json().get("records", []))
+            if not df.empty:
+                touched = upsert_partitioned(df, st["base"], "time", ["time", "area", "series"], fmt="parquet")
+                rows += sum(n for _, n, w in touched if w)
+            st["cur"] = b
+        except RateLimited as e:
+            log.warning("Energinet %s %s: %s — pokračuje příští běh", name, cur.date(), e)
+            st["status"] = "pending"
+        except Exception as e:
+            log.warning("Energinet %s %s: %s", name, cur.date(), e)
+            st["status"] = "error"
+            errors += 1
+    for st in state.values():
+        if st["status"] == "run" and st["cur"] < st["end"]:
+            st["status"] = "pending"
+        if st["status"] == "pending":
+            pending += 1
+    log.info("Energinet: %d řádků, %d dotazů, %d datasetů pokračuje příští běh, %d chyb",
+             rows, requests_n, pending, errors)
     if errors == len(ENERGINET_DATASETS):
         from core.updaters import UpdateError
         raise UpdateError("Energinet: všechny datasety selhaly")
-    return {"rows": rows, "errors": errors}
+    return {"rows": rows, "errors": errors, "pending": pending}

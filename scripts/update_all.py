@@ -238,8 +238,10 @@ def run_tasks(names: list) -> list:
         try:
             res = fn() or {}
             n_err = int(res.get("errors", 0) or 0) if isinstance(res, dict) else 0
+            n_pend = int(res.get("pending", 0) or 0) if isinstance(res, dict) else 0
             status = "WARN" if n_err else "OK"
-            detail = f"{n_err} dílčích chyb" if n_err else ""
+            detail = ", ".join(x for x in (f"{n_err} dílčích chyb" if n_err else "",
+                                           f"{n_pend} pokračuje příští běh" if n_pend else "") if x)
         except Exception as e:
             from core.updaters import UpdateError
             if isinstance(e, UpdateError):  # očekávané selhání — bez tracebacku
@@ -249,6 +251,24 @@ def run_tasks(names: list) -> list:
             status, detail = "FAIL", f"{type(e).__name__}: {e}"
         results.append((name, status, time.monotonic() - t0, detail))
     return results
+
+
+def _record_runs(results: list) -> None:
+    """Posledních N běhů každé úlohy → history/.runs.json (stránka /stav, status.sh)."""
+    try:
+        from core.runlog import record
+        record(results)
+    except Exception as e:  # záznam nesmí shodit aktualizaci
+        log.warning(f"záznam běhů selhal: {e}")
+
+
+def _refresh_overview(names: list) -> None:
+    """Předpočítat úvodní stránku (Přehled dne) — web jen čte JSON."""
+    try:
+        from core.overview import build_overview
+        build_overview(live_only=set(names) <= set(LIVE_TASKS))
+    except Exception as e:
+        log.warning(f"přehled dne se nepodařilo přepočítat: {type(e).__name__}: {e}")
 
 
 def main(argv=None) -> int:
@@ -298,6 +318,8 @@ def main(argv=None) -> int:
         return EXIT_LOCKED
     try:
         results = run_tasks(names)
+        _record_runs(results)
+        _refresh_overview(names)
     finally:
         lock.release()
 
