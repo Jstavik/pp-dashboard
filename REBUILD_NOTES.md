@@ -190,7 +190,7 @@ které komerční použití dovolují) a nastavit `OPENMETEO_BASE_URL`.
   v kvótě. Testováno proti falešným odpovědím ve tvaru Open-Meteo.
 
 ### Testy (kolo 3)
-- 0 testů (zelené i s `PPDASH_TEST_EMPTY=1`): nové `tests/test_explore.py`
+-  testů (zelené i s `PPDASH_TEST_EMPTY=1`): nové `tests/test_explore.py`
   (engine: energie přes změnu času, dvoustupňová agregace, prořezávání
   partition, zhrubnutí, CSV zrcadlo, sezónnost, pivot/pohledy/cross-filter
   endpointy, limity DuckDB), `tests/test_entsoe_history.py` (navazování,
