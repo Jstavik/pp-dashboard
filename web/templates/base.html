@@ -24,9 +24,18 @@
 <body>
 <header class="topbar">
   <a class="brand" href="/"><span class="brand-mark">⚡</span><span class="brand-name">PP&nbsp;Dashboard</span></a>
+  {% set cur = nav_active if nav_active is defined else (page.key if page is defined else "") %}
+  {% set cur_group = nav_group(cur) %}
   <nav class="mainnav" aria-label="Sekce">
-    {% for key, pg in pages.items() if pg.tabs %}
-      <a href="/{{ key }}" class="{{ 'active' if page is defined and page.key == key }}"><span class="ico">{{ pg.icon }}</span>{{ pg.title }}</a>
+    {% for gkey, gtitle, gicon, items in nav %}
+      {% if items|length == 1 %}
+      <a href="{{ items[0][2] }}" class="{{ 'active' if gkey == cur_group }}"><span class="ico">{{ gicon }}</span>{{ gtitle }}</a>
+      {% else %}
+      <details class="navgroup{{ ' active' if gkey == cur_group }}">
+        <summary><span class="ico">{{ gicon }}</span>{{ gtitle }}<span class="caret">▾</span></summary>
+        <div class="navpop">{% for k, label, url in items %}<a href="{{ url }}" class="{{ 'active' if k == cur }}">{{ label }}</a>{% endfor %}</div>
+      </details>
+      {% endif %}
     {% endfor %}
   </nav>
   <div class="topbar-right">

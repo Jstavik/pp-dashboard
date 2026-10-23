@@ -82,16 +82,25 @@ def _num(v, fmt=",.0f"):
     return fmt_value(v, fmt)
 
 
+from web.nav import NAV, active_group  # noqa: E402
+
 templates.env.globals.update(
-    pages=registry.PAGES, tabs=registry.TABS, asset_version=_asset_version(),
+    pages=registry.PAGES, tabs=registry.TABS, asset_version=_asset_version(), nav=NAV, nav_group=active_group,
 )
 templates.env.filters["num"] = _num
 templates.env.filters["fmt"] = fmt_value
 
 
-@app.get("/", include_in_schema=False)
-def index():
-    return RedirectResponse("/elektrina", status_code=307)
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def index(request: Request):
+    from web.overview import context
+    return templates.TemplateResponse(request, "overview.html", {"o": context(), "nav_active": "prehled"})
+
+
+@app.get("/frag-overview", response_class=HTMLResponse, include_in_schema=False)
+def overview_fragment(request: Request):
+    from web.overview import context
+    return templates.TemplateResponse(request, "overview_body.html", {"o": context()})
 
 
 @app.get("/healthz")

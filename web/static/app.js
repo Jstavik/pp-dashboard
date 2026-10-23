@@ -458,7 +458,7 @@
 
   // zavřít otevřený multiselect klikem mimo
   document.addEventListener("click", function (e) {
-    document.querySelectorAll("details.ms[open]").forEach(function (d) {
+    document.querySelectorAll("details.ms[open], details.navgroup[open]").forEach(function (d) {
       if (!d.contains(e.target)) d.open = false;
     });
   });
@@ -491,6 +491,25 @@
         clock.textContent = new Date().toLocaleString("cs-CZ", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Prague" });
       };
       tick(); setInterval(tick, 30000);
+    }
+    // Přehled dne: obnova po minutě + filtr feedu podle kategorie
+    var ov = document.getElementById("overview");
+    if (ov) {
+      var ovCat = "";
+      var applyCat = function () {
+        ov.querySelectorAll(".chip").forEach(function (c) { c.classList.toggle("active", c.dataset.cat === ovCat); });
+        ov.querySelectorAll(".feed-item").forEach(function (li) { li.hidden = !!ovCat && li.dataset.cat !== ovCat; });
+      };
+      ov.addEventListener("click", function (e) {
+        var more = e.target.closest("[data-more]");
+        if (more) { ov.querySelector(".feed").classList.add("expanded"); more.hidden = true; return; }
+        var chip = e.target.closest(".chip");
+        if (!chip) return;
+        ovCat = chip.dataset.cat || "";
+        applyCat();
+      });
+      var ovs = parseInt(ov.dataset.refresh || "0", 10);
+      if (ovs) setInterval(function () { if (!document.hidden) loadHeader(ov).then(applyCat); }, ovs * 1000);
     }
     if (!pageEl) return;
 

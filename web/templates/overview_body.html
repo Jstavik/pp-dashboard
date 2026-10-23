@@ -1,0 +1,51 @@
+<div class="ov-head">
+  <h1 class="ov-title">Přehled dne <span class="muted">· {{ o.today }}</span></h1>
+  <span class="muted small">{% if o.built %}přepočteno {{ o.built }}{% if o.full_built and o.full_built != o.built %} (živá data), ostatní {{ o.full_built }}{% endif %}{% else %}data se dotahují{% endif %} · <a href="/stav">stav dat</a></span>
+</div>
+{% if not o.groups %}
+<div class="alert alert-info">Přehled se teprve počítá — data se dotahují. Stránka se obnoví sama.</div>
+{% endif %}
+<div class="ov-layout">
+  <div class="ov-tiles">
+  {% for g in o.groups %}
+    <h3 class="section-title">{{ g.title }}</h3>
+    <div class="tile-grid">
+    {% for t in g.tiles %}
+      <a class="tile{% if t.state %} tile-{{ t.state }}{% endif %}{% if t.value is none %} tile-empty{% endif %}" href="{{ t.href }}" style="--tile-accent: {{ t.color }}">
+        <div class="tile-label">{{ t.label }}</div>
+        <div class="tile-value">{{ t.value_txt }}{% if t.value is not none %}<small> {{ t.unit }}</small>{% endif %}</div>
+        <div class="tile-deltas">
+          {% if t.dd_obj %}<span class="chg {{ t.dd_obj.cls }}" title="změna proti předchozímu dni">d/d {{ t.dd_obj.text }}</span>{% endif %}
+          {% if t.ww_obj %}<span class="chg {{ t.ww_obj.cls }}" title="změna proti týdnu">w/w {{ t.ww_obj.text }}</span>{% endif %}
+        </div>
+        <div class="tile-spark">{{ t.spark_svg|safe }}</div>
+        <div class="tile-sub">{{ t.sub }}</div>
+      </a>
+    {% endfor %}
+    </div>
+  {% endfor %}
+  </div>
+  <aside class="ov-feed card">
+    <div class="feed-head">
+      <h3 class="section-title">Zprávy a události</h3>
+      {% if o.cats|length > 1 %}<div class="feed-filter" role="group" aria-label="Filtr">
+        <button type="button" class="chip active" data-cat="">vše</button>
+        {% for c in o.cats %}<button type="button" class="chip" data-cat="{{ c }}">{{ c }}</button>{% endfor %}
+      </div>{% endif %}
+    </div>
+    {% if not o.events %}<p class="muted small">Zatím žádné události — feed se plní při aktualizacích (odstávky ENTSO-E, GASSCO UMM, výrazné odchylky).</p>{% endif %}
+    <ul class="feed">
+    {% for e in o.events %}
+      <li class="feed-item sev-{{ e.sev }}" data-cat="{{ e.cat }}">
+        <a href="{{ e.href }}">
+          <span class="feed-time">{{ e.when }}</span><span class="feed-cat">{{ e.cat }}</span>
+          <span class="feed-title">{{ e.title }}</span>
+          {% if e.text %}<span class="feed-text">{{ e.text }}</span>{% endif %}
+        </a>
+      </li>
+    {% endfor %}
+    </ul>
+    {% if o.events|length > 15 %}<button type="button" class="btn feed-more" data-more>Zobrazit další ({{ o.events|length - 15 }})</button>{% endif %}
+  </aside>
+</div>
+{% if o.errors %}<details class="disclosure small"><summary>Dílčí chyby výpočtu ({{ o.errors|length }})</summary><ul>{% for e in o.errors %}<li>{{ e }}</li>{% endfor %}</ul></details>{% endif %}

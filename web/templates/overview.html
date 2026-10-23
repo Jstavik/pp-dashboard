@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Přehled dne · PP Dashboard{% endblock %}
+{% block content %}
+<div class="overview" id="overview" data-src="/frag-overview" data-refresh="60">
+{% include "overview_body.html" %}
+</div>
+{% endblock %}

@@ -31,7 +31,8 @@ def test_page(page):
 
 
 def test_index_redirect_and_404():
-    assert client.get("/", follow_redirects=False).status_code == 307
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 200 and "Přehled dne" in r.text
     assert client.get("/neexistuje").status_code == 404
     assert client.get("/frag/plyn/neexistuje").status_code == 404
 

@@ -5,3 +5,8 @@ scratch/
 .pytest_cache/
 *.egg-info/
 data/explorer_views.json
+data/history/overview.json
+data/history/overview_events.json
+data/history/.runs.json
+data/history/.openmeteo_quota.json
+data/history/.*.lock

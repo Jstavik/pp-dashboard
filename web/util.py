@@ -47,12 +47,19 @@ def fmt_value(v, fmt: str = None) -> str:
         return v.strftime(fmt or "%d.%m.%Y")
     if isinstance(v, (int, float)) and fmt:
         try:
-            return format(v, fmt).replace(",", " ")
+            return cz_number(format(v, fmt))
         except (ValueError, TypeError):
             return str(v)
     if isinstance(v, float):
-        return f"{v:,.2f}".replace(",", " ")
+        return cz_number(f"{v:,.2f}")
     return str(v)
+
+
+def cz_number(s: str) -> str:
+    """'1,234.5' → '1 234,5' (česky: mezera = tisíce, čárka = desetinná),
+    záporné znaménko jako typografické minus."""
+    s = s.replace(",", "\u00a0").replace(".", ",")
+    return "−" + s[1:] if s.startswith("-") else s
 
 
 def table(df: pd.DataFrame, columns: list = None, max_rows: int = 300) -> dict:
