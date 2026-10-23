@@ -1,6 +1,6 @@
 # REBUILD_NOTES — přechod ze Streamlitu na FastAPI (větev `rebuild/fastapi`)
 
-Stav k 2026-10-23 (kolo 3 a 2 níže). Větev založená z `main` @ 7a36a68. `main` ani
+Stav k 2026-10-23 (kolo 4, 3 a 2 níže). Větev založená z `main` @ 7a36a68. `main` ani
 `.github/workflows` se neměnily, `data/history/` v repu zůstává.
 
 **Důležité omezení ověření:** v pracovním prostředí nebyly k dispozici API
@@ -9,6 +9,129 @@ tokeny a síť k datovým zdrojům byla zablokovaná (povolené jen PyPI).
 je otestované jen proti mockovaným odpovědím ve tvaru odvozeném z kódu
 (ne ze skutečných odpovědí). Web a výpočty jsou ověřené nad skutečnými
 daty z `data/history/` v repu.
+
+## Kolo 4 (2026-10-23): rate limiting, Přehled dne, Reporty, vzhled, /stav
+
+Živé ověření v kontejneru (jiné sezení, 2026-10-23): cot, nve, weather,
+live ceps/gassco, všechny stránky OK; **energinet FAIL 429** hned na prvních
+dotazech → opraveno níže (opětovné živé ověření **NEOVĚŘENO**).
+
+### Rate limiting (`core/http.py`)
+- `get_with_backoff()`: 429/502/503/504 → čeká `Retry-After` (sekundy i HTTP
+  datum, nebo text „Try again in X seconds“), jinak exponenciální backoff;
+  když server chce čekat déle než `max_wait_s`, vyhodí `RateLimited` hned.
+  `Pacer` = minimální rozestup dotazů na klíč.
+- **Energinet**: dokumentace Energi Data Service (support-service): **max
+  1 dotaz/min na IP a dataset**, při opakovaném překročení blokace IP (403).
+  Nově: datasety se střídají (každý vlastní rozestup
+  `PPDASH_ENERGINET_INTERVAL_S=65`), backfill po oknech 92 dní
+  (`PPDASH_ENERGINET_WINDOW_DAYS`, 1 dotaz = celé okno, `limit=0`), sekvenčně,
+  každé okno se hned zapíše, navazuje od posledního uloženého (−3 dny).
+  429 → Retry-After (max 3 pokusy), když server chce > 10 min, dataset se
+  odloží na příští běh (`pending`, úloha WARN, **ne FAIL**). FAIL jen když
+  všechny datasety selžou jinou chybou. Backfill od 2019 ≈ 30 oken/dataset
+  → s rozpočtem 900 s ~14 oken/dataset/běh → 2–3 běhy.
+- **Fingrid**: 429 → Retry-After / backoff 15→240 s, po vyčerpání dataset
+  pokračuje příští běh (pending), ne chyba.
+- **Open-Meteo**: denní kvóta free tieru hlídaná lokálně
+  (`history/.openmeteo_quota.json`, den UTC, limit `PPDASH_OPENMETEO_DAILY_LIMIT=9000`
+  z 10 000, váha volání = místa × dny/14 × proměnné/10 × modely — konzervativně).
+  Předpověď má přednost, backfill ERA5 dostane jen zbytek kvóty minus rezervu
+  na další běhy dne (`PPDASH_WEATHER_FC_RESERVE=1100`, rozpočet na běh
+  `PPDASH_WEATHER_BUDGET_CALLS=2000`) → rozloží se do víc dní. 429 „Daily…“ =
+  kvóta vyčerpána do konce dne (bez dalších volání), „Hourly…“ = konec běhu,
+  minutový limit → Retry-After/60 s. S `OPENMETEO_API_KEY`/`OPENMETEO_BASE_URL`
+  se kvóta nehlídá. **NEOVĚŘENO**: přesné vážení volání ensemble API.
+- `update_all.py`: detail běhu ukazuje „N pokračuje příští běh“; výsledky
+  běhů se zapisují do `history/.runs.json` (posledních 20 na úlohu, `core/runlog.py`).
+
+### Přehled dne (`/`, `core/overview.py`, `web/overview.py`)
+- Nová úvodní stránka: dlaždice s hodnotou, změnou d/d a w/w a sparkline,
+  proklik na detail: DA CZ/DE base+peak (dap_europe, doplněno z entsoe_prices;
+  peak = 8–20 h po–pá), spready CZ–DE, zásobníky EU/CZ/DE (% a p.b.), export
+  plynu NO (GASSCO součet výstupů NCS), LNG send-out EU (ALSI, chybné hodnoty
+  > 3 TWh/d/zemi vyřazeny), ČEPS odchylka (živě), teplota CZ/DE vs. normál
+  1991–2020 (+ průměr předpovědi ECMWF na 7 dní), hydro NO vs. medián (NVE),
+  CoT TTF net Investment Funds (≈ managed money, ICE Endex TFM, TWh).
+- Feed událostí (od nejnovější, filtr podle kategorie): nové/změněné odstávky
+  ENTSO-E ≥ 100 MW pro CZ (= ČEPS) + DE/AT/SK/PL (porovnání s včerejším
+  snapshotem, navazující kusy téže odstávky sloučené, změny jen do 90 dní),
+  GASSCO UMM (publikace, revize), cena DA mimo pásmo průměr 30 dní ± 2σ,
+  předpověď teploty ±3 °C od normálu, ČEPS odchylka |průměr hodiny| ≥ 150 MW.
+  Událost si drží čas prvního zjištění (`history/overview_events.json`, 21 dní).
+- **Předpočítané**: `update_all.py` po každém běhu přepočítá
+  `history/overview.json` (plný přepočet ~0.5 s nad daty z repa); minutový live
+  běh přepočítá jen živé dlaždice/události. Web jen čte JSON (cache podle mtime),
+  fragment se obnovuje po minutě. Chyba jednoho bloku nic neshodí (vypíše se).
+
+### Reporty (`/reporty`, `core/report.py`, `web/tabs/reports.py`)
+- **Denní** (k datu D: klíčová čísla d/d+w/w, DA base/peak 31 dní, hodinový
+  profil dodávky D+1, spread CZ–DE, zásobníky letos vs. loni, toky NO + LNG,
+  teplota vs. normál, události dne) a **týdenní** (týdenní průměry, 13 týdnů,
+  hydro NO, CoT TTF 26 týdnů, události týdne). Uložené pohledy Průzkumníku se
+  přidají multiselectem (nebo odkazem „+ denní report“ u pohledu).
+- Tisk: print CSS (A4, bez navigace/ovládání, prázdné sekce skryté, grafy se
+  před tiskem přepočítají na šířku stránky a světlý režim).
+- **PDF** `/api/report/<denni|tydenni>.pdf?date=…`: kaleido (1 Chrome na
+  dávku) → PNG, A4 stránky složí Pillow; ~8 s, Chrome běží jen během exportu.
+  Zvoleno místo WeasyPrint (potřebuje systémové Pango/Cairo = root a grafy by
+  stejně musel dostat jako obrázky). Bez Chrome → 503 se srozumitelnou hláškou
+  (zbývá Tisk → Uložit jako PDF). `install_user.sh` stahuje Chrome jednou přes
+  `plotly_get_chrome -y` (bez roota). **NEOVĚŘENO v LXC**: že Chrome
+  v kontejneru najde systémové knihovny (libnss3, libatk…).
+- **XLSX** `/api/report/<druh>.xlsx`: list klíčová čísla, list na každý graf
+  (data za grafem, časy Praha), události, info.
+
+### Konzistence a vzhled
+- `core/palette.py`: barva patří entitě (CZ, DE/DE_LU, AT, SK, PL, HU, FR, NL
+  = validovaná 8slotová paleta; další země pevné barvy), aliasy kód/česky/
+  anglicky. `web/consistency.py` ji aplikuje na **každý** graf podle názvu série
+  (i staré grafy v `charts/`), převede časy s časovou zónou na pražský čas
+  (dřív např. výroba ukazovala UTC hodiny) a prázdnou figuru vrátí jako
+  prázdný stav. Hláška „Data se dotahují — zatím nejsou k dispozici.“ všude.
+- Český formát: čísla `1 234,5` a `−` (tabulky, KPI), Plotly locale `cs`
+  (měsíce, dny, desetinná čárka) i v exportu PNG/SVG.
+- Navigace po skupinách: Přehled / Elektřina (ČR, Odstávky ČEPS,
+  Energy-Charts) / Plyn / Trh EU (+ CoT) / Nordic / Počasí / Průzkumník /
+  Reporty; rozbalovací menu (mobil: přes celou šířku), odkaz „● stav“.
+- Audit všech grafů nad daty z repa (popisky os, UTC časy, chyby): opraven
+  pád grafu nádrží ENTSO-E (Nordic → Hydrobilance, `margin` 2×), doplněny
+  jednotky (Energy-Charts prognóza). Bez popisku y zůstaly jen podgrafy se
+  sdílenou osou a vodorovné sloupce (jednotka je na ose x / v titulku).
+
+### Stav (`/stav`, `deploy/status.sh`)
+- Stránka **/stav**: souhrn (vše běží / co je staré / co selhalo), poslední
+  běh každé úlohy s trváním, počtem FAIL/WARN z posledních běhů a textem
+  chyby, stáří každého datasetu vs. limit, kvóta Open-Meteo, čas přepočtu
+  Přehledu. Obnova po minutě.
+- `deploy/status.sh`: nový blok „Úlohy — poslední běhy a chyby“
+  (`scripts/runs_status.py --errors`, exit 1 při FAIL) + počet chybových
+  řádků v journalu za 24 h pro každou službu.
+
+### Testy (kolo 4)
+- **301 testů** (zelené i s `PPDASH_TEST_EMPTY=1`): `tests/test_ratelimit.py`
+  (Retry-After, backoff, Pacer, Energinet 429 ≠ FAIL a navázání, Fingrid 429,
+  kvóta Open-Meteo), `tests/test_overview.py` (dlaždice, live merge, feed,
+  izolace chyb, úvodní stránka, /stav, runlog, runs_status),
+  `tests/test_reports.py` (stránky, grafy, XLSX, PDF složení i hláška bez
+  Chrome, pohledy), `tests/test_consistency.py` (barvy entit, čas Praha,
+  prázdné stavy, český formát, navigace).
+
+### Co ověřit v kontejneru (kolo 4)
+1. `git pull && deploy/install_user.sh --no-seed` (doinstaluje kaleido,
+   pillow, stáhne Chrome; když selže, PDF hlásí 503 a funguje tisk).
+2. `update_all.py --only energinet -v`: v logu „Energinet: N řádků, M dotazů,
+   … pokračuje příští běh“, žádné 429 bez čekání; běh WARN/OK, ne FAIL.
+   Opakovat do dohnání (každý běh ~15 min).
+3. `update_all.py --only weather -v`: řádek „zbývá kvóty dnes …“,
+   `cat ~/ppdash-data/history/.openmeteo_quota.json`; během dne nesmí přijít
+   429 Daily (jinak snížit `PPDASH_OPENMETEO_DAILY_LIMIT`).
+4. Úvodní stránka `/`: dlaždice mají čísla (po prvním běhu jakékoli úlohy
+   vznikne `overview.json`), feed obsahuje odstávky a UMM; `/stav` ukazuje
+   energinet a ostatní úlohy.
+5. `/reporty?tab=denni` → PDF a XLSX tlačítka; `/healthz` `rss_mb` po
+   exportu PDF (Chrome je samostatný proces, počítá se do cgroup webu).
+6. Fingrid s klíčem: 429 → „pokračuje příští běh“, ne chyba.
 
 ## Kolo 3 (2026-10-23): Průzkumník, ENTSO-E naplno, Nordic, počasí
 

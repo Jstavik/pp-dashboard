@@ -139,6 +139,8 @@ def daily_da(cc: str, days=60, asof=None) -> pd.DataFrame:
             d.index = pd.to_datetime(d["date"])
             d = d[~d.index.duplicated(keep="last")][["base", "peak"]]
             out = d.combine_first(out) if not out.empty else d
+    if out.empty:
+        return pd.DataFrame(columns=["base", "peak"], index=pd.DatetimeIndex([]), dtype=float)
     out = out.sort_index()
     out = out[(out.index >= pd.Timestamp(since)) & (out.index <= cutoff + pd.Timedelta(days=1))]
     return out
