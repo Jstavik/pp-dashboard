@@ -691,17 +691,45 @@ def last_friday(today: pd.Timestamp):
     return (today - pd.Timedelta(days=offset)).date()
 
 
+COT_MAX_CATCHUP_WEEKS = 8
+
+
+def _cot_pending_fridays(report_date, stored_max) -> list:
+    """Pátky, které v úložišti chybí: od posledního uloženého report_date
+    (+7 dní) do report_date, nejvýš COT_MAX_CATCHUP_WEEKS zpět. Bez dat
+    jen report_date."""
+    if stored_max is None:
+        return [report_date]
+    fridays = []
+    d = report_date
+    while d > stored_max and len(fridays) < COT_MAX_CATCHUP_WEEKS:
+        fridays.append(d)
+        d = d - timedelta(days=7)
+    return sorted(fridays) or [report_date]
+
+
 def update_cot(today: pd.Timestamp = None) -> dict:
     """Týdenní CoT: nejbližší minulý pátek (report_date), IFEU + NDEX přes
-    data/ice_cot.py::fetch_ice_cot (merge + status log). Sobotní i úterní
-    běh se automaticky trefí do STEJNÉHO report_date. Při rate-limitu
-    (429) se fetch přeskočí (není to chyba — zkusí se příští běh).
-    Selhání jednoho venue = WARN, obou = chyba."""
-    from data.ice_cot import fetch_ice_cot, probe_rate_limit, VENUES
+    data/ice_cot.py::fetch_ice_cot (merge + status log) — a k tomu všechny
+    dřívější pátky, které v úložišti chybí (inkrementálně od posledního
+    uloženého report_date, max COT_MAX_CATCHUP_WEEKS), takže týden, kdy
+    ICE soubor nevydalo včas, se dožene příští běh. Sobotní i úterní běh se
+    trefí do STEJNÉHO report_date (už uložený týden se znovu nestahuje).
+    Při rate-limitu (429) se fetch přeskočí (není to chyba — zkusí se
+    příští běh). Výsledek se hodnotí podle posledního pátku: selhání
+    jednoho venue = WARN, obou = chyba."""
+    from data.ice_cot import fetch_ice_cot, load_ice_cot, probe_rate_limit, VENUES
 
     today = today or pd.Timestamp.now(tz="UTC")
     report_date = last_friday(today)
-    log.info(f"ICE CoT: report_date {report_date} (dnes {today.date()})")
+    try:
+        stored = load_ice_cot()
+        stored_max = pd.to_datetime(stored["report_date"]).max().date() if not stored.empty else None
+    except Exception:
+        stored_max = None
+    pending = _cot_pending_fridays(report_date, stored_max)
+    log.info(f"ICE CoT: report_date {report_date} (dnes {today.date()}, uloženo do {stored_max}, "
+             f"ke stažení {', '.join(map(str, pending))})")
 
     probe = probe_rate_limit()
     if probe.get("rate_limited"):
@@ -709,7 +737,12 @@ def update_cot(today: pd.Timestamp = None) -> dict:
         return {"report_date": report_date, "skipped": True, "errors": 0,
                 "venues": {v: "SKIPPED (rate limited)" for v in VENUES}}
 
-    results = fetch_ice_cot(report_date)
+    for older in pending[:-1]:
+        res = fetch_ice_cot(older)
+        ok = [v for v in VENUES if res.get(v, {}).get("success")]
+        log.info(f"  dohánění {older}: {'OK ' + ','.join(ok) if ok else 'nedostupné'}")
+
+    results = fetch_ice_cot(pending[-1])
     summary, failed = {}, 0
     for venue in VENUES:
         entry = results.get(venue, {})

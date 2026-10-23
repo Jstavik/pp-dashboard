@@ -1,7 +1,7 @@
 """Smoke testy webu — každá stránka, záložka (fragment) a graf vrací 200.
 
 Síť je zakázaná a tokeny nenastavené: grafy závislé na živých API (ENTSO-E,
-ČEPS, Delta Green) musí vrátit JSON s chybou/prázdnem, ne HTTP 500.
+ČEPS) musí vrátit JSON s chybou/prázdnem, ne HTTP 500.
 Data: data/history v repu, pokud existuje (viz conftest)."""
 import re
 

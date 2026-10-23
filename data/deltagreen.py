@@ -1,4 +1,5 @@
 import pandas as pd
+# Jen pro starou Streamlit app (views/delta_green.py) — nový web (web/) Delta Green nemá.
 import requests
 
 from config import DG_BASE

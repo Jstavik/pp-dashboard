@@ -130,6 +130,3 @@ def gie_api_key():
     """GIE AGSI+ / ALSI klíč (sdílený pro obě API)."""
     return secret("GIE_API_KEY")
 
-
-def deltagreen_api_key():
-    return secret("DELTAGREEN_API_KEY")

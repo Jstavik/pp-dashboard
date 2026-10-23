@@ -21,5 +21,6 @@ from core.updaters import (  # noqa: E402,F401 — re-export pro staré importy
 
 if __name__ == "__main__":
     from scripts.update_all import main
-    main(["--skip", "cot,energy_charts", "--no-lock"])
+    # jako dřív: plyn + elektřina + GASSCO UMM (bez COT, Energy-Charts a minutových live úloh)
+    main(["--only", "gas,power,gassco_umm", "--no-lock"])
     sys.exit(0)

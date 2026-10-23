@@ -1,7 +1,0 @@
-{% import "macros.html" as m %}
-{% if c.no_key %}
-<div class="alert alert-info">Delta Green API klíč není nastavený. Doplň <code>DELTAGREEN_API_KEY</code> do <code>~/.config/ppdash/env</code> a restartuj službu (<code>systemctl restart ppdash-web</code>).</div>
-{% else %}
-<div class="metric-grid">{% for label, value in c.metrics %}<div class="metric"><div class="m-label">{{ label }}</div><div class="m-value">{{ value }}</div></div>{% endfor %}</div>
-{{ m.chart("portfolio", 570) }}
-{% endif %}

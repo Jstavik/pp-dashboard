@@ -5,21 +5,25 @@ Nahrazuje scripts/update_gas_history.py (2× denně) a scripts/update_ice_cot.py
 (so/út) — logika úloh žije v core/updaters.py a u dat (data/*.py).
 
 Použití:
-    python scripts/update_all.py                  # všechno kromě COT
-    python scripts/update_all.py --only cot       # jen ICE CoT
+    python scripts/update_all.py                  # 2× denně: vše kromě live a COT
+    python scripts/update_all.py --only live -q   # každou minutu: ČEPS + GASSCO realtime/UMM
+    python scripts/update_all.py --only cot       # jen ICE CoT (so/út)
     python scripts/update_all.py --only gas,dap_europe
     python scripts/update_all.py --skip outages --list
 
 --only/--skip berou názvy úloh i skupin (čárkou oddělené, opakovatelné):
-    gas    = entsog, entsog_allocation, entsog_operational, gie, lng, gassco, gassco_umm
+    gas    = entsog, entsog_allocation, entsog_operational, gie, lng, gassco
     power  = hydro, dap_europe, generation, outages
+    live   = ceps, gassco_realtime, gassco_umm (minutový timer — ve výchozím běhu NE)
     cot    = cot (ICE MiFID II, týdenní — ve výchozím běhu se NEspouští)
     energy_charts
-    all    = všechno včetně cot
+    all    = všechno včetně live a cot
 
 Idempotentní: všechny zápisy jsou upsert s dedupem / write-once snapshoty,
 opakované spuštění nic nezdvojí. Souběžný běh brání zámek
-<PPDASH_DATA_DIR>/history/.update.lock.
+<PPDASH_DATA_DIR>/history/.update.lock; běh jen live úloh má vlastní zámek
+.live.lock (minutový timer tak neblokuje hodiny trvající denní běh a naopak
+— zapisují do jiných datasetů).
 
 Exit kódy:
     0  všechny úlohy OK (případně s varováním — částečná chyba, např. 1 země)
@@ -63,7 +67,15 @@ def _tasks() -> dict:
 
     def gassco_umm():
         from data.gassco import update_gassco_umm
-        update_gassco_umm()
+        return update_gassco_umm()
+
+    def gassco_realtime():
+        from data.gassco import update_gassco_realtime
+        return update_gassco_realtime()
+
+    def ceps():
+        from data.ceps import update_ceps_live
+        return update_ceps_live()
 
     def per_country(fn, label):
         def run():
@@ -95,6 +107,8 @@ def _tasks() -> dict:
         "lng":                ("LNG terminály (GIE ALSI)", lng),
         "gassco":             ("GASSCO nominace", gassco),
         "gassco_umm":         ("GASSCO UMM (odstávky polí)", gassco_umm),
+        "gassco_realtime":    ("GASSCO realtime nominace (realTimeAtom)", gassco_realtime),
+        "ceps":               ("ČEPS minutová data (odchylka, SVR, zatížení, výroba, toky, cena)", ceps),
         "hydro":              ("Vodní zásobníky (ENTSO-E 16.1.D)", u.update_hydro),
         "dap_europe":         ("DAP Europe (DAP mapa)", u.update_dap_europe),
         "generation":         ("Výroba podle zdroje (ENTSO-E, všechny země)", per_country(u.update_generation, "Generation")),
@@ -105,15 +119,18 @@ def _tasks() -> dict:
 
 
 TASK_ORDER = [
+    "ceps", "gassco_realtime", "gassco_umm",
     "entsog", "entsog_allocation", "gie", "hydro", "entsog_operational", "lng",
-    "gassco", "gassco_umm", "dap_europe", "generation", "outages", "energy_charts", "cot",
+    "gassco", "dap_europe", "generation", "outages", "energy_charts", "cot",
 ]
+LIVE_TASKS = ["ceps", "gassco_realtime", "gassco_umm"]
 GROUPS = {
-    "gas":   ["entsog", "entsog_allocation", "entsog_operational", "gie", "lng", "gassco", "gassco_umm"],
+    "gas":   ["entsog", "entsog_allocation", "entsog_operational", "gie", "lng", "gassco"],
     "power": ["hydro", "dap_europe", "generation", "outages"],
+    "live":  list(LIVE_TASKS),
     "all":   list(TASK_ORDER),
 }
-DEFAULT_EXCLUDE = {"cot"}
+DEFAULT_EXCLUDE = {"cot", *LIVE_TASKS}
 
 
 def resolve(only: list, skip: list) -> list:
@@ -138,15 +155,15 @@ def resolve(only: list, skip: list) -> list:
     return [t for t in TASK_ORDER if t in selected]
 
 
-def setup_logging(verbose: bool, log_file: str = None) -> None:
+def setup_logging(verbose: bool, log_file: str = None, quiet: bool = False) -> None:
     handlers = [logging.StreamHandler(sys.stdout)]
     if log_file:
         handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
     # Pod systemd jde stdout do journald, který si čas přidá sám.
     fmt = "%(levelname)s %(name)s: %(message)s" if os.environ.get("INVOCATION_ID") \
         else "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format=fmt,
-                        handlers=handlers, force=True)
+    level = logging.DEBUG if verbose else logging.WARNING if quiet else logging.INFO
+    logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)
     for noisy in ("urllib3", "zeep", "entsoe", "requests"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
@@ -212,13 +229,15 @@ def main(argv=None) -> int:
     parser.add_argument("--list", action="store_true", help="jen vypsat vybrané úlohy a skončit")
     parser.add_argument("--no-lock", action="store_true", help="nebrat zámek (jen pro ladění)")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("-q", "--quiet", action="store_true",
+                        help="jen varování/chyby + jednořádkový souhrn (minutový timer)")
     parser.add_argument("--log-file", help="logovat navíc do souboru")
     try:
         args = parser.parse_args(argv)
     except SystemExit as e:
         return EXIT_USAGE if e.code else EXIT_OK
 
-    setup_logging(args.verbose, args.log_file)
+    setup_logging(args.verbose, args.log_file, args.quiet)
     try:
         names = resolve(args.only, args.skip)
     except ValueError as e:
@@ -235,7 +254,8 @@ def main(argv=None) -> int:
     from core.settings import history_root
     log.info(f"Data: {history_root()} | úlohy: {', '.join(names)}")
 
-    lock = _Lock(history_root() / ".update.lock")
+    lock_name = ".live.lock" if set(names) <= set(LIVE_TASKS) else ".update.lock"
+    lock = _Lock(history_root() / lock_name)
     if not args.no_lock and not lock.acquire():
         log.error(f"jiná aktualizace právě běží (zámek {lock.path})")
         return EXIT_LOCKED
@@ -244,10 +264,14 @@ def main(argv=None) -> int:
     finally:
         lock.release()
 
-    log.info("=== SOUHRN ===")
-    for name, status, secs, detail in results:
-        log.info(f"  {status:4} {name:20} {secs:7.1f}s {detail}")
     failed = [r for r in results if r[1] == "FAIL"]
+    if args.quiet:
+        # jeden řádek i v tichém režimu (journald: je vidět, že timer běží)
+        print(" ".join(f"{n}={st}({secs:.1f}s)" for n, st, secs, _ in results), flush=True)
+    else:
+        log.info("=== SOUHRN ===")
+        for name, status, secs, detail in results:
+            log.info(f"  {status:4} {name:20} {secs:7.1f}s {detail}")
     return EXIT_FAILED if failed else EXIT_OK
 
 

@@ -407,17 +407,6 @@ def test_energy_charts_get_retries(monkeypatch):
         ec._get("/v2/public_power", {"country": "cz"}, pace=0)
 
 
-# ── Delta Green ─────────────────────────────────────────────────────────
-
-def test_deltagreen(monkeypatch):
-    from data import deltagreen
-    t = "2026-10-23T10:00:00Z"
-    monkeypatch.setattr(deltagreen.requests, "get", lambda url, **k: FakeResponse(json_data={"records": [
-        {"time": t, "batteryPowerKW": 1, "upPowerKW": 5}]}))
-    df1, df2 = deltagreen.fetch_deltagreen("key")
-    assert "photovoltaicPowerKW" in df1.columns and "downBatteryPowerKW" in df2.columns
-
-
 # ── ENTSO-E updaters (hydro, DAP Europe, výroba, odstávky) ─────────────
 
 class _FakeEntsoeHist(_FakeEntsoe):

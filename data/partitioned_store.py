@@ -25,7 +25,8 @@ def _select_files(base_dir: str, fmt: str, date_from=None, date_to=None) -> list
         lo = pd.Timestamp(date_from).strftime("%Y-%m") if date_from is not None else None
         hi = pd.Timestamp(date_to).strftime("%Y-%m") if date_to is not None else None
         def _in_range(path):
-            month = os.path.splitext(os.path.basename(path))[0]
+            # měsíční ({YYYY-MM}) i denní ({YYYY-MM-DD}) partitiony — porovnává se měsíc
+            month = os.path.splitext(os.path.basename(path))[0][:7]
             if lo is not None and month < lo:
                 return False
             if hi is not None and month > hi:
@@ -189,8 +190,14 @@ def upsert_partitioned(
     date_col: str,
     dedup_subset: list,
     fmt: str = "parquet",
+    period: str = "month",
 ) -> list:
     """Zmerguje new_data do měsíčně partitionovaných souborů v base_dir.
+
+    period="day" → denní soubory {YYYY-MM-DD}.fmt (živé minutové zdroje —
+    ČEPS, GASSCO realtime — zapisují každou minutu, takže přepis celého
+    měsíce by byl zbytečně drahý). Čtení (read_partitioned) i
+    last_date_partitioned fungují pro oba tvary názvů.
 
     Přepíše JEN měsíce, které se v new_data vyskytují — starší uzavřené
     měsíce zůstanou nedotčené (a tedy negenerují novou binární verzi v gitu).
@@ -212,7 +219,7 @@ def upsert_partitioned(
     # entsog_capacity periodFrom_dt, dap_europe "date" — a downstream kód
     # je tak i porovnává. Přepsání na tz-aware Timestamp by je tiše rozbilo).
     month_key = pd.to_datetime(new_data[date_col], utc=True)
-    months = month_key.dt.strftime("%Y-%m")
+    months = month_key.dt.strftime("%Y-%m-%d" if period == "day" else "%Y-%m")
 
     reader = pd.read_parquet if fmt == "parquet" else pd.read_csv
     touched = []

@@ -497,48 +497,6 @@ def _ch_hydro_grid(p):
     return fig_hydro_grid(s["df"], s["sel_years_grid"])
 
 
-# ── Delta Green ─────────────────────────────────────────────────────────
-
-def _deltagreen():
-    from core.settings import deltagreen_api_key
-    key = deltagreen_api_key()
-    if not key:
-        return None
-    return _deltagreen_cached(key)
-
-
-@ttl_cache(ttl=60, maxsize=2)
-def _deltagreen_cached(key):
-    from data.deltagreen import fetch_deltagreen
-    return fetch_deltagreen(key)
-
-
-@tab(PAGE, "deltagreen", "Delta Green")
-def deltagreen(p):
-    res = _deltagreen()
-    if res is None:
-        return {"no_key": True}
-    df1, df2 = res
-    last2 = df2.dropna(subset=["upPowerKW", "downBatteryPowerKW", "downSolarCurtailmentPowerKW"]).iloc[-1]
-    last1 = df1.dropna(subset=["batteryPowerKW", "consumptionPowerKW", "photovoltaicPowerKW", "gridPowerKW"]).iloc[-1]
-    total_down = float(last2["downBatteryPowerKW"]) + float(last2["downSolarCurtailmentPowerKW"])
-    return {"metrics": [
-        ("Baterie", f"{float(last1['batteryPowerKW']):+.0f} kW"),
-        ("Fotovoltaika", f"{float(last1['photovoltaicPowerKW']):.0f} kW"),
-        ("Max UP", f"{float(last2['upPowerKW']):.0f} kW"),
-        ("Max DOWN", f"{total_down:.0f} kW"),
-    ]}
-
-
-@chart(PAGE, "deltagreen", "portfolio")
-def _ch_deltagreen(p):
-    from charts.generation import fig_deltagreen
-    res = _deltagreen()
-    if res is None:
-        return None
-    return fig_deltagreen(*res)
-
-
 # ── Surová data ─────────────────────────────────────────────────────────
 
 def _gen_display(gen_raw: pd.DataFrame) -> pd.DataFrame:

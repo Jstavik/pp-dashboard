@@ -7,13 +7,18 @@ import os
 from config import MSMM3_TO_GWH
 from core.cache import ttl_cache
 from core.settings import history_path, history_root
-from data.partitioned_store import write_daily_snapshot, read_snapshot, read_partitioned, upsert_partitioned
+from data.partitioned_store import (write_daily_snapshot, read_snapshot, read_partitioned,
+                                    upsert_partitioned, last_date_partitioned)
 
 log = logging.getLogger(__name__)
 
 GASSCO_NOMINATIONS_DIR = history_path("gassco_nominations")
 GASSCO_UMM_PATH = history_path("gassco_umm.parquet")
 GASSCO_UMM_SNAPSHOTS_DIR = history_path("gassco_umm_snapshots")
+# Živé nominace z realTimeAtom.xml po minutách (timer ppdash-live) — denní
+# soubory, jeden řádek na (updated, point).
+GASSCO_REALTIME_DIR = history_path("gassco_realtime")
+REALTIME_STORE_MAX_AGE = pd.Timedelta(minutes=15)
 
 
 def _get_session() -> requests.Session:
@@ -305,11 +310,24 @@ def update_gassco_umm():
         raise RuntimeError("GASSCO UMM: žádná data (viz varování výš)")
 
     combined = new_data.sort_values(["base_id", "revision"]).reset_index(drop=True)
-    combined.to_parquet(GASSCO_UMM_PATH, index=False)
-    log.info(f"GASSCO UMM: {len(combined)} řádků (kompletní stav) → {GASSCO_UMM_PATH}")
+    # Běží každou minutu (timer ppdash-live) — beze změny obsahu se soubor
+    # nepřepisuje.
+    changed = True
+    if os.path.exists(GASSCO_UMM_PATH):
+        try:
+            changed = not pd.read_parquet(GASSCO_UMM_PATH).equals(combined)
+        except Exception:
+            changed = True
+    if changed:
+        combined.to_parquet(GASSCO_UMM_PATH, index=False)
+        log.info(f"GASSCO UMM: {len(combined)} řádků (kompletní stav) → {GASSCO_UMM_PATH}")
+    else:
+        log.debug("GASSCO UMM: beze změny")
 
     snap_written = write_daily_snapshot(combined, GASSCO_UMM_SNAPSHOTS_DIR, fmt="parquet")
-    log.info(f"GASSCO UMM snapshot: {'zapsán nový den' if snap_written else 'dnešní už existuje'}")
+    if snap_written:
+        log.info("GASSCO UMM snapshot: zapsán nový den")
+    return {"errors": 0, "changed": changed}
 
 
 @ttl_cache(ttl=300, maxsize=2)
@@ -340,57 +358,112 @@ def list_available_umm_snapshot_dates() -> list:
     return dates
 
 
-@ttl_cache(ttl=300, disk=True)
-def fetch_realtime_nominations() -> pd.DataFrame:
-    """Aktuální nominace z realTimeAtom.xml — bez session.
-
-    Živé volání na umm.gassco.no (jiný host než ENTSO-E/ENTSO-G, mimo
-    scope commitu c7bd4551) — @st.cache_data(ttl=300) přidáno 2026-09-09,
-    ať tenhle GET nejede znovu na každý rerun Plyn/Report stránky (dřív
-    byl cachovaný jen nepřímo přes obalující load_gassco()'s vlastní
-    cache — funkční, ale ne samostatně odolné, pokud by tuhle funkci
-    někdy volal jiný kód mimo load_gassco())."""
+def fetch_realtime_atom() -> pd.DataFrame:
+    """realTimeAtom.xml → řádek na bod: updated (čas publikace feedu, UTC),
+    date (plynárenský den = půlnoc dne `updated`), point, value_MSm3,
+    value_GWh. Chyba sítě/formátu se propaguje (volající rozhodne)."""
     import xml.etree.ElementTree as ET
+    resp = requests.get(
+        "https://umm.gassco.no/realTimeAtom.xml",
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"realTimeAtom HTTP {resp.status_code}")
+
+    root = ET.fromstring(resp.text)
+    ns   = {"atom": "http://www.w3.org/2005/Atom"}
+
+    updated_str = root.findtext("atom:updated", "", ns)
+    updated = pd.to_datetime(updated_str, utc=True)
+    today   = updated.normalize()
+
+    records = []
+    for entry in root.findall("atom:entry", ns):
+        title   = entry.findtext("atom:title", "", ns)
+        content = entry.findtext("atom:content", "0", ns)
+        name = (title
+                .replace("Exit Nomination ", "")
+                .replace(" (MSm3)", "")
+                .strip())
+        try:
+            val_msm3 = float(content)
+        except ValueError:
+            val_msm3 = 0.0
+        records.append({
+            "updated":    updated,
+            "date":       today,
+            "point":      name,
+            "value_MSm3": val_msm3,
+            "value_GWh":  round(val_msm3 * MSMM3_TO_GWH, 3),
+        })
+    return pd.DataFrame(records)
+
+
+def update_gassco_realtime() -> dict:
+    """Úloha `gassco_realtime` (timer ppdash-live, 1× za minutu): aktuální
+    stav realTimeAtom.xml do history/gassco_realtime/<YYYY-MM-DD>.parquet.
+    Dedup na (updated, point) — dokud GASSCO feed nepřepublikuje, běh nic
+    nezapíše (soubor se nepřepisuje)."""
+    df = fetch_realtime_atom()
+    if df.empty:
+        raise RuntimeError("realTimeAtom: žádné body")
+    touched = upsert_partitioned(df, GASSCO_REALTIME_DIR, "updated", ["updated", "point"],
+                                 fmt="parquet", period="day")
+    written = sum(n for _, n, w in touched if w)
+    log.info(f"GASSCO realtime: updated {df['updated'].iloc[0]}, {len(df)} bodů, "
+             f"{'zapsáno' if written else 'beze změny'}")
+    return {"errors": 0}
+
+
+def load_gassco_realtime(date_from=None) -> pd.DataFrame:
+    """Uložené realtime nominace (průběh dne po publikacích GASSCO)."""
+    df = read_partitioned(GASSCO_REALTIME_DIR, fmt="parquet", date_from=date_from)
+    if df.empty:
+        return df
+    df["updated"] = pd.to_datetime(df["updated"], utc=True)
+    df["date"] = pd.to_datetime(df["date"], utc=True)
+    if date_from is not None:
+        lo = pd.Timestamp(date_from)
+        df = df[df["updated"] >= (lo.tz_localize("UTC") if lo.tzinfo is None else lo)]
+    return df
+
+
+def _realtime_from_store() -> pd.DataFrame:
+    """Poslední publikace z úložiště, pokud je čerstvá (timer běží)."""
+    last = last_date_partitioned(GASSCO_REALTIME_DIR, "updated", "parquet")
+    if last is None or pd.Timestamp.now(tz="UTC") - last > REALTIME_STORE_MAX_AGE:
+        return pd.DataFrame()
+    df = load_gassco_realtime(date_from=last.normalize())
+    df = df[df["updated"] == df["updated"].max()]
+    return df.drop(columns=["updated"]).assign(realtime=True).reset_index(drop=True)
+
+
+@ttl_cache(ttl=60)
+def fetch_realtime_nominations() -> pd.DataFrame:
+    """Aktuální nominace (realTimeAtom.xml) pro web — z úložiště, když ho
+    plní minutový timer, jinak živý GET (dřív cache 300 s; teď 60 s, protože
+    čtení z úložiště nic nestojí — živý fallback je cachovaný na disku)."""
     try:
-        resp = requests.get(
-            "https://umm.gassco.no/realTimeAtom.xml",
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            return pd.DataFrame()
+        df = _realtime_from_store()
+    except Exception as e:
+        log.warning(f"GASSCO realtime úložiště nečitelné: {e}")
+        df = pd.DataFrame()
+    if not df.empty:
+        return df
+    return _fetch_realtime_live()
 
-        root = ET.fromstring(resp.text)
-        ns   = {"atom": "http://www.w3.org/2005/Atom"}
 
-        updated_str = root.findtext("atom:updated", "", ns)
-        updated = pd.to_datetime(updated_str, utc=True)
-        today   = updated.normalize()
-
-        records = []
-        for entry in root.findall("atom:entry", ns):
-            title   = entry.findtext("atom:title", "", ns)
-            content = entry.findtext("atom:content", "0", ns)
-            name = (title
-                    .replace("Exit Nomination ", "")
-                    .replace(" (MSm3)", "")
-                    .strip())
-            try:
-                val_msm3 = float(content)
-            except ValueError:
-                val_msm3 = 0.0
-            records.append({
-                "date":       today,
-                "point":      name,
-                "value_MSm3": val_msm3,
-                "value_GWh":  val_msm3 * MSMM3_TO_GWH,
-                "realtime":   True,
-            })
-
-        return pd.DataFrame(records)
+@ttl_cache(ttl=300, disk=True)
+def _fetch_realtime_live() -> pd.DataFrame:
+    try:
+        df = fetch_realtime_atom()
     except Exception as e:
         log.warning(f"realTimeAtom chyba: {e}")
         return pd.DataFrame()
+    if df.empty:
+        return df
+    return df.drop(columns=["updated"]).assign(realtime=True)
 
 
 def update_gassco():
