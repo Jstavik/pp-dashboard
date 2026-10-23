@@ -103,7 +103,8 @@ def fig_frequency(df: pd.DataFrame, resolution: str = None, height: int = 420) -
                                  line=dict(color="#1565C0", width=1.6),
                                  hovertemplate="%{y:.3f} Hz<extra></extra>"))
     else:
-        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", name="frekvence (5min průměr)",
+        gaps = s.asfreq("5min")  # výpadky dat jako mezery, ne spojnice
+        fig.add_trace(go.Scatter(x=gaps.index, y=gaps.values, mode="lines", name="frekvence (5min průměr)",
                                  line=dict(color="#1565C0", width=1.2),
                                  hovertemplate="%{y:.3f} Hz<extra></extra>"))
     fig.add_hline(y=50.0, line=dict(color="#78909C", width=1, dash="dot"))

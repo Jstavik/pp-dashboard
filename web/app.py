@@ -201,6 +201,32 @@ def chart(request: Request, page_key: str, tab_key: str, chart_id: str):
     return Response(payload, media_type="application/json")
 
 
+@app.get("/api/chart-data/{page_key}/{tab_key}/{chart_id}")
+def chart_data(request: Request, page_key: str, tab_key: str, chart_id: str, fmt: str = "csv"):
+    """Data za grafem jako CSV/XLSX (stejné parametry jako /api/chart/...)."""
+    from web import export
+    spec = registry.CHARTS.get((page_key, tab_key, chart_id))
+    if spec is None or fmt not in ("csv", "xlsx"):
+        raise HTTPException(404, "Graf neexistuje")
+    p = Params.from_request(request)
+    p._items = [(k, v) for k, v in p._items if k != "fmt"]
+    try:
+        fig = spec.fn(p)
+    except Exception as e:
+        log.warning("export %s/%s/%s selhal: %s", page_key, tab_key, chart_id, e)
+        raise HTTPException(500, f"Graf se nepodařilo vytvořit ({type(e).__name__}: {e})")
+    if fig is None:
+        raise HTTPException(404, "Graf nemá data")
+    stamp = pd.Timestamp.now(tz="Europe/Prague").strftime("%Y%m%d-%H%M")
+    filename = f"{page_key}_{tab_key}_{chart_id}_{stamp}.{fmt}"
+    if fmt == "csv":
+        body, mt = export.to_csv_bytes(fig), "text/csv; charset=utf-8"
+    else:
+        body = export.to_xlsx_bytes(fig, {"graf": f"{page_key}/{tab_key}/{chart_id}", "parametry": str(p)})
+        mt = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return Response(body, media_type=mt, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
 @app.get("/api/csv/{name}")
 def csv_export(request: Request, name: str):
     fn = registry.CSVS.get(name)

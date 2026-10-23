@@ -94,7 +94,22 @@ h3 { margin: 0; }
 
 /* ── karty, mřížky ───────────────────────────────────────────────────── */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
-.chart-card { padding: 6px; margin-bottom: 12px; min-width: 0; }
+.chart-card { padding: 6px; margin-bottom: 12px; min-width: 0; position: relative; }
+/* export grafu — malá lišta vpravo nahoře, viditelná při najetí/fokusu
+   (na dotykových zařízeních trvale, ale tlumeně); jen když graf má data */
+.chart-tools {
+  position: absolute; top: 6px; right: 6px; z-index: 5; display: none; gap: 2px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 2px;
+  box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .15s;
+}
+.chart-card.has-fig .chart-tools { display: flex; }
+.chart-card:hover .chart-tools, .chart-tools:focus-within { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .chart-card.has-fig .chart-tools { opacity: .75; pointer-events: auto; } }
+.chart-tools button {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font: 600 .68rem/1 system-ui, sans-serif; letter-spacing: .03em; padding: 5px 7px; border-radius: 6px;
+}
+.chart-tools button:hover, .chart-tools button:focus-visible { background: var(--accent-soft); color: var(--accent); outline: none; }
 .chart { width: 100%; position: relative; }
 .chart.loading::after, .loading-block:empty::after {
   content: ""; position: absolute; inset: 8px; border-radius: 8px;

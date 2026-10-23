@@ -24,6 +24,13 @@
     return "rgb(" + r + "," + g + "," + b + ")";
   }
 
+  function isNearBlack(hex) {
+    var m = /^#([0-9a-f]{6})$/i.exec(hex || "");
+    if (!m) return hex === "black";
+    var n = parseInt(m[1], 16);
+    return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255 < 0.22;
+  }
+
   function isDark() { return document.documentElement.getAttribute("data-theme") === "dark"; }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function isWhiteish(c) {
@@ -33,13 +40,18 @@
   /* Úprava layoutu podle tématu — grafy z charts/ mají natvrdo bílé pozadí
      a světlou mřížku; pozadí se zprůhlední (barvu dá karta) a v tmavém
      režimu se přebarví text, mřížka, tooltip a podklad mapy. */
-  function themed(fig) {
-    var f = clone(fig), L = f.layout || (f.layout = {}), c = isDark() ? DARK : LIGHT;
+  function themed(fig, forExport) {
+    // forExport: obrázek pro report — vždy světlý režim s bílým pozadím
+    var dark = !forExport && isDark();
+    var f = clone(fig), L = f.layout || (f.layout = {}), c = dark ? DARK : LIGHT;
     L.paper_bgcolor = "rgba(0,0,0,0)";
     L.plot_bgcolor = "rgba(0,0,0,0)";
     L.font = Object.assign({}, L.font || {}, { color: c.text });
     delete L.width;
     L.autosize = true;
+    // osy bez explicitního nastavení by si vzaly bílou mřížku ze šablony plotly_white
+    if (!L.xaxis) L.xaxis = {};
+    if (!L.yaxis) L.yaxis = {};
     Object.keys(L).forEach(function (k) {
       if (/^[xy]axis\d*$/.test(k)) {
         var ax = L[k] = Object.assign({}, L[k]);
@@ -58,22 +70,22 @@
     }
     if (L.legend) {
       L.legend = Object.assign({}, L.legend);
-      if (!L.legend.bgcolor || isWhiteish(L.legend.bgcolor)) L.legend.bgcolor = isDark() ? "rgba(22,30,39,.85)" : "rgba(255,255,255,.85)";
+      if (!L.legend.bgcolor || isWhiteish(L.legend.bgcolor)) L.legend.bgcolor = dark ? "rgba(22,30,39,.85)" : "rgba(255,255,255,.85)";
       if (L.legend.bordercolor) L.legend.bordercolor = c.border;
       if (L.legend.font) delete L.legend.font.color;
     }
     L.hoverlabel = Object.assign({}, L.hoverlabel || {}, { bgcolor: c.surface, bordercolor: c.border, font: Object.assign({}, (L.hoverlabel || {}).font, { color: c.text }) });
     (L.annotations || []).forEach(function (a) {
-      if (isDark() && isWhiteish(a.bgcolor)) a.bgcolor = "rgba(22,30,39,.85)";
+      if (dark && isWhiteish(a.bgcolor)) a.bgcolor = "rgba(22,30,39,.85)";
       if (a.font && (a.font.color === "#263238" || a.font.color === "#333" || a.font.color === "black")) a.font.color = c.text;
     });
     (L.shapes || []).forEach(function (s) {
-      if (isDark() && s.line && (s.line.color === "black" || s.line.color === "#000")) s.line.color = c.muted;
+      if (dark && s.line && (s.line.color === "black" || s.line.color === "#000")) s.line.color = c.muted;
     });
     if (L.map) {
       L.map = Object.assign({}, L.map);
       (L.map.layers || []).forEach(function (ly) { if (ly.type === "line") ly.color = c.mapLine; });
-      if (isDark() && (L.map.style === "white-bg" || !L.map.style)) {
+      if (dark && (L.map.style === "white-bg" || !L.map.style)) {
         L.map.style = { version: 8, sources: {}, layers: [{ id: "bg", type: "background", paint: { "background-color": c.mapBg } }] };
       }
     }
@@ -82,11 +94,17 @@
       delete L.template.layout.plot_bgcolor;
     }
     (f.data || []).forEach(function (t) {
-      if (!isDark()) return;
+      if (!dark) return;
       if (t.type === "pie" && t.marker && t.marker.line && isWhiteish(t.marker.line.color)) t.marker.line.color = c.surface;
       // tmavé popisky (např. toky v mapě) zesvětlit, ať jsou na tmavém pozadí čitelné
       if (t.textfont && typeof t.textfont.color === "string") t.textfont.color = lighten(t.textfont.color);
+      // téměř černé čáry (zatížení, saldo) by na tmavém pozadí zmizely
+      if (t.line && typeof t.line.color === "string" && isNearBlack(t.line.color)) t.line = Object.assign({}, t.line, { color: c.text });
     });
+    if (forExport) {
+      L.paper_bgcolor = "#ffffff";
+      L.plot_bgcolor = "#ffffff";
+    }
     return f;
   }
 
@@ -106,6 +124,8 @@
   function showMsg(el, text, cls) {
     if (window.Plotly && el._ppFig) { try { Plotly.purge(el); } catch (e) { /* noop */ } }
     el._ppFig = null;
+    var card = el.closest(".chart-card");
+    if (card) card.classList.remove("has-fig");
     el.innerHTML = '<div class="chart-msg ' + (cls || "") + '"></div>';
     el.firstChild.textContent = text;
   }
@@ -113,6 +133,8 @@
   function renderFig(el, payload) {
     var cfg = Object.assign({ responsive: true, displaylogo: false, displayModeBar: false }, payload.config || {});
     el._ppFig = payload.figure; el._ppCfg = cfg;
+    var card = el.closest(".chart-card");
+    if (card) card.classList.add("has-fig");
     var f = themed(payload.figure);
     if (!el.querySelector(".plot-container")) el.innerHTML = "";
     return Plotly.react(el, f.data || [], f.layout || {}, cfg);
@@ -145,8 +167,68 @@
 
   function initCharts(root) {
     root.querySelectorAll(".chart[data-chart]").forEach(function (el) {
+      addExportTools(el);
       if (observer) observer.observe(el); else loadChart(el);
     });
+  }
+
+  /* ── export (PNG/SVG obrázek, CSV/XLSX data) ───────────────────────── */
+  // Obrázky se renderují na klientu z poslední figury grafu, vždy ve
+  // světlém režimu s bílým pozadím (pro reporty); PNG 3× rozlišení.
+  // Data dává server (/api/chart-data/...) se stejnými parametry jako graf.
+  var EXPORT_W = 1600;
+
+  function fileBase(el) {
+    var frag = el.closest(".frag");
+    // stejné razítko (pražský čas) jako u CSV/XLSX ze serveru
+    var stamp = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Prague", hour12: false })
+      .replace(/[-:]/g, "").replace(" ", "-").slice(0, 13);
+    return [frag.dataset.page, frag.dataset.tab, el.dataset.chart].join("_") + "_" + stamp;
+  }
+
+  function saveImage(el, format) {
+    if (!el._ppFig || !window.Plotly) return;
+    var f = themed(el._ppFig, true);
+    var h = Math.max(el.clientHeight || 0, (f.layout && f.layout.height) || 0, 360);
+    var w = Math.max(EXPORT_W, el.clientWidth || 0);
+    f.layout.width = w; f.layout.height = h; f.layout.autosize = false;
+    Plotly.toImage({ data: f.data, layout: f.layout, config: { staticPlot: true } },
+                   { format: format, width: w, height: h, scale: format === "png" ? 3 : 1 })
+      .then(function (url) {
+        var a = document.createElement("a");
+        a.href = url; a.download = fileBase(el) + "." + format;
+        document.body.appendChild(a); a.click(); a.remove();
+      })
+      .catch(function (err) { alert("Export obrázku selhal: " + err.message); });
+  }
+
+  function dataUrl(el, fmt) {
+    var u = chartUrl(el).replace("/api/chart/", "/api/chart-data/");
+    return u + (u.indexOf("?") >= 0 ? "&" : "?") + "fmt=" + fmt;
+  }
+
+  function addExportTools(el) {
+    var card = el.closest(".chart-card");
+    if (!card || card.querySelector(".chart-tools")) return;
+    var bar = document.createElement("div");
+    bar.className = "chart-tools";
+    bar.setAttribute("role", "group");
+    bar.setAttribute("aria-label", "Export grafu");
+    [["png", "PNG", "Obrázek PNG (vysoké rozlišení, světlý režim)"],
+     ["svg", "SVG", "Vektorový obrázek SVG (světlý režim)"],
+     ["csv", "CSV", "Data za grafem (CSV)"],
+     ["xlsx", "XLSX", "Data za grafem (Excel)"]].forEach(function (b) {
+      var btn = document.createElement("button");
+      btn.type = "button"; btn.textContent = b[1]; btn.title = b[2]; btn.dataset.fmt = b[0];
+      btn.addEventListener("click", function () {
+        if (b[0] === "png" || b[0] === "svg") return saveImage(el, b[0]);
+        var a = document.createElement("a");
+        a.href = dataUrl(el, b[0]); a.download = "";
+        document.body.appendChild(a); a.click(); a.remove();
+      });
+      bar.appendChild(btn);
+    });
+    card.appendChild(bar);
   }
 
   function rethemeAll() {
