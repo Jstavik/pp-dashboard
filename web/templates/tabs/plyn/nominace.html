@@ -1,0 +1,27 @@
+{% import "macros.html" as m %}
+{% if c.empty %}<div class="alert alert-warn">ENTSOG Nomination/Renomination data nejsou dostupná. Spusť <code>scripts/update_all.py --only entsog_operational</code>.</div>
+{% else %}
+<form class="controls">
+  {{ m.range("months", c.months, "📆 Historie (měsíců zpět)", 1, c.max_months) }}
+  {{ m.select("country", c.countries, c.country, "🌍 Země", c.names) }}
+  {% if c.indicators %}{{ m.select("indicator", c.indicators, c.indicator, "📊 Indikátor") }}{% endif %}
+  {{ m.select("point", c.points, c.point, "📍 Bod") }}
+  {{ m.radio("chart_type", c.chart_types, c.chart_type, "Typ grafu") }}
+  {{ m.daterange(c.d_from, c.d_to, "📆 Rozsah", None, c.min_d, c.max_d) }}
+</form>
+{{ m.chart("nom", 430) }}
+{{ m.section("Posledních 30 dní — surové hodnoty") }}
+{{ m.table(c.raw) }}
+{{ m.section("📦 Kapacita — aktuální a budoucí rezervace") }}
+{% if not c.has_oe %}<p class="muted">Bod nemá žádná kapacitní ani interrupční data.</p>
+{% else %}{{ m.table(c.cap, "Žádná aktuální ani budoucí kapacitní rezervace pro tenhle bod.") }}{% endif %}
+{{ m.section("⚠️ Interrupce — aktivní a plánované") }}
+{% if not c.has_oe %}<p class="muted">Bod nemá žádná kapacitní ani interrupční data.</p>
+{% else %}{{ m.table(c.intr, "Žádné aktivní ani plánované interrupce pro tenhle bod.") }}{% endif %}
+{{ m.section("🧪 Kvalita plynu") }}
+{% if not c.qualities %}<p class="muted">Bod nehlásí GCV ani Wobbe Index.</p>
+{% else %}
+<form class="controls flat">{{ m.radio("quality", c.qualities, c.quality, "Ukazatel") }}</form>
+{{ m.chart("quality", 430) }}
+{% endif %}
+{% endif %}

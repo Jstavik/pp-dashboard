@@ -1,0 +1,11 @@
+{% import "macros.html" as m %}
+{{ m.section("aFRR + mFRR — D0 až D+7 · plná čára = A01 denní · čárkovaně = A04 roční (" ~ c.a04 ~ ")") }}
+{{ m.chart("vol", 430) }}
+{{ m.chart("pri", 430) }}
+<details class="disclosure"><summary>📥 Stáhnout surová data rezerv (CSV)</summary>
+  <div class="presets">
+  {% for key, label, ok in c.downloads %}
+    {% if ok %}<a class="btn" href="/api/csv/reserves?key={{ key }}">⬇ {{ label }}</a>{% else %}<span class="muted small">{{ label }}: —</span>{% endif %}
+  {% endfor %}
+  </div>
+</details>

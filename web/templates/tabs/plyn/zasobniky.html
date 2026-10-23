@@ -1,0 +1,17 @@
+{% import "macros.html" as m %}
+{% if c.empty %}<div class="alert alert-warn">GIE data nejsou dostupná. Spusť <code>scripts/update_all.py --only gie</code>.</div>
+{% else %}
+{{ m.section("Hlavní graf") }}
+<form class="controls">
+  {{ m.select("country", c.countries, c.country, "Země") }}
+  {{ m.select("var", c.var_keys, c.var, "Proměnná", c.var_labels) }}
+  {{ m.multiselect("years", c.years, c.sel_years, "Roky") }}
+</form>
+{% if c.sel_years %}{{ m.chart("main", 420) }}{% endif %}
+{{ m.section("Přehled zemí") }}
+<form class="controls">
+  {{ m.select("var_grid", c.var_keys, c.var_grid, "Proměnná", c.var_labels) }}
+  {{ m.multiselect("years_grid", c.years, c.sel_years_grid, "Roky") }}
+</form>
+{% if c.sel_years_grid %}{{ m.chart("grid", 620) }}{% endif %}
+{% endif %}

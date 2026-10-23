@@ -1,0 +1,18 @@
+{% import "macros.html" as m %}
+{% if c.error %}<div class="alert alert-warn">⚠️ ENTSO-E dočasně nedostupné: {{ c.error }}</div>{% endif %}
+{{ m.section("Instalovaná kapacita podle zdroje (14.1.A)") }}
+{{ m.chart("installed", 290) }}
+{{ m.section("Výrobní jednotky (PU) — " ~ c.n_pu ~ " aktivních") }}
+{{ m.chart("gantt_pu", 300) }}
+<details class="disclosure"><summary>📋 Tabulka PU</summary>{{ m.table(c.pu, "Žádné odstávky PU.") }}<a class="btn" href="/api/csv/outages?level=PU">⬇ CSV PU</a></details>
+{{ m.section("Generační jednotky (GU) — " ~ c.n_gu ~ " aktivních") }}
+{{ m.chart("gantt_gu", 300) }}
+<details class="disclosure"><summary>📋 Tabulka GU</summary>{{ m.table(c.gu, "Žádné odstávky GU.") }}<a class="btn" href="/api/csv/outages?level=GU">⬇ CSV GU</a></details>
+<details class="disclosure"{% if c.n_new or c.n_ended or c.n_chmw %} open{% endif %}>
+  <summary>📋 Detail změn · {{ c.n_new }} nových · {{ c.n_ended }} ukončených · {{ c.n_chmw }} změn MW</summary>
+  {% if not (c.n_new or c.n_ended or c.n_chmw) %}<p class="muted"><em>Žádné změny od předchozího stažení dat.</em></p>
+  {% else %}
+    {% if c.n_new %}<strong>🆕 Nové odstávky</strong>{{ m.table(c.new) }}{% endif %}
+    {% if c.n_chmw %}<strong>⚡ Změny výkonu</strong>{{ m.table(c.changed) }}{% endif %}
+  {% endif %}
+</details>

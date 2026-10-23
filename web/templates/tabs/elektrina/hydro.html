@@ -1,0 +1,15 @@
+{% import "macros.html" as m %}
+{% if c.empty %}
+<div class="alert alert-warn">Hydro data nejsou dostupná. Spusť aktualizaci: <code>scripts/update_all.py --only hydro</code>.</div>
+{% else %}
+<form class="controls">
+  {{ m.select("country", c.countries, c.country, "Země", c.names) }}
+  {{ m.multiselect("years", c.years, c.sel_years, "Roky (hlavní graf)") }}
+</form>
+{% if c.sel_years %}{{ m.chart("main", 420) }}{% else %}<p class="muted">Vyber aspoň jeden rok.</p>{% endif %}
+{{ m.section("Přehled klíčových zemí") }}
+<form class="controls">
+  {{ m.multiselect("years_grid", c.years, c.sel_years_grid, "Roky (grid)") }}
+</form>
+{% if c.sel_years_grid %}{{ m.chart("grid", 620) }}{% endif %}
+{% endif %}

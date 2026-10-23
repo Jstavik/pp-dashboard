@@ -1,0 +1,39 @@
+{% import "macros.html" as m %}
+{% if c.empty %}<div class="alert alert-warn">GASSCO data nejsou dostupná. Spusť <code>scripts/update_all.py --only gassco</code>.</div>
+{% else %}
+{{ m.chart("kpi", 400) }}
+{{ m.section("Časová osa") }}
+<form class="controls">
+  {{ m.multiselect("points", c.points, c.sel_points, "📍 Výstupní body") }}
+  {{ m.daterange(c.d_from, c.d_to, "📆 Rozsah", c.presets) }}
+</form>
+{{ m.chart("timeseries", 420) }}
+{{ m.section("Sezonnost") }}
+<form class="controls">
+  {{ m.multiselect("season_points", c.points, c.sel_season_points, "📍 Body pro sezonnost") }}
+  {{ m.multiselect("years", c.years, c.sel_years, "📅 Roky") }}
+</form>
+{{ m.chart("season", 420) }}
+{{ m.section("UMM zprávy (odstávky polí)") }}
+{% if not c.umm %}<p class="muted">GASSCO UMM data nejsou dostupná.</p>
+{% else %}
+{{ m.chart("umm_active", 360) }}
+<form class="controls">{{ m.range("cancel_days", c.umm.cancel_days, "Zrušené za posledních N dní", 1, 90) }}</form>
+{{ m.chart("umm_cancelled", 300) }}
+{{ m.section("Výhled") }}
+<form class="controls">{{ m.range("outlook", c.umm.outlook, "Dní dopředu", 7, 500) }}</form>
+{% if c.umm.in_window %}{{ m.chart("umm_outlook", 380) }}
+{% elif c.umm.nearest %}<div class="alert alert-info">V příštích {{ c.umm.outlook }} dnech nejsou plánované žádné odstávky. Nejbližší ({{ c.umm.nearest.date.strftime("%d.%m.%Y") }}) začíná za {{ c.umm.nearest.days }} dní.</div>
+{% else %}<div class="alert alert-info">Žádné aktivní odstávky k zobrazení.</div>{% endif %}
+{{ m.section("Δ Srovnání s dřívějším snapshotem") }}
+{% if not c.umm.dates %}<p class="muted">Zatím není k dispozici žádný uložený snapshot UMM zpráv pro srovnání — objeví se po prvním běhu aktualizace GASSCO UMM.</p>
+{% else %}
+<form class="controls">
+  {{ m.select("compare", c.umm.dates, c.umm.compare, "Porovnat s") }}
+  {{ m.radio("view", ["Vedle sebe", "Rozdíl"], c.umm.view, "Zobrazení") }}
+</form>
+{{ m.chart("umm_delta_view", 400) }}
+{{ m.chart("umm_delta", 360) }}
+{% endif %}
+{% endif %}
+{% endif %}

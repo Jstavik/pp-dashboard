@@ -1,0 +1,28 @@
+{% import "macros.html" as m %}
+{{ m.chart("dap", 330) }}
+<div class="grid-2">
+  {% for label, stats in [(c.d0_label, c.stats_d0), (c.d1_label, c.stats_d1)] %}
+  <div class="card panel"><strong>{{ label }}</strong>
+    <ul class="stat-list">{% for lbl, v in stats %}<li>{{ lbl }}: <strong>{{ ("%.2f EUR"|format(v)) if v is not none else "—" }}</strong></li>{% endfor %}</ul>
+  </div>
+  {% endfor %}
+</div>
+{{ m.section("aFRR + mFRR — D0 + D+1 (objemy a ceny)") }}
+<div class="grid-2">{{ m.chart("res_vol", 330) }}{{ m.chart("res_pri", 330) }}</div>
+{{ m.section("Strategie baterie") }}
+<div class="alert alert-info small">Strategie nabíjí baterii při nízkých cenách a vybíjí při vysokých. Cena cyklování zahrnuje degradaci baterie a kompenzaci zákazníkovi (průměr trhu 12–18 EUR/MWh). Strategie cykluje maximálně N×/den, aby chránila životnost baterie.</div>
+<form class="controls">
+  {{ m.number("cap", c.cap, "Kapacita baterie [kWh]", 10, 10000, 10) }}
+  {{ m.number("power", c.power, "Výkon baterie [kW]", 5, 5000, 5) }}
+  {{ m.range("cycles", c.cycles, "Max cyklů za den", 1, 5) }}
+  {{ m.number("cost", c.cost, "Cena cyklování [EUR/MWh]", 0, 100, 0.5) }}
+  {{ m.checkbox("hold", c.hold, "Povolit stav HOLD (drž SoC)", "Baterie drží aktuální SoC místo nabíjení/vybíjení, pokud není jasný cenový signál") }}
+</form>
+{% if c.has_sim %}
+  {{ m.chart("battery", 610) }}
+  <div class="metric-grid">
+    <div class="metric"><div class="m-label">Celkový výnos D0+D+1</div><div class="m-value">{{ "%.2f"|format(c.revenue) }} EUR</div></div>
+    <div class="metric"><div class="m-label">Počet cyklů</div><div class="m-value">{{ "%.1f"|format(c.cycles_done) }} / {{ c.cycles }}</div></div>
+    <div class="metric" title="Porovnání s pasivní strategií (baterie nečinná)"><div class="m-label">Výnos vs. bez strategie</div><div class="m-value">{{ "%+.2f"|format(c.revenue) }} EUR</div></div>
+  </div>
+{% else %}<p class="muted">DAP data nejsou dostupná pro simulaci.</p>{% endif %}

@@ -1,0 +1,6 @@
+{% import "macros.html" as m %}
+<h3 class="section-title">Zásobníky plynu — Evropa</h3>
+{% if c.empty %}<div class="alert alert-warn">Data nejsou k dispozici.</div>
+{% else %}{{ m.chart("table", 540) }}
+<p class="muted small">Stav: {{ c.last_date.strftime("%d.%m.%Y") }} · 📷 Stáhnout: ikona fotoaparátu v grafu.</p>
+{{ m.chart("grid", 620) }}{% endif %}

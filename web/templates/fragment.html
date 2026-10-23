@@ -1,0 +1,8 @@
+<div class="frag" data-page="{{ spec.page }}" data-tab="{{ spec.key }}" data-query="{{ ctx.query }}"{% if spec.refresh %} data-refresh="{{ spec.refresh }}"{% endif %}>
+{% if error %}
+  <div class="alert alert-bad"><strong>Záložku se nepodařilo načíst.</strong> {{ error }}</div>
+{% else %}
+  {% set c = ctx %}
+  {% include template %}
+{% endif %}
+</div>

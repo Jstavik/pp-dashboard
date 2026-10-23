@@ -1,0 +1,4 @@
+{% import "macros.html" as m %}
+<h3 class="section-title">DAP ceny elektřiny — Evropa</h3>
+{% if c.empty %}<div class="alert alert-info">Data nejsou k dispozici.</div>
+{% else %}{{ m.chart("map", 720) }}<p class="muted small">📷 Stáhnout: ikona fotoaparátu v grafu.</p>{% endif %}

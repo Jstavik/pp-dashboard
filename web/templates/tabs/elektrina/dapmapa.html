@@ -1,0 +1,12 @@
+{% import "macros.html" as m %}
+{% if c.empty %}
+<div class="alert alert-info">Data DAP mapy nejsou k dispozici. Spusť aktualizaci: <code>scripts/update_all.py --only dap_europe</code>.</div>
+{% else %}
+<form class="controls">
+  {{ m.select("day", c.dates, c.sel, "📅 Den dodávky", c.date_labels) }}
+  <div class="field"><span class="field-label">Poslední úspěšné stažení</span><span>{{ c.last_write }}</span></div>
+</form>
+{% if c.today_missing %}<div class="alert alert-warn">Pro {{ c.today.strftime("%d.%m.%Y") }} zatím nejsou data — poslední dostupný den: {{ c.latest.strftime("%d.%m.%Y") }}.</div>{% endif %}
+{{ m.chart("map", 720) }}
+<p class="muted small">Zobrazeno: {{ c.sel_label }} · Zdroj: ENTSO-E Transparency Platform · Base | Peak = denní průměr EUR/MWh · Δ = DoD změna</p>
+{% endif %}

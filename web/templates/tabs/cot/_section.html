@@ -1,0 +1,31 @@
+{% import "macros.html" as m %}
+<details class="disclosure"><summary>📡 Stav dat</summary>
+<p class="muted small">IFEU_FUT/NDEX_FUT jsou stahované soubory — IFEU_FUT ale uvnitř nese i pár komodit pod vlastním venue kódem IFLX (ICE Futures Europe softs/agri), proto se ve výběru objeví i ten.</p>
+<div class="grid-2">
+{% for s in c.status %}
+  <div class="card panel"><strong>{{ s.venue }}</strong>
+    <div class="small">{% if s.latest %}Nejnovější data v úložišti: report_date <strong>{{ s.latest|fmt }}</strong>{% else %}V úložišti zatím žádná data.{% endif %}</div>
+    {% if s.no_log %}<div class="small muted">Žádný záznam o stažení v logu (data z jednorázového backfillu).</div>
+    {% else %}
+      <div class="small">{% if s.last_ok %}Poslední úspěšné stažení: {{ s.last_ok[0] }} (report_date {{ s.last_ok[1] }}){% else %}V logu zatím žádné úspěšné stažení.{% endif %}</div>
+      {% if s.last_fail %}<div class="alert alert-warn small">⚠️ Poslední pokus ({{ s.last_fail[0] }}) selhal — {{ s.last_fail[1] }}</div>{% endif %}
+    {% endif %}
+  </div>
+{% endfor %}
+</div></details>
+{% if c.empty %}<div class="alert alert-warn">Žádná ICE MiFID II CoT data v úložišti — spusť <code>scripts/backfill_ice_cot.py</code>.</div>
+{% else %}
+{% if c.products %}<form class="controls">{{ m.select("product", c.products, c.product, "Komodita (všech " ~ c.products|length ~ " dostupných)", c.product_labels) }}</form>{% endif %}
+{{ m.chart("positioning", 650) }}
+{{ m.section("Finanční net pozice (spekulanti) — percentil vůči historii") }}
+{% if not c.kpi %}<p class="muted">Data nejsou dostupná.</p>
+{% else %}
+<div class="kpi-row">
+  {{ m.kpi("Aktuální net pozice", "%+.0f"|format(c.kpi.current_value), unit=c.kpi.unit_label) }}
+  {{ m.kpi("Percentil vůči historii", "%.0f"|format(c.kpi.percentile), unit="%") }}
+  {{ m.kpi("Délka historie", c.kpi.n_weeks, unit="týdnů") }}
+</div>
+<p class="muted small">Net = (Investment Firms/Credit Institutions + Investment Funds + Other Financial Institutions), Long − Short, scope=Other (směrové/spekulativní pozice, ne Risk_Reducing hedging) — analog „spekulantů“ z klasického CFTC COT reportu. Stav k {{ c.kpi.current_date|fmt }}.</p>
+{{ m.chart("net", 270) }}
+{% endif %}
+{% endif %}

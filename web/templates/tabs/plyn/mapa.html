@@ -1,0 +1,16 @@
+{% import "macros.html" as m %}
+{{ m.status_row(c.status) }}
+{% if c.empty %}<div class="alert alert-warn">ENTSO-G data nejsou dostupná.</div>
+{% else %}
+{{ m.chart("map", 720) }}
+<p class="muted small">Data ENTSO-G: D-2 ({{ c.d2.strftime("%d.%m.%Y") }}) · Norské nominace: live (realTimeAtom.xml)</p>
+{% if c.storage %}
+{{ m.section("Zásobníky plynu — aktuální stav") }}
+<div class="metric-grid">
+{% for s in c.storage %}
+  <div class="metric"><div class="m-label">{{ s.icon }} {{ s.cc }}</div><div class="m-value">{{ "%.1f"|format(s.full) }} %</div>
+  <div class="m-delta {{ 'up' if s.net >= 0 else 'down' }}">{{ "%+.0f"|format(s.net) }} GWh/d</div><div class="muted small">{{ "%.1f"|format(s.twh) }} TWh</div></div>
+{% endfor %}
+</div>
+{% endif %}
+{% endif %}

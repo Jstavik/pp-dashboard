@@ -1,0 +1,23 @@
+{% import "macros.html" as m %}
+<form class="controls">
+  {{ m.multiselect("countries", c.countries, c.sel_countries, "🌍 Země", placeholder="EU součet") }}
+  {{ m.radio("agg", ["Denní", "Týdenní", "Měsíční"], c.agg, "📊 Agregace") }}
+  {{ m.radio("chart_type", c.chart_types, c.chart_type, "📈 Typ grafu") }}
+  {{ m.daterange(c.d_from, c.d_to, "📆 Rozsah", c.presets) }}
+</form>
+{% if c.has_flows %}
+  {{ m.chart("monthly", 420) }}
+  {{ m.chart("sendout", 420) }}
+  <form class="controls flat">{{ m.multiselect("years", c.years, c.sel_years, "📅 Roky (sezonnost)") }}</form>
+  {{ m.chart("season", 420) }}
+{% else %}<div class="alert alert-warn">ENTSO-G LNG data nejsou dostupná.</div>{% endif %}
+{{ m.section("Zásoby LNG terminálů (GIE ALSI)") }}
+{% if not c.has_alsi %}<p class="muted">ALSI data nejsou dostupná.</p>
+{% else %}
+<form class="controls">
+  {{ m.multiselect("alsi_countries", c.alsi_countries, c.sel_alsi_countries, "🌍 Země (zásobníky)", placeholder="všechny") }}
+  {{ m.multiselect("alsi_years", c.alsi_years, c.sel_alsi_years, "📅 Roky (sezonnost plnosti)") }}
+</form>
+{{ m.chart("inventory", 420) }}
+{{ m.chart("alsi_season", 420) }}
+{% endif %}

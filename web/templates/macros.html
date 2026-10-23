@@ -1,0 +1,91 @@
+{# ── grafy, KPI, tabulky ─────────────────────────────────────────── #}
+{% macro chart(id, height=360, cls="") -%}
+<div class="card chart-card {{ cls }}"><div class="chart" data-chart="{{ id }}" style="min-height: {{ height }}px"></div></div>
+{%- endmacro %}
+
+{% macro kpi(label, value, sub="", color=None, unit="") -%}
+<div class="kpi"{% if color %} style="--kpi-accent: {{ color }}"{% endif %}>
+  <div class="kpi-label">{{ label }}</div>
+  <div class="kpi-value"{% if color %} style="color: {{ color }}"{% endif %}>{{ value }}{% if unit %}<small> {{ unit }}</small>{% endif %}</div>
+  {% if sub %}<div class="kpi-sub">{{ sub|safe }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro table(t, empty="Žádná data.", cls="") -%}
+{% if not t or not t.rows %}
+<p class="muted">{{ empty }}</p>
+{% else %}
+<div class="table-wrap {{ cls }}"><table class="data">
+  <thead><tr>{% for h in t.headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+  <tbody>{% for r in t.rows %}<tr>{% for v in r %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+</table></div>
+{% if t.truncated %}<p class="muted small">Zobrazeno {{ t.rows|length }} z {{ t.total }} řádků.</p>{% endif %}
+{% endif %}
+{%- endmacro %}
+
+{% macro status_row(items) -%}
+<div class="status-row">{% for s in items %}<span class="status {{ 'ok' if s.ok else 'stale' }}">{{ '✓' if s.ok else '⚠' }} <strong>{{ s.name }}</strong> {{ s.date }}</span>{% endfor %}</div>
+{%- endmacro %}
+
+{% macro section(title) -%}<h3 class="section-title">{{ title }}</h3>{%- endmacro %}
+
+{# ── ovládací prvky (uvnitř <form class="controls">) ─────────────── #}
+{% macro select(name, options, selected, label, labels=None) -%}
+<label class="field"><span class="field-label">{{ label }}</span>
+<select name="{{ name }}">
+  {% for o in options %}<option value="{{ o }}"{% if o|string == selected|string %} selected{% endif %}>{{ labels[o] if labels and o in labels else o }}</option>{% endfor %}
+</select></label>
+{%- endmacro %}
+
+{% macro radio(name, options, selected, label="", labels=None) -%}
+<div class="field"><span class="field-label">{{ label }}</span>
+<div class="seg" role="radiogroup">
+  {% for o in options %}<label class="seg-item"><input type="radio" name="{{ name }}" value="{{ o }}"{% if o|string == selected|string %} checked{% endif %}><span>{{ labels[o] if labels and o in labels else o }}</span></label>{% endfor %}
+</div></div>
+{%- endmacro %}
+
+{% macro multiselect(name, options, selected, label, labels=None, placeholder="vše") -%}
+{% set sel = selected|map('string')|list %}
+<div class="field"><span class="field-label">{{ label }}</span>
+<details class="ms">
+  <summary>{% if sel %}{% if sel|length <= 2 %}{% for s in sel %}{{ labels[s] if labels and s in labels else s }}{{ ", " if not loop.last }}{% endfor %}{% else %}{{ sel|length }} vybráno{% endif %}{% else %}<span class="muted">{{ placeholder }}</span>{% endif %}</summary>
+  <div class="ms-pop">
+    <input type="hidden" name="{{ name }}__set" value="1">
+    {% if options|length > 10 %}<input type="search" class="ms-filter" placeholder="Hledat…" aria-label="Hledat">{% endif %}
+    <div class="ms-actions"><button type="button" data-ms="all">vše</button><button type="button" data-ms="none">nic</button><button type="submit" class="primary">Použít</button></div>
+    <div class="ms-list">
+    {% for o in options %}<label><input type="checkbox" name="{{ name }}" value="{{ o }}"{% if o|string in sel %} checked{% endif %}> {{ labels[o] if labels and o in labels else o }}</label>{% endfor %}
+    </div>
+  </div>
+</details></div>
+{%- endmacro %}
+
+{% macro number(name, value, label, min=None, max=None, step=1, help="") -%}
+<label class="field"><span class="field-label">{{ label }}</span>
+<input type="number" name="{{ name }}" value="{{ value }}"{% if min is not none %} min="{{ min }}"{% endif %}{% if max is not none %} max="{{ max }}"{% endif %} step="{{ step }}"{% if help %} title="{{ help }}"{% endif %}></label>
+{%- endmacro %}
+
+{% macro range(name, value, label, min, max, step=1, unit="") -%}
+<label class="field"><span class="field-label">{{ label }}: <output>{{ value }}</output>{{ unit }}</span>
+<input type="range" name="{{ name }}" value="{{ value }}" min="{{ min }}" max="{{ max }}" step="{{ step }}"></label>
+{%- endmacro %}
+
+{% macro checkbox(name, checked, label, help="") -%}
+<label class="check"{% if help %} title="{{ help }}"{% endif %}><input type="hidden" name="{{ name }}__set" value="1"><input type="checkbox" name="{{ name }}" value="1"{% if checked %} checked{% endif %}> {{ label }}</label>
+{%- endmacro %}
+
+{% macro date(name, value, label, min=None, max=None) -%}
+<label class="field"><span class="field-label">{{ label }}</span>
+<input type="date" name="{{ name }}" value="{{ value }}"{% if min %} min="{{ min }}"{% endif %}{% if max %} max="{{ max }}"{% endif %}></label>
+{%- endmacro %}
+
+{% macro daterange(d_from, d_to, label="Rozsah", presets=None, min=None, max=None) -%}
+<div class="field daterange"><span class="field-label">{{ label }}</span>
+<div class="dr-inputs">
+  <input type="date" name="from" value="{{ d_from }}"{% if min %} min="{{ min }}"{% endif %}{% if max %} max="{{ max }}"{% endif %} aria-label="Od">
+  <span>–</span>
+  <input type="date" name="to" value="{{ d_to }}"{% if min %} min="{{ min }}"{% endif %}{% if max %} max="{{ max }}"{% endif %} aria-label="Do">
+</div>
+{% if presets %}<div class="presets">{% for lbl, val in presets %}<button type="submit" name="range" value="{{ val }}">{{ lbl }}</button>{% endfor %}</div>{% endif %}
+</div>
+{%- endmacro %}

@@ -1,0 +1,11 @@
+{% import "macros.html" as m %}
+{% if c.empty %}<div class="alert alert-warn">Historická data ENTSO-G nejsou dostupná.</div>
+{% else %}
+<form class="controls">
+  {% include "tabs/plyn/_cascade.html" %}
+  {{ m.radio("chart_type", c.chart_types, c.chart_type, "Typ grafu") }}
+  {{ m.daterange(c.d_from, c.d_to, "📆 Rozsah (časová osa)", c.presets, c.min_d, c.max_d) }}
+</form>
+{{ m.chart("timeseries", 390) }}
+<p class="muted small">ℹ️ Data ENTSO-G — různé hraniční body mohou mít různé zpoždění publikace (D-1 až D-2). Poslední dostupný den: {{ c.max_d.strftime("%d.%m.%Y") }}</p>
+{% endif %}

@@ -1,0 +1,42 @@
+{% import "macros.html" as m %}
+<form class="controls">
+  {{ m.radio("country", c.countries, c.country, "Země", c.country_names) }}
+  {{ m.radio("sekce", ["Výroba", "Odstávky"], c.sekce, "Sekce") }}
+  {% if c.sekce == "Výroba" %}
+    {{ m.radio("pohled", ["Teď/denní", "Letos", "Sezonnost"], c.pohled, "Pohled") }}
+    {% if c.pohled == "Teď/denní" %}{{ m.date("day", c.day, "Den") }}
+    {% elif c.pohled == "Letos" %}{{ m.date("start", c.start, "Od data") }}
+    {% else %}
+      {% if c.sources %}{{ m.select("source", c.sources, c.source, "Zdroj", c.source_labels) }}{% endif %}
+      {{ m.radio("chart_type", c.chart_types, c.chart_type, "Typ grafu") }}
+    {% endif %}
+  {% else %}
+    {{ m.multiselect("types", c.types, c.sel_types, "Filtr typu zdroje", c.type_labels) }}
+    {{ m.range("days", c.days, "Dní dopředu", 7, 500) }}
+    {% if c.dates %}{{ m.select("compare", c.dates, c.compare, "Porovnat s") }}{% endif %}
+  {% endif %}
+</form>
+{% if c.sekce == "Výroba" %}
+  {% if c.pohled == "Teď/denní" %}{{ m.chart("gen_day", 420) }}
+  {% elif c.pohled == "Letos" %}{{ m.chart("gen_ytd", 420) }}
+  {% elif c.sources %}{{ m.chart("gen_season", 440) }}
+  {% else %}<p class="muted">Zatím nejsou k dispozici data o výrobě.</p>{% endif %}
+{% else %}
+  <div class="kpi-row">
+    {{ m.kpi("Aktivních odstávek", c.n_active) }}
+    {{ m.kpi("Nedostupno teď", c.unavail_now|num, unit="MW") }}
+    {{ m.kpi("Unplanned", c.n_unplanned) }}
+    {{ m.kpi("Zasažené typy zdrojů", c.n_types) }}
+  </div>
+  {{ m.section("Aktivní odstávky") }}
+  {{ m.table(c.outage_table, "Žádné aktivní odstávky.") }}
+  {{ m.section("Výhled") }}
+  {{ m.chart("outlook", 390) }}
+  {{ m.section("Δ Srovnání s dřívějším snapshotem") }}
+  {% if not c.dates %}
+    <p class="muted">Zatím není k dispozici žádný uložený snapshot odstávek pro srovnání — objeví se po prvním běhu aktualizace odstávek (scripts/update_all.py --only outages).</p>
+  {% else %}
+    {{ m.chart("delta", 420) }}
+    <p class="muted small">Historie odstávek dostupná od {{ c.oldest.strftime("%d.%m.%Y") }} — plné D-7 srovnání bude možné od {{ c.full_available.strftime("%d.%m.%Y") }}.</p>
+  {% endif %}
+{% endif %}

@@ -1,0 +1,36 @@
+{% import "macros.html" as m %}
+<div data-part="status">{{ m.status_row(c.status) }}</div>
+{{ m.section("Systémová odchylka + zatížení + cena odchylky — ČEPS") }}
+{{ m.chart("ceps_combined", 330) }}
+{{ m.section("Aktivace SVR v ČR — ČEPS (minutová)") }}
+{{ m.chart("ceps_svr", 250) }}
+
+{{ m.section("Balancing strategie (EMA predikce)") }}
+<div class="alert alert-info small">Data systémové odchylky mají zpoždění ~15 min. EMA (Exponential Moving Average) dává větší váhu posledním intervalům a slouží jako proxy pro odhad aktuálního stavu soustavy. Zákazníci v balancing segmentu pomáhají síti a jsou za to benefitováni.</div>
+<form class="controls">
+  {{ m.range("ema", c.ema, "EMA okno [ISP]", 1, 8) }}
+  {{ m.range("thr", c.thr, "Práh zásahu", 10, 150, 1, " MWh") }}
+  {{ m.number("benefit", c.benefit, "Benefit zákazníka [EUR/MWh]", 0, 1000, 0.5) }}
+</form>
+{{ m.chart("balancing", 390) }}
+<div data-part="balancing-metrics" class="metric-grid">
+  {% if c.n_int is not none %}
+  <div class="metric"><div class="m-label">Počet zásahů dnes</div><div class="m-value">{{ c.n_int }}</div></div>
+  <div class="metric"><div class="m-label">Odhadovaný benefit zákazníka</div><div class="m-value">{{ "%.2f"|format(c.benefit_total) }} EUR/den</div></div>
+  {% else %}<p class="muted">Data odchylky nejsou dostupná.</p>{% endif %}
+</div>
+
+{{ m.section("Ceny aktivace záložních rezerv") }}
+{{ m.chart("activation", 230) }}
+{{ m.section("Zatížení — skutečnost vs. prognóza D+1") }}
+{% if c.has_load_fc %}{{ m.chart("load", 290) }}{% else %}<p class="muted">Data zatížení nejsou dostupná.</p>{% endif %}
+{{ m.section("Forecast solární výroby [MW] · D0 + D+1") }}
+{{ m.chart("wind_solar", 250) }}
+{{ m.section("Generace podle zdroje · aktuální mix") }}
+<div class="grid-2-1">
+  {% if c.has_gen %}{{ m.chart("gen_area", 330) }}{% else %}<div class="card panel muted">Data generace nejsou dostupná.</div>{% endif %}
+  {{ m.chart("gen_donut", 290) }}
+  <div class="card" data-part="mix">{{ c.mix_legend|safe }}</div>
+</div>
+{{ m.section("aFRR + mFRR — D0 (objemy a ceny)") }}
+<div class="grid-2">{{ m.chart("res_vol", 310) }}{{ m.chart("res_pri", 310) }}</div>

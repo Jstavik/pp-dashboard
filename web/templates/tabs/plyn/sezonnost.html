@@ -1,0 +1,11 @@
+{% import "macros.html" as m %}
+{% if c.empty %}<div class="alert alert-warn">Data nejsou dostupná.</div>
+{% else %}
+<form class="controls">
+  {% include "tabs/plyn/_cascade.html" %}
+  {{ m.multiselect("years", c.years, c.sel_years, "📅 Roky") }}
+  {{ m.radio("chart_type", c.chart_types, c.chart_type, "Typ grafu") }}
+</form>
+{{ m.chart("season", 370) }}
+<p class="muted small">Celá historie od 2020 je k dispozici vždy (dřívější přepínač „načíst celou historii“ už není potřeba).</p>
+{% endif %}

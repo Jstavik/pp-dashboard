@@ -1,0 +1,28 @@
+{% import "macros.html" as m %}
+{% if c.empty %}<div class="alert alert-warn">Data fyzických toků nejsou dostupná.</div>
+{% else %}
+<form class="controls">
+  {{ m.select("country", c.countries, c.country, "🌍 Země", c.names) }}
+  {{ m.radio("dir", ["entry", "exit"], c.dir, "↕ Směr") }}
+</form>
+{% if not c.points %}
+<p class="muted">Pro {{ c.country_label }} / {{ c.dir }} nejsou k dispozici žádná data fyzických toků.</p>
+{% else %}
+{{ m.chart("stacked", 420) }}
+<p class="muted small">💡 V legendě grafu můžeš body skrývat; bod pro detail kapacity vyber níž.</p>
+<form class="controls">
+  {{ m.select("point", c.points, c.point, "📍 Bod (pro detail kapacity)") }}
+  {% if c.single_points|length > 1 %}{{ m.select("single", c.single_points, c.single, "📍 Konkrétní fyzický bod") }}{% endif %}
+  {% if c.operators %}
+    {{ m.select("operator", c.operators, c.operator, "🏢 Operátor") }}
+    {{ m.checkbox("tech", c.show_tech, "📏 Firm Technical (fyzický strop)") }}
+    {{ m.checkbox("avail", c.show_avail, "🟢 Firm Available", "Available = Technical − Booked (ENTSOG manuál) — co ještě není zarezervované z fyzického stropu.") }}
+    {{ m.checkbox("interrupt", c.show_int, "⚠️ Odstávky/interrupce") }}
+    {{ m.range("forward", c.forward, "📆 Výhled dopředu", 0, 90, 1, " dní") }}
+  {% endif %}
+</form>
+{% if c.single_points|length > 1 %}<p class="muted small">Fyzické toky ENTSOG hlásí tenhle bod jako kombinaci víc bodů — kapacitní data je mají rozlišené, proto je potřeba vybrat konkrétní bod.</p>{% endif %}
+{% if c.operators %}{{ m.chart("detail", 490) }}
+{% else %}<div class="alert alert-info">Pro bod „{{ c.single }}“ nejsou v kapacitních datech žádní operátoři — název bodu se mezi zdroji (toky vs. kapacita) může lišit. Zobrazen je jen fyzický tok výš.</div>{% endif %}
+{% endif %}
+{% endif %}

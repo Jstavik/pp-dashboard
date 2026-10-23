@@ -1,0 +1,366 @@
+/* PP Dashboard — klient: líné záložky (HTML fragmenty ze serveru), grafy
+   jako Plotly JSON (/api/chart/...), ovládací prvky = formulář, jehož
+   změna znovu načte fragment se stejnými parametry, auto-refresh. */
+(function () {
+  "use strict";
+
+  var DARK = {
+    text: "#e3e9f0", muted: "#8d9cab", grid: "#2a3644", zero: "#3a4858",
+    surface: "#1d2733", border: "#2a3644", mapBg: "#121a22", mapLine: "#4a5a6a",
+  };
+  var LIGHT = {
+    text: "#1d2733", muted: "#66788a", grid: "#e6ebf1", zero: "#cfd8e3",
+    surface: "#ffffff", border: "#dde3ea", mapBg: null, mapLine: "#aaaaaa",
+  };
+
+  function lighten(hex) {
+    var m = /^#([0-9a-f]{6})$/i.exec(hex || "");
+    if (!m) return hex;
+    var n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    var lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    if (lum > 0.55) return hex;
+    var k = 0.45;
+    r = Math.round(r + (255 - r) * k); g = Math.round(g + (255 - g) * k); b = Math.round(b + (255 - b) * k);
+    return "rgb(" + r + "," + g + "," + b + ")";
+  }
+
+  function isDark() { return document.documentElement.getAttribute("data-theme") === "dark"; }
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  function isWhiteish(c) {
+    return typeof c === "string" && /^(#fff(fff)?|white|rgba?\(255,\s*255,\s*255)/i.test(c.replace(/\s/g, ""));
+  }
+
+  /* Úprava layoutu podle tématu — grafy z charts/ mají natvrdo bílé pozadí
+     a světlou mřížku; pozadí se zprůhlední (barvu dá karta) a v tmavém
+     režimu se přebarví text, mřížka, tooltip a podklad mapy. */
+  function themed(fig) {
+    var f = clone(fig), L = f.layout || (f.layout = {}), c = isDark() ? DARK : LIGHT;
+    L.paper_bgcolor = "rgba(0,0,0,0)";
+    L.plot_bgcolor = "rgba(0,0,0,0)";
+    L.font = Object.assign({}, L.font || {}, { color: c.text });
+    delete L.width;
+    L.autosize = true;
+    Object.keys(L).forEach(function (k) {
+      if (/^[xy]axis\d*$/.test(k)) {
+        var ax = L[k] = Object.assign({}, L[k]);
+        ax.gridcolor = c.grid; ax.zerolinecolor = c.zero; ax.linecolor = c.border;
+        if (ax.title && ax.title.font) delete ax.title.font.color;
+      }
+    });
+    if (L.title !== undefined) {
+      L.title = typeof L.title === "string" ? { text: L.title } : Object.assign({}, L.title);
+      L.title.font = Object.assign({}, L.title.font || {}, { color: c.text });
+    }
+    if (L.template && L.template.layout) {
+      // šablona (plotly_white) nese vlastní tmavé barvy textu — přebíjely by tmavý režim
+      ["font", "title"].forEach(function (k) { delete L.template.layout[k]; });
+      delete L.template.layout.annotationdefaults;
+    }
+    if (L.legend) {
+      L.legend = Object.assign({}, L.legend);
+      if (!L.legend.bgcolor || isWhiteish(L.legend.bgcolor)) L.legend.bgcolor = isDark() ? "rgba(22,30,39,.85)" : "rgba(255,255,255,.85)";
+      if (L.legend.bordercolor) L.legend.bordercolor = c.border;
+      if (L.legend.font) delete L.legend.font.color;
+    }
+    L.hoverlabel = Object.assign({}, L.hoverlabel || {}, { bgcolor: c.surface, bordercolor: c.border, font: Object.assign({}, (L.hoverlabel || {}).font, { color: c.text }) });
+    (L.annotations || []).forEach(function (a) {
+      if (isDark() && isWhiteish(a.bgcolor)) a.bgcolor = "rgba(22,30,39,.85)";
+      if (a.font && (a.font.color === "#263238" || a.font.color === "#333" || a.font.color === "black")) a.font.color = c.text;
+    });
+    (L.shapes || []).forEach(function (s) {
+      if (isDark() && s.line && (s.line.color === "black" || s.line.color === "#000")) s.line.color = c.muted;
+    });
+    if (L.map) {
+      L.map = Object.assign({}, L.map);
+      (L.map.layers || []).forEach(function (ly) { if (ly.type === "line") ly.color = c.mapLine; });
+      if (isDark() && (L.map.style === "white-bg" || !L.map.style)) {
+        L.map.style = { version: 8, sources: {}, layers: [{ id: "bg", type: "background", paint: { "background-color": c.mapBg } }] };
+      }
+    }
+    if (L.template && L.template.layout) {
+      delete L.template.layout.paper_bgcolor;
+      delete L.template.layout.plot_bgcolor;
+    }
+    (f.data || []).forEach(function (t) {
+      if (!isDark()) return;
+      if (t.type === "pie" && t.marker && t.marker.line && isWhiteish(t.marker.line.color)) t.marker.line.color = c.surface;
+      // tmavé popisky (např. toky v mapě) zesvětlit, ať jsou na tmavém pozadí čitelné
+      if (t.textfont && typeof t.textfont.color === "string") t.textfont.color = lighten(t.textfont.color);
+    });
+    return f;
+  }
+
+  /* ── grafy ─────────────────────────────────────────────────────────── */
+  var observer = "IntersectionObserver" in window ? new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { observer.unobserve(e.target); loadChart(e.target); }
+    });
+  }, { rootMargin: "300px 0px" }) : null;
+
+  function chartUrl(el) {
+    var frag = el.closest(".frag");
+    return "/api/chart/" + frag.dataset.page + "/" + frag.dataset.tab + "/" + el.dataset.chart +
+      "?" + (frag.dataset.query || "");
+  }
+
+  function showMsg(el, text, cls) {
+    if (window.Plotly && el._ppFig) { try { Plotly.purge(el); } catch (e) { /* noop */ } }
+    el._ppFig = null;
+    el.innerHTML = '<div class="chart-msg ' + (cls || "") + '"></div>';
+    el.firstChild.textContent = text;
+  }
+
+  function renderFig(el, payload) {
+    var cfg = Object.assign({ responsive: true, displaylogo: false, displayModeBar: false }, payload.config || {});
+    el._ppFig = payload.figure; el._ppCfg = cfg;
+    var f = themed(payload.figure);
+    if (!el.querySelector(".plot-container")) el.innerHTML = "";
+    return Plotly.react(el, f.data || [], f.layout || {}, cfg);
+  }
+
+  function loadChart(el, quiet) {
+    if (!quiet) { el.classList.add("loading"); }
+    var url = chartUrl(el);
+    el._ppUrl = url;
+    return fetch(url, { headers: { "Accept": "application/json" } })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (payload) {
+        if (el._ppUrl !== url) return;  // mezitím přišel novější požadavek
+        el.classList.remove("loading");
+        if (payload.error) return showMsg(el, payload.error, "err");
+        if (payload.empty || !payload.figure) return showMsg(el, "Data nejsou dostupná.");
+        return whenPlotly().then(function () { return renderFig(el, payload); });
+      })
+      .catch(function (err) {
+        el.classList.remove("loading");
+        if (!quiet) showMsg(el, "Graf se nepodařilo načíst (" + err.message + ")", "err");
+      });
+  }
+
+  function whenPlotly() {
+    return new Promise(function (resolve) {
+      (function wait() { if (window.Plotly) resolve(); else setTimeout(wait, 30); })();
+    });
+  }
+
+  function initCharts(root) {
+    root.querySelectorAll(".chart[data-chart]").forEach(function (el) {
+      if (observer) observer.observe(el); else loadChart(el);
+    });
+  }
+
+  function rethemeAll() {
+    document.querySelectorAll(".chart").forEach(function (el) {
+      if (el._ppFig && window.Plotly) {
+        var f = themed(el._ppFig);
+        Plotly.react(el, f.data || [], f.layout || {}, el._ppCfg);
+      }
+    });
+  }
+
+  /* ── fragmenty záložek ─────────────────────────────────────────────── */
+  var pageEl = document.querySelector(".page");
+  var refreshTimers = {};
+
+  function fragUrl(tab, query) {
+    return "/frag/" + pageEl.dataset.page + "/" + tab + (query ? "?" + query : "");
+  }
+
+  function setUrl(tab, query) {
+    var q = "tab=" + encodeURIComponent(tab) + (query ? "&" + query : "");
+    history.replaceState(null, "", location.pathname + "?" + q);
+  }
+
+  function loadTab(panel, query, opts) {
+    opts = opts || {};
+    var tab = panel.dataset.tab;
+    if (!opts.silent) {
+      panel.classList.add("is-loading");
+      if (!panel.firstChild) panel.innerHTML = '<div class="loading-block"></div>';
+    }
+    panel._ppReq = (panel._ppReq || 0) + 1;
+    var req = panel._ppReq;
+    return fetch(fragUrl(tab, query)).then(function (r) { return r.text(); }).then(function (html) {
+      if (req !== panel._ppReq) return;
+      panel.classList.remove("is-loading");
+      if (opts.partsOnly && panel.querySelector(".frag")) {
+        swapParts(panel, html);
+      } else {
+        panel.innerHTML = html;
+        panel.dataset.loaded = "1";
+        bindForms(panel);
+        initCharts(panel);
+      }
+      var frag = panel.querySelector(".frag");
+      if (frag && !opts.partsOnly) {
+        panel.dataset.query = frag.dataset.query || "";
+        if (isActive(panel)) setUrl(tab, panel.dataset.query);
+        setupRefresh(panel, frag);
+      }
+    }).catch(function (err) {
+      if (!opts.silent) panel.innerHTML = '<div class="alert alert-bad">Záložku se nepodařilo načíst: ' + err.message + "</div>";
+    });
+  }
+
+  // Auto-refresh: přenačte jen bloky [data-part] (KPI, tabulky) a grafy
+  // přes Plotly.react — bez probliknutí a bez ztráty rozbalených prvků.
+  function swapParts(panel, html) {
+    var tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll("[data-part]").forEach(function (nu) {
+      var old = panel.querySelector('[data-part="' + nu.dataset.part + '"]');
+      if (old) old.replaceWith(nu);
+    });
+    panel.querySelectorAll(".chart[data-chart]").forEach(function (el) {
+      if (el._ppFig) loadChart(el, true);
+    });
+  }
+
+  function setupRefresh(panel, frag) {
+    var tab = panel.dataset.tab;
+    clearInterval(refreshTimers[tab]);
+    var secs = parseInt(frag.dataset.refresh || "0", 10);
+    if (!secs) return;
+    refreshTimers[tab] = setInterval(function () {
+      if (document.hidden || !isActive(panel)) return;
+      loadTab(panel, panel.dataset.query, { silent: true, partsOnly: true });
+    }, secs * 1000);
+  }
+
+  function isActive(panel) { return !panel.hidden; }
+
+  function activate(tab) {
+    document.querySelectorAll(".tab").forEach(function (b) {
+      var on = b.dataset.tab === tab;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    document.querySelectorAll(".tab-panel").forEach(function (p) {
+      var on = p.dataset.tab === tab;
+      p.hidden = !on;
+      if (on) {
+        if (!p.dataset.loaded) loadTab(p, p.dataset.query || "");
+        else {
+          setUrl(tab, p.dataset.query || "");
+          // grafy vykreslené ve skrytém panelu mohou mít špatnou šířku
+          if (window.Plotly) p.querySelectorAll(".js-plotly-plot").forEach(function (g) { Plotly.Plots.resize(g); });
+        }
+      }
+    });
+  }
+
+  /* ── formuláře (ovládací prvky záložky) ────────────────────────────── */
+  // Všechny formuláře záložky se slučují do jednoho dotazu — ovládací
+  // prvky můžou být rozmístěné u jednotlivých grafů.
+  function formQuery(panel, submitter) {
+    var parts = [];
+    panel.querySelectorAll("form.controls").forEach(function (form) {
+      new FormData(form).forEach(function (v, k) {
+        if (v !== "") parts.push(encodeURIComponent(k) + "=" + encodeURIComponent(v));
+      });
+    });
+    if (submitter && submitter.name) parts.push(encodeURIComponent(submitter.name) + "=" + encodeURIComponent(submitter.value));
+    return parts.join("&");
+  }
+
+  function bindForms(panel) {
+    panel.querySelectorAll("form.controls").forEach(function (form) {
+      var submit = function (submitter) {
+        var q = formQuery(panel, submitter);
+        loadTab(panel, q);
+      };
+      form.addEventListener("submit", function (e) { e.preventDefault(); submit(e.submitter); });
+      form.addEventListener("change", function (e) {
+        var t = e.target;
+        if (t.closest(".ms")) { t.closest(".ms").dataset.dirty = "1"; return; }
+        if (t.classList.contains("ms-filter")) return;
+        submit(null);
+      });
+      form.addEventListener("input", function (e) {
+        if (e.target.type === "range") {
+          var out = e.target.parentElement.querySelector("output");
+          if (out) out.textContent = e.target.value;
+        }
+        if (e.target.classList.contains("ms-filter")) {
+          var needle = e.target.value.toLowerCase();
+          e.target.closest(".ms").querySelectorAll(".ms-list label").forEach(function (l) {
+            l.style.display = l.textContent.toLowerCase().indexOf(needle) >= 0 ? "" : "none";
+          });
+        }
+      });
+      form.querySelectorAll(".ms").forEach(function (ms) {
+        ms.addEventListener("toggle", function () {
+          if (!ms.open && ms.dataset.dirty) { ms.dataset.dirty = ""; submit(null); }
+        });
+        ms.querySelectorAll("[data-ms]").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var on = btn.dataset.ms === "all";
+            ms.querySelectorAll(".ms-list label").forEach(function (l) {
+              if (l.style.display !== "none") l.querySelector("input").checked = on;
+            });
+            ms.dataset.dirty = "1";
+          });
+        });
+      });
+    });
+  }
+
+  // zavřít otevřený multiselect klikem mimo
+  document.addEventListener("click", function (e) {
+    document.querySelectorAll("details.ms[open]").forEach(function (d) {
+      if (!d.contains(e.target)) d.open = false;
+    });
+  });
+
+  /* ── hlavička stránky (banner + KPI, Elektřina) ────────────────────── */
+  function loadHeader(el) {
+    return fetch(el.dataset.src).then(function (r) { return r.text(); }).then(function (html) {
+      el.innerHTML = html;
+      el.classList.remove("loading-block");
+    }).catch(function () { /* necháme poslední stav */ });
+  }
+
+  /* ── start ─────────────────────────────────────────────────────────── */
+  function start() {
+    var toggle = document.getElementById("theme-toggle");
+    if (toggle) toggle.addEventListener("click", function () {
+      var t = isDark() ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", t);
+      try { localStorage.setItem("ppdash-theme", t); } catch (e) { /* noop */ }
+      rethemeAll();
+    });
+    var clear = document.getElementById("cache-clear");
+    if (clear) clear.addEventListener("click", function () {
+      clear.disabled = true;
+      fetch("/api/cache/clear", { method: "POST" }).then(function () { location.reload(); });
+    });
+    var clock = document.getElementById("clock");
+    if (clock) {
+      var tick = function () {
+        clock.textContent = new Date().toLocaleString("cs-CZ", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Prague" });
+      };
+      tick(); setInterval(tick, 30000);
+    }
+    if (!pageEl) return;
+
+    var header = document.getElementById("page-header");
+    if (header) {
+      loadHeader(header);
+      var hs = parseInt(header.dataset.refresh || "0", 10);
+      if (hs) setInterval(function () { if (!document.hidden) loadHeader(header); }, hs * 1000);
+    }
+
+    var active = pageEl.dataset.active;
+    var initialQuery = pageEl.dataset.initialQuery || "";
+    document.querySelectorAll(".tab-panel").forEach(function (p) {
+      if (p.dataset.tab === active) p.dataset.query = initialQuery;
+    });
+    document.querySelectorAll(".tab").forEach(function (b) {
+      b.addEventListener("click", function () { activate(b.dataset.tab); });
+    });
+    activate(active);
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+  else start();
+})();

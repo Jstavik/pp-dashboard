@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{% block title %}PP Dashboard{% endblock %}</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<script>
+  // téma před prvním vykreslením (bez probliknutí): uložená volba, jinak systém
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem("ppdash-theme"); } catch (e) {}
+    if (t !== "light" && t !== "dark") {
+      t = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    document.documentElement.setAttribute("data-theme", t);
+  })();
+</script>
+<link rel="stylesheet" href="/static/app.css?v={{ asset_version }}">
+<script defer src="/vendor/plotly.min.js"></script>
+<script defer src="/static/app.js?v={{ asset_version }}"></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/"><span class="brand-mark">⚡</span><span class="brand-name">PP&nbsp;Dashboard</span></a>
+  <nav class="mainnav" aria-label="Sekce">
+    {% for key, pg in pages.items() if pg.tabs %}
+      <a href="/{{ key }}" class="{{ 'active' if page is defined and page.key == key }}"><span class="ico">{{ pg.icon }}</span>{{ pg.title }}</a>
+    {% endfor %}
+  </nav>
+  <div class="topbar-right">
+    <span class="clock" id="clock"></span>
+    <button class="icon-btn" id="theme-toggle" type="button" title="Přepnout světlý/tmavý režim" aria-label="Přepnout režim">
+      <span class="theme-ico-dark">☾</span><span class="theme-ico-light">☀</span>
+    </button>
+  </div>
+</header>
+<main class="container">
+{% block content %}{% endblock %}
+</main>
+<footer class="footer">
+  <span>PP Dashboard · data: ENTSO-E, ČEPS, ENTSO-G, GIE, GASSCO, ICE, Energy-Charts</span>
+  <button type="button" class="link-btn" id="cache-clear" title="Smazat serverovou cache a načíst data znovu">Obnovit data</button>
+</footer>
+</body>
+</html>

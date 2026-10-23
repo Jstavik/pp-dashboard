@@ -36,6 +36,10 @@ log = logging.getLogger(__name__)
 
 _REGISTRY: list = []
 
+# Po výpočtu delším než tohle (typicky čtení velké historie) se zavolá
+# malloc_trim — viz core/memory.py.
+TRIM_AFTER_S = 0.3
+
 
 def _freeze(obj):
     """Hashovatelná, deterministická reprezentace argumentu pro klíč."""
@@ -177,7 +181,11 @@ class _TTLCache:
                 self.hits += 1
                 return shallow_copy(item[1])
             self.misses += 1
+            t0 = time.monotonic()
             value = self.fn(*args, **kwargs)
+            if time.monotonic() - t0 > TRIM_AFTER_S:
+                from core.memory import trim
+                trim()
             expires = time.time() + self.ttl
             self._mem_put(key, expires, value)
             self._disk_put(key, expires, value)

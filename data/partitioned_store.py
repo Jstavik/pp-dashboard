@@ -40,15 +40,20 @@ def _normalize_arrow_table(table):
     (string vs large_string, timestamp[us/ns] v UTC vs Europe/Prague) —
     jinak by concat_tables selhal. Časové sloupce s tz se převedou na
     timestamp[ns, UTC] (totéž, co dřív dělal pd.to_datetime(..., utc=True)
-    ve volajících), int64/double a null sloupce sjednotí až
+    ve volajících), dictionary sloupce na dictionary<int32, string>;
+    int64/double a null sloupce sjednotí až
     concat_tables(promote_options="permissive")."""
     import pyarrow as pa
     cols, names = [], []
     for i, field in enumerate(table.schema):
         col = table.column(i)
-        if pa.types.is_large_string(field.type):
+        t = field.type
+        if pa.types.is_dictionary(t):
+            if t.value_type != pa.string() or t.index_type != pa.int32():
+                col = col.cast(pa.dictionary(pa.int32(), pa.string()))
+        elif pa.types.is_large_string(t):
             col = col.cast(pa.string())
-        elif pa.types.is_timestamp(field.type) and field.type.tz is not None:
+        elif pa.types.is_timestamp(t) and t.tz is not None:
             col = col.cast(pa.timestamp("ns", tz="UTC"))
         cols.append(col)
         names.append(field.name)
@@ -56,22 +61,29 @@ def _normalize_arrow_table(table):
 
 
 def _read_parquet_arrow(files: list, columns=None, filters=None, categories=None) -> pd.DataFrame:
+    """Sloupce z `categories` se čtou rovnou jako parquet dictionary
+    (read_dictionary) — nikdy se nematerializují jako plné stringy, což
+    drží špičku paměti nízko (entsog_flows celá historie: +40 MB RSS
+    místo ~+500 MB při čtení stringů a následné kategorizaci)."""
     import pyarrow as pa
     import pyarrow.parquet as pq
+    cats = set(categories or [])
     tables = []
     for f in files:
-        cols = None
-        if columns is not None:
-            present = set(pq.read_schema(f).names)
-            cols = [c for c in columns if c in present]
-        t = pq.read_table(f, columns=cols, filters=filters)
+        present = pq.read_schema(f).names
+        cols = [c for c in columns if c in present] if columns is not None else None
+        dict_cols = [c for c in present if c in cats and (cols is None or c in cols)]
+        t = pq.read_table(f, columns=cols, filters=filters, read_dictionary=dict_cols or None)
         if t.num_rows:
             tables.append(_normalize_arrow_table(t))
     if not tables:
         return pd.DataFrame(columns=list(columns) if columns else None)
     table = pa.concat_tables(tables, promote_options="permissive")
-    cats = [c for c in (categories or []) if c in table.schema.names]
-    return table.to_pandas(categories=cats or None, date_as_object=True)
+    del tables
+    df = table.to_pandas(date_as_object=True, split_blocks=True, self_destruct=True)
+    del table
+    pa.default_memory_pool().release_unused()
+    return df
 
 
 def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_to=None, row_filter=None,

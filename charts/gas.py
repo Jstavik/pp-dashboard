@@ -1,6 +1,4 @@
 import numpy as np
-import requests
-import xml.etree.ElementTree as ET
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -421,25 +419,18 @@ def _get_flows_clean(df, target_date):
 
 
 def _fetch_no_flows():
+    """Živé norské nominace {bod: GWh/d} — přes cachovanou
+    data.gassco.fetch_realtime_nominations (TTL 5 min). Dřív tu byl
+    vlastní necachovaný GET na realTimeAtom.xml při KAŽDÉM vykreslení
+    mapy; parsování (název bodu, MSm3 × MSMM3_TO_GWH) je totožné."""
+    from data.gassco import fetch_realtime_nominations
     try:
-        resp = requests.get(
-            "https://umm.gassco.no/realTimeAtom.xml",
-            headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        root = ET.fromstring(resp.text)
-        ns   = {"atom": "http://www.w3.org/2005/Atom"}
-        result = {}
-        for entry in root.findall("atom:entry", ns):
-            title   = entry.findtext("atom:title", "", ns)
-            content = entry.findtext("atom:content", "0", ns)
-            name = (title.replace("Exit Nomination ", "")
-                         .replace(" (MSm3)", "").strip())
-            try:
-                result[name] = float(content) * MSMM3_TO_GWH
-            except Exception:
-                result[name] = 0.0
-        return result
+        df = fetch_realtime_nominations()
     except Exception:
         return {}
+    if df.empty:
+        return {}
+    return dict(zip(df["point"], df["value_GWh"].astype(float)))
 
 
 def fig_gas_map(

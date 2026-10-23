@@ -1,0 +1,8 @@
+{% import "macros.html" as m %}
+<p class="muted small">Zdroj: <strong>ČEPS a.s.</strong> — veřejná data bez autentizace, zpoždění ~1–5 minut. Výroba podle zdroje má granularitu 15 min, ostatní data jsou minutová. Obnova každých 60 s.</p>
+<div class="metric-grid" data-part="ceps-metrics">
+  {% for label, value, delta, up in c.metrics %}
+  <div class="metric"><div class="m-label">{{ label }}</div><div class="m-value">{{ value }}</div>{% if delta %}<div class="m-delta {{ 'up' if up else 'down' if up is not none }}">{{ delta }}</div>{% endif %}</div>
+  {% else %}<p class="muted">ČEPS data nejsou dostupná.</p>{% endfor %}
+</div>
+{{ m.chart("dashboard", 1400) }}

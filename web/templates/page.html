@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} · PP Dashboard{% endblock %}
+{% block content %}
+<div class="page" data-page="{{ page.key }}" data-active="{{ active_tab }}" data-initial-query="{{ initial_query }}">
+  {% if page.key == "elektrina" %}
+  <div id="page-header" data-src="/frag-header/elektrina" data-refresh="60" class="page-header loading-block"></div>
+  {% endif %}
+  <div class="tabbar" role="tablist">
+    {% for tkey in page.tabs %}{% set t = tabs[(page.key, tkey)] %}
+      <button type="button" role="tab" class="tab{{ ' active' if tkey == active_tab }}" data-tab="{{ tkey }}"
+              aria-selected="{{ 'true' if tkey == active_tab else 'false' }}">{{ t.title }}{% if t.refresh %}<span class="live-dot" title="Automatická obnova po {{ t.refresh }} s"></span>{% endif %}</button>
+    {% endfor %}
+  </div>
+  {% for tkey in page.tabs %}
+    <section class="tab-panel" data-tab="{{ tkey }}" role="tabpanel" {{ '' if tkey == active_tab else 'hidden' }}></section>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,6 @@
+{% import "macros.html" as m %}
+{% if c.empty %}<div class="alert alert-warn">ENTSO-G data nejsou dostupná.</div>
+{% else %}
+<form class="controls">{{ m.select("point", c.points, c.point, "Hraniční přechod") }}</form>
+{{ m.chart("point", 280) }}
+{% endif %}

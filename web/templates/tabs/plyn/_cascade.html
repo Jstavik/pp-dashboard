@@ -1,0 +1,5 @@
+{% import "macros.html" as m %}
+{{ m.multiselect("countries", c.countries, c.sel_countries, "🌍 Země") }}
+{{ m.multiselect("directions", c.dirs, c.sel_dirs, "↕ Směr") }}
+{{ m.multiselect("systems", c.systems, c.sel_systems, "🔧 Systém", placeholder="všechny") }}
+{{ m.multiselect("points", c.points, c.sel_points, "📍 Bod", placeholder="všechny") }}

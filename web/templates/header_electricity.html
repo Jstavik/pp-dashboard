@@ -1,0 +1,46 @@
+{% if error or not h %}
+<div class="alert alert-bad">Hlavičku se nepodařilo načíst: {{ error }}</div>
+{% else %}
+<div class="banner banner-{{ h.state }}">
+  <div class="banner-left"><span class="pulse-dot"></span>Systémová odchylka · {{ h.imbal_src }}</div>
+  <div class="banner-center">{{ h.label }}</div>
+  <div class="banner-right">{{ h.now_label }}<span class="fresh-badge">{{ h.fresh }}</span></div>
+</div>
+<div class="kpi-row">
+  <div class="kpi"{% if h.imbal_color %} style="--kpi-accent: {{ h.imbal_color }}"{% endif %}>
+    <div class="kpi-label">Systémová odchylka</div>
+    <div class="kpi-value"{% if h.imbal_color %} style="color: {{ h.imbal_color }}"{% endif %}>{{ "%+.1f"|format(h.imbal) if h.has_imbal else "—" }}<small> MWh</small></div>
+    <div class="kpi-sub">poslední ISP · práh ±{{ h.threshold }} MWh · {{ h.imbal_src }}</div>
+    <div class="spark">{{ h.spark_imbal|safe }}</div>
+  </div>
+  <div class="kpi" style="--kpi-accent: var(--ok)">
+    <div class="kpi-label">Aktuální výroba</div>
+    <div class="kpi-value">{{ h.gen|num if h.has_gen else "—" }}<small> MW</small></div>
+    <div class="kpi-sub">dnes · {{ h.gen_src }}</div>
+    <div class="spark">{{ h.spark_gen|safe }}</div>
+  </div>
+  <div class="kpi" style="--kpi-accent: {{ h.unavail_color }}">
+    <div class="kpi-label">Výpadek kapacit</div>
+    <div class="kpi-value" style="color: {{ h.unavail_color }}">{{ h.unavail|num }}<small> MW</small></div>
+    <div class="kpi-sub">z {{ h.install|num }} MW instalovaných · {{ "%.0f"|format(h.unavail_pct) }} %</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Aktivní odstávky</div>
+    <div class="kpi-value">{{ h.n_pu + h.n_gu }}</div>
+    <div class="kpi-sub">PU {{ h.n_pu }} · GU {{ h.n_gu }}{% if h.n_new %} · <span class="new">+{{ h.n_new }} nových</span>{% endif %}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Cena odchylky (Short)</div>
+    <div class="kpi-value">{{ h.price_short|num if h.price_short is not none else "—" }}<small> €/MWh</small></div>
+    <div class="kpi-sub">CZ imbalance price · ENTSO-E</div>
+  </div>
+</div>
+{% if h.n_new or h.n_ended or h.n_chmw %}
+<div class="alert alert-warn">
+  {% if h.n_new %}🆕 <strong>{{ h.n_new }} nových</strong> odstávek{% endif %}
+  {% if h.n_ended %} · ✅ <strong>{{ h.n_ended }} ukončených</strong>{% endif %}
+  {% if h.n_chmw %} · ⚡ <strong>{{ h.n_chmw }} změn MW</strong>{% endif %}
+</div>
+{% endif %}
+{% if h.entsoe_error %}<div class="alert alert-warn">⚠️ ENTSO-E dočasně nedostupné: {{ h.entsoe_error }}</div>{% endif %}
+{% endif %}
