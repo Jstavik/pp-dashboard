@@ -569,17 +569,30 @@ def update_generation(country: str) -> dict:
 
     end = pd.Timestamp.now(tz=tz) + pd.Timedelta(days=1)
 
-    frames, failed_chunks, n_chunks = [], 0, 0
+    # každý chunk se zapíše hned — přerušený backfill nové země pokračuje
+    # příště od konce uložených dat; časový rozpočet drží běh v mezích
+    budget = float(os.environ.get("PPDASH_GENERATION_BUDGET_S", "1800"))
+    deadline = time.monotonic() + budget
+    rows, n_written, failed_chunks, n_chunks = 0, 0, 0, 0
     cur = start
     while cur < end:
+        if time.monotonic() > deadline:
+            log.info(f"Generation {country}: rozpočet {budget:.0f}s vyčerpán u {cur.date()} — pokračuje příští běh")
+            break
         n_chunks += 1
         chunk_end = min(cur + pd.Timedelta(days=GENERATION_CHUNK_DAYS), end)
         for attempt in range(1, GENERATION_CHUNK_RETRIES + 1):
             try:
                 raw = client.query_generation(country, start=cur, end=chunk_end, psr_type=None)
-                frames.append(_melt_generation(raw, country))
+                part = _melt_generation(raw, country)
+                if not part.empty:
+                    touched = upsert_partitioned(part, base_dir, "date", ["date", "source_type"], fmt="parquet")
+                    rows += sum(n for _, n, w in touched if w)
+                    n_written += sum(1 for _, _, w in touched if w)
                 break
             except Exception as e:
+                if type(e).__name__ == "NoMatchingDataError":
+                    break
                 log.warning(f"  {country} {cur.date()} → {chunk_end.date()}: pokus {attempt}/"
                             f"{GENERATION_CHUNK_RETRIES} selhal — {str(e)[:120]}")
                 if attempt < GENERATION_CHUNK_RETRIES:
@@ -589,17 +602,10 @@ def update_generation(country: str) -> dict:
         cur = chunk_end
         time.sleep(1)
 
-    new_data = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    if new_data.empty:
-        if failed_chunks and failed_chunks == n_chunks:
-            raise UpdateError(f"Generation {country}: všechny chunky selhaly")
-        log.info(f"Generation {country}: žádná nová data")
-        return {"rows": 0, "errors": failed_chunks}
-
-    touched = upsert_partitioned(new_data, base_dir, "date", ["date", "source_type"], fmt="parquet")
-    n, n_written, n_same = _written_summary(touched)
-    log.info(f"Generation {country}: {n} řádků v {n_written} přepsaných měsících ({n_same} beze změny)")
-    return {"rows": n, "errors": failed_chunks}
+    if failed_chunks and failed_chunks == n_chunks:
+        raise UpdateError(f"Generation {country}: všechny chunky selhaly")
+    log.info(f"Generation {country}: {rows} řádků v {n_written} přepsaných měsících")
+    return {"rows": rows, "errors": failed_chunks}
 
 
 def update_outages(country: str) -> dict:

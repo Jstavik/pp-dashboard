@@ -1,0 +1,6 @@
+{% import "macros.html" as m %}
+{% if c.empty %}{% include "tabs/trh-eu/_empty.html" %}{% else %}
+{% include "tabs/trh-eu/_range.html" %}
+{{ m.chart("stack", 440) }}
+{{ m.chart("daily", 360) }}
+{% endif %}

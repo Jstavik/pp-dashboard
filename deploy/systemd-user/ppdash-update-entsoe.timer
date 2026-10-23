@@ -1,0 +1,12 @@
+[Unit]
+Description=PP Dashboard — ENTSO-E 07:10, 13:20 (po výsledcích SDAC) a 19:10 (Praha)
+
+[Timer]
+OnCalendar=*-*-* 07:10:00 Europe/Prague
+OnCalendar=*-*-* 13:20:00 Europe/Prague
+OnCalendar=*-*-* 19:10:00 Europe/Prague
+RandomizedDelaySec=3min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

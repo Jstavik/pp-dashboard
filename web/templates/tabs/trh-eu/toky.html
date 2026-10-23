@@ -1,0 +1,7 @@
+{% import "macros.html" as m %}
+{% if c.empty %}{% include "tabs/trh-eu/_empty.html" %}{% else %}
+{% include "tabs/trh-eu/_range.html" %}
+<form class="controls">{{ m.radio("kind", ["physical", "scheduled"], c.kind, "Graf", {"physical": "fyzické toky", "scheduled": "plánované výměny"}) }}</form>
+{{ m.chart("net", 440) }}
+<div class="card panel">{{ m.section("Saldo za období po sousedech (kladné = import)") }}{{ m.table(c.summary) }}</div>
+{% endif %}

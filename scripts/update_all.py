@@ -15,6 +15,7 @@ Použití:
     gas    = entsog, entsog_allocation, entsog_operational, gie, lng, gassco
     power  = hydro, dap_europe, generation, outages
     live   = ceps, gassco_realtime, gassco_umm (minutový timer — ve výchozím běhu NE)
+    entsoe = entsoe_prices, entsoe_load, entsoe_ws, entsoe_flows (vlastní timer, 3× denně — ve výchozím běhu NE)
     cot    = cot (ICE MiFID II, týdenní — ve výchozím běhu se NEspouští)
     energy_charts
     all    = všechno včetně live a cot
@@ -50,7 +51,7 @@ EXIT_OK, EXIT_FAILED, EXIT_USAGE, EXIT_LOCKED = 0, 1, 2, 3
 
 def _tasks() -> dict:
     """name -> (popis, callable). Importy líně, ať --help/--list nic netahá."""
-    from config import COUNTRIES
+    from config import COUNTRIES, GENERATION_COUNTRIES
     from core import updaters as u
 
     def entsog_operational():
@@ -77,17 +78,17 @@ def _tasks() -> dict:
         from data.ceps import update_ceps_live
         return update_ceps_live()
 
-    def per_country(fn, label):
+    def per_country(fn, label, countries=COUNTRIES):
         def run():
             errors, failed = 0, []
-            for c in COUNTRIES:
+            for c in countries:
                 try:
                     res = fn(c) or {}
                     errors += int(res.get("errors", 0) or 0)
                 except Exception as e:
                     log.error(f"{label} {c}: {type(e).__name__}: {e}")
                     failed.append(c)
-            if failed and len(failed) == len(COUNTRIES):
+            if failed and len(failed) == len(countries):
                 raise u.UpdateError(f"{label}: selhaly všechny země")
             return {"errors": errors + len(failed)}
         return run
@@ -98,6 +99,12 @@ def _tasks() -> dict:
         if res["failed"] and not res["done"]:
             raise u.UpdateError(f"energy_charts: všechna komba selhala ({res['failed'][0]})")
         return {"errors": len(res["failed"])}
+
+    def entsoe(name):
+        def run():
+            from data import entsoe_history as eh
+            return getattr(eh, name)()
+        return run
 
     return {
         "entsog":             ("ENTSO-G fyzické toky (všechny země)", u.update_entsog),
@@ -111,10 +118,15 @@ def _tasks() -> dict:
         "ceps":               ("ČEPS minutová data (odchylka, SVR, zatížení, výroba, toky, cena)", ceps),
         "hydro":              ("Vodní zásobníky (ENTSO-E 16.1.D)", u.update_hydro),
         "dap_europe":         ("DAP Europe (DAP mapa)", u.update_dap_europe),
-        "generation":         ("Výroba podle zdroje (ENTSO-E, všechny země)", per_country(u.update_generation, "Generation")),
+        "generation":         ("Výroba podle zdroje (ENTSO-E, hlavní země EU + Nordic)",
+                               per_country(u.update_generation, "Generation", GENERATION_COUNTRIES)),
         "outages":            ("Odstávky (ENTSO-E, všechny země)", per_country(u.update_outages, "Outages")),
         "energy_charts":      ("Energy-Charts (public_power, forecast, cbet, cbpf, installed, frequency)", energy_charts),
         "cot":                ("ICE MiFID II Commitments of Traders", u.update_cot),
+        "entsoe_prices":      ("ENTSO-E day-ahead ceny všech bidding zón", entsoe("update_prices")),
+        "entsoe_load":        ("ENTSO-E spotřeba skutečná + prognóza D-1", entsoe("update_load")),
+        "entsoe_ws":          ("ENTSO-E prognóza větru a slunce (day-ahead)", entsoe("update_ws_forecast")),
+        "entsoe_flows":       ("ENTSO-E fyzické toky + plánované výměny (CZ, sousedé, Nordic)", entsoe("update_flows")),
     }
 
 
@@ -122,15 +134,18 @@ TASK_ORDER = [
     "ceps", "gassco_realtime", "gassco_umm",
     "entsog", "entsog_allocation", "gie", "hydro", "entsog_operational", "lng",
     "gassco", "dap_europe", "generation", "outages", "energy_charts", "cot",
+    "entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows",
 ]
 LIVE_TASKS = ["ceps", "gassco_realtime", "gassco_umm"]
+ENTSOE_TASKS = ["entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows"]
 GROUPS = {
     "gas":   ["entsog", "entsog_allocation", "entsog_operational", "gie", "lng", "gassco"],
     "power": ["hydro", "dap_europe", "generation", "outages"],
     "live":  list(LIVE_TASKS),
+    "entsoe": list(ENTSOE_TASKS),
     "all":   list(TASK_ORDER),
 }
-DEFAULT_EXCLUDE = {"cot", *LIVE_TASKS}
+DEFAULT_EXCLUDE = {"cot", *LIVE_TASKS, *ENTSOE_TASKS}
 
 
 def resolve(only: list, skip: list) -> list:
@@ -254,7 +269,10 @@ def main(argv=None) -> int:
     from core.settings import history_root
     log.info(f"Data: {history_root()} | úlohy: {', '.join(names)}")
 
-    lock_name = ".live.lock" if set(names) <= set(LIVE_TASKS) else ".update.lock"
+    # vlastní zámky: minutový live běh a ENTSO-E backfill (hodiny) nesmí
+    # blokovat denní běh ani sebe navzájem — zapisují do jiných datasetů
+    lock_name = (".live.lock" if set(names) <= set(LIVE_TASKS)
+                 else ".entsoe.lock" if set(names) <= set(ENTSOE_TASKS) else ".update.lock")
     lock = _Lock(history_root() / lock_name)
     if not args.no_lock and not lock.acquire():
         log.error(f"jiná aktualizace právě běží (zámek {lock.path})")

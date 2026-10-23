@@ -1,0 +1,4 @@
+<form class="controls">
+  {% if c.areas %}{{ m.select("area", c.areas, c.area, "Oblast", c.names) }}{% endif %}
+  {{ m.daterange(c.d_from, c.d_to, "📆 Období", c.presets, c.min_d, c.max_d) }}
+</form>

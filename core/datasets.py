@@ -46,7 +46,12 @@ DATASETS = [
     Dataset("energy_charts", "energy_charts", 36, "timestamp", subdirs=True),
     Dataset("energy_charts.parquet", "energy_charts", 36, "timestamp"),
     Dataset("energy_charts_progress.json", "-", float("inf")),  # jen ruční run_backfill
-    # týdně (timer ppdash-update-cot, so/út)
+    # ENTSO-E (timer ppdash-update-entsoe, 3× denně, data/entsoe_history.py)
+    Dataset("entsoe_prices", "entsoe_prices", 36, "time", subdirs=True),
+    Dataset("entsoe_load", "entsoe_load", 36, "time", subdirs=True),
+    Dataset("entsoe_ws_forecast", "entsoe_ws", 36, "time", subdirs=True),
+    Dataset("entsoe_flows", "entsoe_flows", 36, "time", subdirs=True),
+    # týdně (timer ppdash-update-cot, st + záloha čt/so)
     Dataset("ice_cot.parquet", "cot", 24 * 12, "report_date"),
     Dataset("ice_cot_status.json", "cot", 24 * 11),
 ]
@@ -237,6 +242,40 @@ EXPLORE = [
         (Dim("ds", "Datová sada", partition=True), Dim("series", "Série")),
         "ČEPS SOAP (živě, každou minutu)", "ceps", native="1min", default_days=2,
         default_cat="series", default_filters=(("ds", ("load",)),)),
+    ExploreSpec(
+        "entsoe_prices", "Day-ahead ceny — bidding zóny EU (ENTSO-E)", "Elektřina", "entsoe_prices/*/*.parquet",
+        "CAST(\"time\" AS TIMESTAMPTZ)",
+        (Measure("price", "Cena", "price", "EUR/MWh", "avg", "avg"),),
+        (Dim("zone", "Zóna", "zone", partition=True),),
+        "ENTSO-E 12.1.D Day-ahead Prices (SDAC)", "entsoe_prices", native="15min", align="hour",
+        default_days=30, default_cat="zone", default_filters=(("zone", ("CZ", "DE_LU", "AT", "SK", "PL", "HU")),),
+        description="Hodinové (od 10/2025 čtvrthodinové) ceny všech bidding zón vč. NO1–5, SE1–4, FI, DK1–2, od 2019."),
+    ExploreSpec(
+        "entsoe_load", "Spotřeba skutečná + prognóza (ENTSO-E)", "Elektřina", "entsoe_load/*/*.parquet",
+        "CAST(\"time\" AS TIMESTAMPTZ)",
+        (Measure("mw", "Spotřeba", "mw", "MW", "sum", "avg", power=True),),
+        (Dim("area", "Oblast", "area", partition=True), Dim("kind", "Druh")),
+        "ENTSO-E 6.1.A Actual Total Load, 6.1.B Day-ahead Total Load Forecast", "entsoe_load",
+        native="15min", align="hour", default_days=14, default_cat="kind", default_filters=(("area", ("CZ",)),),
+        description="kind: actual = skutečnost, forecast = prognóza D-1. Země i Nordic zóny."),
+    ExploreSpec(
+        "entsoe_ws", "Prognóza větru a slunce D-1 (ENTSO-E)", "Elektřina", "entsoe_ws_forecast/*/*.parquet",
+        "CAST(\"time\" AS TIMESTAMPTZ)",
+        (Measure("mw", "Prognóza výroby", "mw", "MW", "sum", "avg", power=True),),
+        (Dim("area", "Oblast", "area", partition=True), Dim("psr", "Zdroj")),
+        "ENTSO-E 14.1.D Day-ahead Generation Forecasts for Wind and Solar", "entsoe_ws_forecast",
+        native="15min", align="hour", default_days=14, default_cat="psr", default_filters=(("area", ("DE_LU",)),)),
+    ExploreSpec(
+        "entsoe_flows", "Přeshraniční toky a plánované výměny (ENTSO-E)", "Elektřina", "entsoe_flows/*/*.parquet",
+        "CAST(\"time\" AS TIMESTAMPTZ)",
+        (Measure("mw", "Tok (směr od → do)", "mw", "MW", "sum", "avg", power=True),),
+        (Dim("pair", "Hranice (směr)", "src || '_' || dst", partition=True), Dim("src", "Od"), Dim("dst", "Do"),
+         Dim("kind", "Druh")),
+        "ENTSO-E 12.1.G Physical Flows, 12.1.F Scheduled Commercial Exchanges", "entsoe_flows",
+        native="15min", align="hour", default_days=30, default_cat="dst",
+        default_filters=(("src", ("CZ",)), ("kind", ("physical",))),
+        description="Směrové řady (od → do); export oblasti = filtr Od, import = filtr Do. "
+                    "kind: physical = fyzický tok, scheduled = plánovaná výměna."),
     ExploreSpec(
         "dap_europe", "DAP base/peak — EU (denní)", "Elektřina", "dap_europe/*.parquet",
         "CAST(\"date\" AS TIMESTAMP) AT TIME ZONE 'Europe/Prague'",

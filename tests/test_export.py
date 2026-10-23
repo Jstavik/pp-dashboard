@@ -125,7 +125,8 @@ UNITS = ROOT / "deploy" / "systemd-user"
 def test_user_units():
     names = sorted(p.name for p in UNITS.iterdir())
     assert names == ["ppdash-live.service", "ppdash-live.timer", "ppdash-update-cot.service",
-                     "ppdash-update-cot.timer", "ppdash-update.service", "ppdash-update.timer",
+                     "ppdash-update-cot.timer", "ppdash-update-entsoe.service", "ppdash-update-entsoe.timer",
+                     "ppdash-update.service", "ppdash-update.timer",
                      "ppdash-web.service"]
     for p in UNITS.iterdir():
         text = p.read_text()

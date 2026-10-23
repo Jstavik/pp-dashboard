@@ -1,0 +1,11 @@
+{% import "macros.html" as m %}
+{% if c.empty %}{% include "tabs/trh-eu/_empty.html" %}{% else %}
+{% include "tabs/trh-eu/_range.html" %}
+{% if c.kpi %}<div class="kpi-row">
+  {{ m.kpi("Průměr", c.kpi.avg|num, unit="MW") }}{{ m.kpi("Maximum", c.kpi.peak|num, unit="MW") }}
+  {{ m.kpi("MAE prognózy", c.kpi.mae|num, unit="MW") }}{{ m.kpi("Bias (prognóza − skut.)", c.kpi.bias|num, unit="MW") }}
+  {{ m.kpi("MAPE", c.kpi.mape|fmt(",.1f"), unit="%") }}
+</div>{% endif %}
+{{ m.chart("line", 440) }}
+{{ m.chart("season", 400) }}
+{% endif %}

@@ -337,7 +337,20 @@ COUNTRY_TIMEZONES = {
     "PL":    "Europe/Warsaw",
     "AT":    "Europe/Vienna",
     "SK":    "Europe/Bratislava",
+    "NL":    "Europe/Amsterdam",
+    "BE":    "Europe/Brussels",
+    "IT":    "Europe/Rome",
+    "ES":    "Europe/Madrid",
+    "CH":    "Europe/Zurich",
+    "DK":    "Europe/Copenhagen",
+    "NO":    "Europe/Oslo",
+    "SE":    "Europe/Stockholm",
+    "FI":    "Europe/Helsinki",
 }
+
+# Výroba podle zdroje (úloha generation, Elektřina → Výroba): hlavní země
+# EU + Nordic. Odstávky (outages) zůstávají jen pro COUNTRIES.
+GENERATION_COUNTRIES = COUNTRIES + ["NL", "BE", "IT", "ES", "CH", "DK", "NO", "SE", "FI"]
 
 COUNTRY_NAMES = {
     "FR":    "🇫🇷 Francie",
@@ -347,6 +360,15 @@ COUNTRY_NAMES = {
     "PL":    "🇵🇱 Polsko",
     "AT":    "🇦🇹 Rakousko",
     "SK":    "🇸🇰 Slovensko",
+    "NL":    "🇳🇱 Nizozemsko",
+    "BE":    "🇧🇪 Belgie",
+    "IT":    "🇮🇹 Itálie",
+    "ES":    "🇪🇸 Španělsko",
+    "CH":    "🇨🇭 Švýcarsko",
+    "DK":    "🇩🇰 Dánsko",
+    "NO":    "🇳🇴 Norsko",
+    "SE":    "🇸🇪 Švédsko",
+    "FI":    "🇫🇮 Finsko",
 }
 
 

@@ -201,7 +201,7 @@ def dim_values(key: str, dim_id: str, other_filters: tuple = ()) -> list:
     if d is None:
         return []
     filters = {k: v for k, v in other_filters if k != dim_id}
-    if d.partition and not d.expr:
+    if d.partition:  # hodnota = název podadresáře — bez čtení dat
         dirs = {os.path.basename(os.path.dirname(f)) for f in files_for(spec)}
         return sorted(dirs)
     # filtr ostatních dimenzí; časově jen poslední ~2 roky (rychlost; staré

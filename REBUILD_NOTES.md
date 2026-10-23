@@ -64,6 +64,50 @@ webu a nepřidává ~5 MB WASM. Cena: pivot se ovládá výběrem řádků/sloup
 ne drag&drop. Perspective by šlo později přidat jako „viewer“ jen nad
 výsledkem dotazu (malá tabulka), kdyby byl drag&drop potřeba.
 
+### ENTSO-E naplno (`data/entsoe_history.py`, stránka **Trh EU**)
+| Dataset (history/) | Úloha | Obsah | Od |
+|---|---|---|---|
+| `entsoe_prices/<ZONE>/` | `entsoe_prices` | DA ceny 45 bidding zón: CZ, DE_LU, AT, SK, PL, HU, SI, HR, RO, BG, GR, RS, ME, MK, FR, BE, NL, CH, ES, PT, IE_SEM, IT (7 zón), EE, LV, LT, NO1–5, SE1–4, FI, DK1–2 | 2019 |
+| `entsoe_load/<AREA>/` | `entsoe_load` | skutečná spotřeba (`kind=actual`) + prognóza D-1 (`forecast`), 25 zemí + Nordic zóny | 2019 |
+| `entsoe_ws_forecast/<AREA>/` | `entsoe_ws` | day-ahead prognóza Solar / Wind Onshore / Wind Offshore, 30 oblastí | 2019 |
+| `entsoe_flows/<FROM>_<TO>/` | `entsoe_flows` | fyzické toky (`physical`) + plánované výměny (`scheduled`), 45 hranic × 2 směry: CZ + sousedé, DE/AT/PL/SK hranice, celý Nordic | 2021 |
+| `generation/<CC>/` (rozšířeno) | `generation` | + NL, BE, IT, ES, CH, DK, NO, SE, FI (`config.GENERATION_COUNTRIES`); odstávky dál jen 7 zemí | 2020 |
+
+- Vlastní timer **`ppdash-update-entsoe`** (07:10, 13:20 po výsledcích SDAC,
+  19:10) se zámkem `.entsoe.lock` — běží souběžně s denním během i live,
+  `Nice=10`, `CPUWeight=50`, `MemoryMax=800M`. Ve výchozím běhu `update_all.py`
+  není (skupina `entsoe`).
+- Navazování per řada (u sdílených adresářů actual/forecast a physical/
+  scheduled zvlášť podle `kind`), překryv 2–3 dny kvůli revizím, každý chunk
+  se hned zapíše; zápis do stejného adresáře z více vláken je serializovaný.
+- **Rate limit**: jeden limiter na proces, klouzavé okno 60 s,
+  `PPDASH_ENTSOE_RPM=250` (limit ENTSO-E je 400/min, při překročení blokuje
+  token na 10 min — rezerva pro denní běh hydro/DAP/výroby/odstávek, který
+  jde vlastním klientem sériově), 4 vlákna; 429 → čekání 60 s.
+- **Backfill** rozložený do běhů: `PPDASH_ENTSOE_BUDGET_S=2400` s na úlohu
+  (pak „pokračuje příští běh“), výroba `PPDASH_GENERATION_BUDGET_S=1800` na zemi
+  (nově zapisuje po každém 30denním chunku — dřív až na konci). Odhad prvního
+  backfillu: ceny ~350 req, spotřeba ~400, OZE ~240 (roční chunky), toky
+  ~180 řad × ~70 měsíců ≈ 12 600 req (entsoe-py `query_crossborder_flows`
+  je po měsících) → při 250/min ~1 h čistého času + latence ENTSO-E, tj. několik
+  běhů timeru (1–2 dny). Start lze posunout `PPDASH_ENTSOE_START`,
+  `PPDASH_ENTSOE_FLOWS_START`.
+- Velikost (odhad ze syntetických dat 2024→, reálná budou menší díky
+  opakujícím se hodnotám): ceny ~10 MB/rok, toky ~20 MB/rok, spotřeba ~5 MB/rok.
+- **Stránka Trh EU** (`/trh-eu`): Ceny zón (čáry vybraných zón, heatmapa
+  zóny × dny, tabulka posledního dne base/peak/min/max), Spotřeba a prognóza
+  (skutečnost vs. D-1 + odchylka, MAE/bias/MAPE, porovnání let), Prognóza OZE
+  (skládaná plocha + denní GWh), Přeshraniční toky (saldo po sousedech,
+  fyzické vs. plánované, tabulka GWh). Všechno i v Průzkumníku (4 nové
+  datasety v katalogu). Elektřina → Výroba nabízí nové země.
+- **NEOVĚŘENO** (bez sítě/tokenu): názvy oblastí v entsoe-py pro load
+  `NO`/`SE`/`DK` (country) a `DE_LU` (BZN) — možná bude potřeba `DE`;
+  hranice `CZ–DE_LU` pro fyzické toky (jinak `CZ–DE`); tvar odpovědi
+  `query_wind_and_solar_forecast` u oblastí s offshore; že IT/ES/DK/NO/SE
+  výroba projde `PSR_CODE_BY_SOURCE_TYPE` bez nenamapovaných typů (varuje
+  v logu); reálná rychlost backfillu. Testováno s falešným klientem
+  (`tests/test_entsoe_history.py`).
+
 ## Kolo 2 (2026-10-23): vlastní databáze, živá data, Energy-Charts, export, nasazení bez roota
 
 ### Audit historie (`data/history` → `PPDASH_DATA_DIR/history`)

@@ -1,0 +1,11 @@
+{% import "macros.html" as m %}
+{% if c.empty %}{% include "tabs/trh-eu/_empty.html" %}{% else %}
+<form class="controls">
+  {{ m.multiselect("zones", c.zones, c.sel, "Zóny v grafu", c.names) }}
+  {{ m.daterange(c.d_from, c.d_to, "📆 Období", c.presets, c.min_d, c.max_d) }}
+</form>
+{{ m.chart("line", 440) }}
+{{ m.chart("heat", 600) }}
+{% if c.day_table %}<div class="card panel">{{ m.section("Den dodávky " ~ (c.day|fmt) ~ " — všechny zóny [EUR/MWh]") }}{{ m.table(c.day_table) }}</div>{% endif %}
+<p class="muted small">Zdroj ENTSO-E (SDAC). Od 1. 10. 2025 čtvrthodinové ceny — hodinové/denní hodnoty jsou průměry. Podrobnosti a export v Průzkumníku.</p>
+{% endif %}

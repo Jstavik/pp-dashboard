@@ -1,0 +1,20 @@
+[Unit]
+Description=PP Dashboard — ENTSO-E ceny zón, spotřeba, prognóza OZE, toky (inkrementálně)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/ppdash/env
+Environment=PPDASH_DATA_DIR=@DATA@
+Environment=ARROW_DEFAULT_MEMORY_POOL=system
+Environment=MALLOC_ARENA_MAX=2
+Environment=PYTHONUNBUFFERED=1
+# vlastní zámek .entsoe.lock — běží souběžně s denní aktualizací i live během;
+# backfill má časový rozpočet (PPDASH_ENTSOE_BUDGET_S na úlohu) a pokračuje příště
+ExecStart=@VENV@/bin/python scripts/update_all.py --only entsoe
+TimeoutStartSec=4h
+Nice=10
+CPUWeight=50
+MemoryMax=800M
+SuccessExitStatus=3
+NoNewPrivileges=yes

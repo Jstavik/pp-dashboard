@@ -195,8 +195,10 @@ def _ch_ceps_dashboard(p):
 # ── Výroba / Odstávky (EU) ──────────────────────────────────────────────
 
 def _gen_state(p):
-    country = p.str("country", "CZ", choices=COUNTRIES)
+    from config import GENERATION_COUNTRIES
     sekce = p.str("sekce", "Výroba", choices=["Výroba", "Odstávky"])
+    # výroba je pro víc zemí (GENERATION_COUNTRIES), odstávky jen COUNTRIES
+    country = p.str("country", "CZ", choices=GENERATION_COUNTRIES if sekce == "Výroba" else COUNTRIES)
     pohled = p.str("pohled", "Teď/denní", choices=["Teď/denní", "Letos", "Sezonnost"])
     tz = COUNTRY_TIMEZONES[country]
     today = pd.Timestamp.now(tz=tz).date()
@@ -238,7 +240,9 @@ def _outage_state(p, country: str):
 def vyroba(p):
     from charts.electricity_outages import fig_outages_table
     s = _gen_state(p)
-    ctx = {**s, "countries": COUNTRIES, "country_names": COUNTRY_NAMES, "chart_types": CHART_TYPES}
+    from config import GENERATION_COUNTRIES
+    ctx = {**s, "countries": GENERATION_COUNTRIES if s["sekce"] == "Výroba" else COUNTRIES,
+           "country_names": COUNTRY_NAMES, "chart_types": CHART_TYPES}
     if s["sekce"] == "Výroba":
         if s["pohled"] == "Sezonnost":
             sources = _source_types(s["country"])
