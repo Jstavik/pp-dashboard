@@ -98,15 +98,31 @@ def _asof_day(ts) -> str:
 
 # ── Elektřina ───────────────────────────────────────────────────────────
 
-def daily_da(cc: str, days=60) -> pd.DataFrame:
+def _day_index(col) -> pd.DatetimeIndex:
+    """Časový sloupec → půlnoc dne v Praze bez tz (index denních řad)."""
+    t = pd.to_datetime(col, utc=True).dt.tz_convert(TZ).dt.tz_localize(None).dt.normalize()
+    return pd.DatetimeIndex(t)
+
+
+def _window(days, asof):
+    """(date_from, date_to, cutoff) pro čtení partitionovaných dat k datu asof."""
+    end = pd.Timestamp(asof) if asof is not None else _now().tz_localize(None).normalize()
+    return (end - pd.Timedelta(days=days + 2)).date(), (end + pd.Timedelta(days=2)).date(), end
+
+
+def _cut(s, cutoff):
+    return s[s.index <= cutoff] if len(s) else s
+
+
+def daily_da(cc: str, days=60, asof=None) -> pd.DataFrame:
     """Denní base/peak (EUR/MWh) pro zemi: dap_europe (base/peak přímo),
     doplněné z entsoe_prices (hodinové/15min → base = průměr, peak =
-    8–20 h po–pá místního času)."""
+    8–20 h po–pá místního času). asof = den reportu (bere i dodávku D+1)."""
     from data.partitioned_store import read_partitioned
-    since = (_now() - pd.Timedelta(days=days + 2)).date()
+    since, until, cutoff = _window(days, asof)
     out = pd.DataFrame(columns=["base", "peak"])
     zone = {"DE": "DE_LU"}.get(cc, cc)
-    ep = read_partitioned(history_path(f"entsoe_prices/{zone}"), fmt="parquet", date_from=since)
+    ep = read_partitioned(history_path(f"entsoe_prices/{zone}"), fmt="parquet", date_from=since, date_to=until)
     if not ep.empty:
         t = pd.to_datetime(ep["time"], utc=True).dt.tz_convert(TZ)
         s = pd.Series(ep["price"].values, index=t).sort_index()
@@ -116,7 +132,7 @@ def daily_da(cc: str, days=60) -> pd.DataFrame:
         pk = s[(s.index.hour >= 8) & (s.index.hour < 20) & (s.index.dayofweek < 5)]
         peak = pk.groupby(pk.index.normalize().tz_localize(None)).mean()
         out = pd.DataFrame({"base": base, "peak": peak})
-    dap = read_partitioned(history_path("dap_europe"), fmt="parquet", date_from=since)
+    dap = read_partitioned(history_path("dap_europe"), fmt="parquet", date_from=since, date_to=until)
     if not dap.empty:
         d = dap[dap["cc"] == cc].copy()
         if not d.empty:
@@ -124,41 +140,71 @@ def daily_da(cc: str, days=60) -> pd.DataFrame:
             d = d[~d.index.duplicated(keep="last")][["base", "peak"]]
             out = d.combine_first(out) if not out.empty else d
     out = out.sort_index()
-    return out[out.index >= pd.Timestamp(since)]
+    out = out[(out.index >= pd.Timestamp(since)) & (out.index <= cutoff + pd.Timedelta(days=1))]
+    return out
 
 
-@builder()
-def _da_tiles():
-    tiles = []
-    series = {cc: daily_da(cc) for cc in ("CZ", "DE")}
-    for cc in ("CZ", "DE"):
-        d = series[cc]
-        for col, lbl in (("base", "base"), ("peak", "peak")):
-            s = d[col] if col in d else pd.Series(dtype=float)
-            v, dd, ww, last = _changes(s)
-            tiles.append(tile(f"da_{cc}_{col}", "power", f"DA {cc} {lbl}", v, "EUR/MWh", ",.1f", dd, ww,
-                              spark=_spark(s), href="/elektrina?tab=dap" if cc == "CZ" else "/trh-eu?tab=ceny",
-                              asof=_asof_day(last) if last is not None else None,
-                              sub=f"dodávka {_asof_day(last)}" if last is not None else "data se dotahují"))
-    cz, de = series["CZ"], series["DE"]
-    for col in ("base", "peak"):
-        if col in cz and col in de:
-            sp = (cz[col] - de[col]).dropna()
-        else:
-            sp = pd.Series(dtype=float)
-        v, dd, ww, last = _changes(sp)
-        tiles.append(tile(f"spread_czde_{col}", "power", f"Spread CZ–DE {col}", v, "EUR/MWh", "+,.1f", dd, ww,
-                          spark=_spark(sp), href="/trh-eu?tab=ceny",
-                          asof=_asof_day(last) if last is not None else None,
-                          sub=f"dodávka {_asof_day(last)}" if last is not None else "data se dotahují",
-                          dfmt="+,.1f"))
-    return tiles
+def hourly_da(zone: str, day) -> pd.Series:
+    """Ceny DA pro den dodávky (místní čas) z entsoe_prices."""
+    from data.partitioned_store import read_partitioned
+    day = pd.Timestamp(day)
+    ep = read_partitioned(history_path(f"entsoe_prices/{zone}"), fmt="parquet", date_from=day.date(),
+                          date_to=(day + pd.Timedelta(days=1)).date())
+    if ep.empty:
+        return pd.Series(dtype=float)
+    t = pd.to_datetime(ep["time"], utc=True).dt.tz_convert(TZ)
+    s = pd.Series(ep["price"].values, index=t).sort_index()
+    s = s[~s.index.duplicated(keep="last")]
+    return s[s.index.normalize().tz_localize(None) == day.normalize()]
 
 
-def _ceps_imbalance(hours=30) -> pd.Series:
+def storage_series(cc: str, days=75, asof=None) -> pd.Series:
+    from data.partitioned_store import read_partitioned
+    since, until, cutoff = _window(days, asof)
+    df = read_partitioned(history_path("gie_all_storage"), fmt="csv", date_from=since, date_to=until,
+                          columns=["gasDayStart", "country_code", "full"])
+    if df.empty:
+        return pd.Series(dtype=float)
+    d = df[df["country_code"] == cc]
+    if d.empty:
+        return pd.Series(dtype=float)
+    s = pd.Series(pd.to_numeric(d["full"], errors="coerce").values, index=_day_index(d["gasDayStart"])).sort_index()
+    return _cut(s[~s.index.duplicated(keep="last")], cutoff)
+
+
+def no_flow_series(days=60, asof=None) -> pd.Series:
+    """GASSCO: součet výstupních nominací NCS (mcm/d) — export plynu z Norska."""
+    from data.partitioned_store import read_partitioned
+    since, until, cutoff = _window(days, asof)
+    g = read_partitioned(history_path("gassco_nominations"), fmt="csv", date_from=since, date_to=until)
+    if g.empty:
+        return pd.Series(dtype=float)
+    g = g[g["point"] == "Sum Exit Nominations NCS"]
+    if g.empty:
+        return pd.Series(dtype=float)
+    s = pd.Series(g["value_MSm3"].values, index=_day_index(g["date"])).sort_index()
+    return _cut(s[~s.index.duplicated(keep="last")], cutoff)
+
+
+def lng_series(days=60, asof=None) -> pd.Series:
+    """GIE ALSI: send-out všech terminálů EU (TWh/d)."""
+    from data.partitioned_store import read_partitioned
+    since, until, cutoff = _window(days, asof)
+    lng = read_partitioned(history_path("lng_storage"), fmt="csv", date_from=since, date_to=until,
+                           columns=["gasDayStart", "country_code", "sendOut"])
+    if lng.empty:
+        return pd.Series(dtype=float)
+    lng = lng[lng["country_code"] != "EU"]
+    v = pd.to_numeric(lng["sendOut"], errors="coerce")
+    v = v.where(v.between(0, 3000))  # chybné hodnoty v ALSI (zemi > 3 TWh/d nemá žádný terminál)
+    s = pd.Series(v.values, index=_day_index(lng["gasDayStart"]))
+    return _cut(s.groupby(level=0).sum(min_count=1).sort_index() / 1000, cutoff)
+
+
+def ceps_imbalance(hours=30, asof=None) -> pd.Series:
     from data.ceps import load_ceps_store
-    now = _now()
-    df = load_ceps_store("imbalance", date_from=now - pd.Timedelta(hours=hours), date_to=now)
+    end = _now() if asof is None else pd.Timestamp(asof).tz_localize(TZ) + pd.Timedelta(days=1)
+    df = load_ceps_store("imbalance", date_from=end - pd.Timedelta(hours=hours), date_to=end)
     if df.empty:
         return pd.Series(dtype=float)
     s = df.groupby("time")["value"].mean().sort_index()
@@ -166,87 +212,12 @@ def _ceps_imbalance(hours=30) -> pd.Series:
     return s
 
 
-@builder(live=True)
-def _ceps_tile():
-    s = _ceps_imbalance()
-    if s.empty:
-        return [tile("ceps_imb", "power", "ČEPS odchylka", None, "MW", ",.0f", href="/elektrina",
-                     sub="data se dotahují")]
-    now = _now()
-    last = s.iloc[-1]
-    today = s[s.index >= now.normalize()]
-    yday = s[(s.index >= now.normalize() - pd.Timedelta(days=1)) & (s.index < now.normalize())]
-    dd = (today.mean() - yday.mean()) if not today.empty and not yday.empty else None
-    spark = s[s.index >= now - pd.Timedelta(hours=6)].resample("5min").mean()
-    state = "bad" if last < -80 else "warn" if last > 80 else "ok"
-    sub = f"průměr dnes {today.mean():+,.0f} MW".replace(",", " ") if not today.empty else ""
-    return [tile("ceps_imb", "power", "ČEPS odchylka", last, "MW", "+,.0f", dd, None, spark=_spark(spark, 72),
-                 href="/elektrina", asof=s.index[-1].strftime("%d.%m.%Y %H:%M"), sub=sub, state=state)]
+_ceps_imbalance = ceps_imbalance
 
 
-# ── Plyn ────────────────────────────────────────────────────────────────
-
-@builder()
-def _storage_tiles():
-    from data.partitioned_store import read_partitioned
-    since = (_now() - pd.Timedelta(days=75)).date()
-    df = read_partitioned(history_path("gie_all_storage"), fmt="csv", date_from=since,
-                          columns=["gasDayStart", "country_code", "full", "gasInStorage"])
-    tiles = []
-    for cc, lbl in (("EU", "Zásobníky EU"), ("CZ", "Zásobníky CZ"), ("DE", "Zásobníky DE")):
-        s = pd.Series(dtype=float)
-        if not df.empty:
-            d = df[df["country_code"] == cc]
-            if not d.empty:
-                idx = pd.to_datetime(d["gasDayStart"], utc=True).dt.tz_convert(TZ).dt.tz_localize(None).dt.normalize()
-                s = pd.Series(pd.to_numeric(d["full"], errors="coerce").values, index=idx).sort_index()
-                s = s[~s.index.duplicated(keep="last")]
-        v, dd, ww, last = _changes(s)
-        tiles.append(tile(f"stor_{cc}", "gas", lbl, v, "%", ",.1f", dd, ww, dd_unit="p.b.",
-                          spark=_spark(s, 45), href="/plyn?tab=zasobniky",
-                          asof=_asof_day(last) if last is not None else None,
-                          sub=f"plynárenský den {_asof_day(last)}" if last is not None else "data se dotahují",
-                          dfmt="+,.2f"))
-    return tiles
-
-
-@builder()
-def _flow_tiles():
-    from data.partitioned_store import read_partitioned
-    since = (_now() - pd.Timedelta(days=60)).date()
-    tiles = []
-    g = read_partitioned(history_path("gassco_nominations"), fmt="csv", date_from=since)
-    s = pd.Series(dtype=float)
-    if not g.empty:
-        g = g[g["point"] == "Sum Exit Nominations NCS"]
-        if not g.empty:
-            idx = pd.to_datetime(g["date"], utc=True).dt.tz_convert(TZ).dt.tz_localize(None).dt.normalize()
-            s = pd.Series(g["value_MSm3"].values, index=idx).sort_index()
-            s = s[~s.index.duplicated(keep="last")]
-    v, dd, ww, last = _changes(s)
-    tiles.append(tile("flow_no", "gas", "Export plynu NO", v, "mcm/d", ",.1f", dd, ww, spark=_spark(s),
-                      href="/plyn?tab=gassco", asof=_asof_day(last) if last is not None else None,
-                      sub="GASSCO nominace výstupů NCS" if last is not None else "data se dotahují"))
-    lng = read_partitioned(history_path("lng_storage"), fmt="csv", date_from=since,
-                           columns=["gasDayStart", "country_code", "sendOut"])
-    s = pd.Series(dtype=float)
-    if not lng.empty:
-        lng = lng[lng["country_code"] != "EU"]
-        idx = pd.to_datetime(lng["gasDayStart"], utc=True).dt.tz_convert(TZ).dt.tz_localize(None).dt.normalize()
-        s = pd.Series(pd.to_numeric(lng["sendOut"], errors="coerce").values, index=idx).groupby(level=0).sum(min_count=1)
-        s = s.sort_index() / 1000  # GWh/d → TWh/d
-    v, dd, ww, last = _changes(s)
-    tiles.append(tile("lng_eu", "gas", "LNG send-out EU", v, "TWh/d", ",.2f", dd, ww, spark=_spark(s),
-                      href="/plyn?tab=lng", asof=_asof_day(last) if last is not None else None,
-                      sub="GIE ALSI, součet terminálů" if last is not None else "data se dotahují"))
-    return tiles
-
-
-# ── Počasí ──────────────────────────────────────────────────────────────
-
-def temp_anomaly(region: str):
-    """(řada denních odchylek od normálu za 30 dní, průměrná odchylka
-    předpovědi ECMWF na 7 dní, datum posledního pozorování)."""
+def temp_anomaly(region: str, asof=None, days=30):
+    """(řada denních odchylek teploty od normálu, průměrná odchylka předpovědi
+    ECMWF na 7 dní od asof, datum posledního pozorování)."""
     from data import weather as wx
     from data.partitioned_store import read_partitioned
     daily = read_partitioned(os.path.join(wx.DAILY_DIR, region), fmt="parquet")
@@ -260,69 +231,46 @@ def temp_anomaly(region: str):
     loc = pd.to_datetime(daily["date"], utc=True).dt.tz_convert(TZ)
     s = pd.Series(daily["value"].values - loc.dt.dayofyear.map(m).values,
                   index=loc.dt.tz_localize(None).dt.normalize()).sort_index()
-    s = s[~s.index.duplicated(keep="last")].tail(30)
+    s = s[~s.index.duplicated(keep="last")]
+    _, _, cutoff = _window(days, asof)
+    s = _cut(s, cutoff).tail(days)
     fc_anom = None
     fcd = read_partitioned(os.path.join(wx.FC_DAILY_DIR, region), fmt="parquet",
-                           date_from=(_now() - pd.Timedelta(days=3)).date())
+                           date_from=(cutoff - pd.Timedelta(days=3)).date(), date_to=(cutoff + pd.Timedelta(days=1)).date())
     if not fcd.empty:
-        fcd = fcd[(fcd["var"] == "temp")]
-        fcd = fcd[fcd["issued"] == fcd["issued"].max()]
-        mod = fcd[fcd["model"].astype(str).str.startswith("ecmwf_ifs")]
-        fcd = mod if not mod.empty else fcd
-        dl = pd.to_datetime(fcd["date"], utc=True).dt.tz_convert(TZ)
-        today = _now().normalize()
-        sel = (dl >= today) & (dl < today + pd.Timedelta(days=7))
-        if sel.any():
-            fc_anom = float((fcd["value"][sel].values - dl[sel].dt.dayofyear.map(m).values).mean())
+        fcd = fcd[fcd["var"] == "temp"]
+        iss = pd.to_datetime(fcd["issued"], utc=True).dt.tz_convert(TZ).dt.tz_localize(None)
+        fcd = fcd[iss <= cutoff + pd.Timedelta(days=1)]
+        if not fcd.empty:
+            fcd = fcd[fcd["issued"] == fcd["issued"].max()]
+            mod = fcd[fcd["model"].astype(str).str.startswith("ecmwf_ifs")]
+            fcd = mod if not mod.empty else fcd
+            dl = pd.to_datetime(fcd["date"], utc=True).dt.tz_convert(TZ).dt.tz_localize(None)
+            sel = (dl >= cutoff) & (dl < cutoff + pd.Timedelta(days=7))
+            if sel.any():
+                fc_anom = float((fcd["value"][sel].values - dl[sel].dt.dayofyear.map(m).values).mean())
     return s, fc_anom, (s.index[-1] if not s.empty else None)
 
 
-@builder()
-def _weather_tiles():
-    tiles = []
-    for region, lbl in (("CZ", "Teplota CZ vs. normál"), ("DE", "Teplota DE vs. normál")):
-        s, fc, last = temp_anomaly(region)
-        v, dd, ww, _ = _changes(s)
-        sub = (f"předpověď 7 dní {fc:+.1f} °C".replace(".", ",") if fc is not None else "") if last is not None \
-            else "data se dotahují"
-        state = None if v is None else ("warn" if abs(v) >= 3 else None)
-        tiles.append(tile(f"temp_{region}", "weather", lbl, v, "°C", "+,.1f", dd, ww, spark=_spark(s),
-                          href=f"/pocasi?tab=teplota&region={region}", asof=_asof_day(last) if last is not None else None,
-                          sub=sub, state=state))
-    return tiles
-
-
-# ── Nordic ──────────────────────────────────────────────────────────────
-
-@builder()
-def _hydro_tile():
+def hydro_no(asof=None):
+    """NVE celé Norsko: (odchylka plnění od mediánu v p.b., plnění %) jako týdenní řady."""
     from data.nordic import load_nve, load_nve_stats
     nve, st = load_nve(), load_nve_stats()
     if nve.empty:
-        return [tile("hydro_no", "nordic", "Hydro NO vs. medián", None, "p.b.", href="/nordic?tab=hydro",
-                     sub="data se dotahují")]
+        return pd.Series(dtype=float), pd.Series(dtype=float)
     d = nve[nve["area"] == "NO"].sort_values(["iso_year", "iso_week"])
+    idx = _day_index(d["date"])
+    fill = pd.Series(d["filling_pct"].values, index=idx)
     if st.empty:
         dev = pd.Series(dtype=float)
     else:
         med = st[st["area"] == "NO"].set_index("iso_week")["median_pct"]
-        dev = pd.Series(d["filling_pct"].values - d["iso_week"].map(med).values,
-                        index=pd.to_datetime(d["date"], utc=True).dt.tz_convert(TZ).dt.tz_localize(None).dt.normalize())
-    last = d.iloc[-1]
-    fill = pd.Series(d["filling_pct"].values, index=pd.to_datetime(d["date"], utc=True).dt.tz_localize(None).dt.normalize())
-    _, _, ww, _ = _changes(fill)
-    v = dev.dropna().iloc[-1] if not dev.dropna().empty else None
-    return [tile("hydro_no", "nordic", "Hydro NO vs. medián", v, "p.b.", "+,.1f", None, None,
-                 spark=_spark(dev, 26), href="/nordic?tab=hydro",
-                 asof=f"týden {int(last['iso_week'])}/{int(last['iso_year'])}",
-                 sub=f"plnění {last['filling_pct']:.1f} %, w/w {ww:+.1f} p.b.".replace(".", ",") if ww is not None
-                 else f"plnění {last['filling_pct']:.1f} %".replace(".", ","),
-                 state=None if v is None else ("bad" if v < -10 else "warn" if v < -5 else None))]
+        dev = pd.Series(d["filling_pct"].values - d["iso_week"].map(med).values, index=idx)
+    _, _, cutoff = _window(0, asof)
+    return _cut(dev, cutoff), _cut(fill, cutoff)
 
 
-# ── Trh (CoT) ───────────────────────────────────────────────────────────
-
-def cot_mm_net() -> pd.Series:
+def cot_mm_net(asof=None) -> pd.Series:
     """TTF (ICE Endex TFM) — net pozice Investment Funds (≈ managed money), TWh."""
     path = history_path("ice_cot.parquet")
     if not os.path.exists(path):
@@ -338,7 +286,150 @@ def cot_mm_net() -> pd.Series:
         return pd.Series(dtype=float)
     s = (pv["Long"] - pv["Short"]) / 1e6  # MWh → TWh
     s.index = pd.to_datetime(s.index)
-    return s.sort_index()
+    _, _, cutoff = _window(0, asof)
+    return _cut(s.sort_index(), cutoff)
+
+
+# ── katalog klíčových čísel (dlaždice i reporty) ────────────────────────
+# key → (skupina, popisek, jednotka, formát, jednotka změny, href, fn(asof) → Series)
+
+def _da(cc, col):
+    return lambda asof: (lambda d: d[col] if col in d else pd.Series(dtype=float))(daily_da(cc, asof=asof))
+
+
+def _spread(col):
+    def fn(asof):
+        cz, de = daily_da("CZ", asof=asof), daily_da("DE", asof=asof)
+        return (cz[col] - de[col]).dropna() if col in cz and col in de else pd.Series(dtype=float)
+    return fn
+
+
+KEY_NUMBERS = {
+    "da_CZ_base": ("power", "DA CZ base", "EUR/MWh", ",.1f", "EUR/MWh", "/elektrina?tab=dap", _da("CZ", "base")),
+    "da_CZ_peak": ("power", "DA CZ peak", "EUR/MWh", ",.1f", "EUR/MWh", "/elektrina?tab=dap", _da("CZ", "peak")),
+    "da_DE_base": ("power", "DA DE base", "EUR/MWh", ",.1f", "EUR/MWh", "/trh-eu?tab=ceny", _da("DE", "base")),
+    "da_DE_peak": ("power", "DA DE peak", "EUR/MWh", ",.1f", "EUR/MWh", "/trh-eu?tab=ceny", _da("DE", "peak")),
+    "spread_czde_base": ("power", "Spread CZ–DE base", "EUR/MWh", "+,.1f", "EUR/MWh", "/trh-eu?tab=ceny",
+                         _spread("base")),
+    "spread_czde_peak": ("power", "Spread CZ–DE peak", "EUR/MWh", "+,.1f", "EUR/MWh", "/trh-eu?tab=ceny",
+                         _spread("peak")),
+    "stor_EU": ("gas", "Zásobníky EU", "%", ",.1f", "p.b.", "/plyn?tab=zasobniky", lambda a: storage_series("EU", asof=a)),
+    "stor_CZ": ("gas", "Zásobníky CZ", "%", ",.1f", "p.b.", "/plyn?tab=zasobniky", lambda a: storage_series("CZ", asof=a)),
+    "stor_DE": ("gas", "Zásobníky DE", "%", ",.1f", "p.b.", "/plyn?tab=zasobniky", lambda a: storage_series("DE", asof=a)),
+    "flow_no": ("gas", "Export plynu NO", "mcm/d", ",.1f", "mcm/d", "/plyn?tab=gassco", lambda a: no_flow_series(asof=a)),
+    "lng_eu": ("gas", "LNG send-out EU", "TWh/d", ",.2f", "TWh/d", "/plyn?tab=lng", lambda a: lng_series(asof=a)),
+    "temp_CZ": ("weather", "Teplota CZ vs. normál", "°C", "+,.1f", "°C", "/pocasi?tab=teplota&region=CZ",
+                lambda a: temp_anomaly("CZ", a)[0]),
+    "temp_DE": ("weather", "Teplota DE vs. normál", "°C", "+,.1f", "°C", "/pocasi?tab=teplota&region=DE",
+                lambda a: temp_anomaly("DE", a)[0]),
+    "hydro_no": ("nordic", "Hydro NO vs. medián", "p.b.", "+,.1f", "p.b.", "/nordic?tab=hydro", lambda a: hydro_no(a)[0]),
+    "cot_ttf": ("market", "CoT TTF fondy net", "TWh", "+,.1f", "TWh", "/cot?tab=ttf", lambda a: cot_mm_net(a)),
+}
+
+
+def key_numbers(asof=None) -> list:
+    """[{key, label, unit, value, dd, ww, date}] k datu asof (pro reporty)."""
+    rows = []
+    for key, (group, label, unit, fmt, dunit, href, fn) in KEY_NUMBERS.items():
+        try:
+            s = fn(asof)
+        except Exception as e:
+            log.warning("klíčové číslo %s: %s", key, e)
+            s = pd.Series(dtype=float)
+        v, dd, ww, last = _changes(s)
+        if key in ("hydro_no", "cot_ttf"):  # týdenní data: d/d nedává smysl
+            dd = None
+        rows.append({"key": key, "group": group, "label": label, "unit": unit, "fmt": fmt, "dunit": dunit,
+                     "value": _f(v), "dd": _f(dd), "ww": _f(ww), "date": last, "series": s})
+    return rows
+
+
+@builder()
+def _da_tiles():
+    tiles = []
+    for key in ("da_CZ_base", "da_CZ_peak", "da_DE_base", "da_DE_peak", "spread_czde_base", "spread_czde_peak"):
+        group, label, unit, fmt, dunit, href, fn = KEY_NUMBERS[key]
+        s = fn(None)
+        v, dd, ww, last = _changes(s)
+        tiles.append(tile(key, group, label, v, unit, fmt, dd, ww, spark=_spark(s), href=href,
+                          asof=_asof_day(last) if last is not None else None,
+                          sub=f"dodávka {_asof_day(last)}" if last is not None else "data se dotahují",
+                          dfmt="+,.1f"))
+    return tiles
+
+
+@builder(live=True)
+def _ceps_tile():
+    s = ceps_imbalance()
+    if s.empty:
+        return [tile("ceps_imb", "power", "ČEPS odchylka", None, "MW", ",.0f", href="/elektrina",
+                     sub="data se dotahují")]
+    now = _now()
+    last = s.iloc[-1]
+    today = s[s.index >= now.normalize()]
+    yday = s[(s.index >= now.normalize() - pd.Timedelta(days=1)) & (s.index < now.normalize())]
+    dd = (today.mean() - yday.mean()) if not today.empty and not yday.empty else None
+    spark = s[s.index >= now - pd.Timedelta(hours=6)].resample("5min").mean()
+    state = "bad" if last < -80 else "warn" if last > 80 else "ok"
+    sub = f"průměr dnes {today.mean():+,.0f} MW".replace(",", " ") if not today.empty else ""
+    return [tile("ceps_imb", "power", "ČEPS odchylka", last, "MW", "+,.0f", dd, None, spark=_spark(spark, 72),
+                 href="/elektrina", asof=s.index[-1].strftime("%d.%m.%Y %H:%M"), sub=sub, state=state)]
+
+
+def _simple_tiles(keys, sub_fn, n=30, dfmt=None):
+    out = []
+    for key in keys:
+        group, label, unit, fmt, dunit, href, fn = KEY_NUMBERS[key]
+        s = fn(None)
+        v, dd, ww, last = _changes(s)
+        out.append(tile(key, group, label, v, unit, fmt, dd, ww, dd_unit=dunit, spark=_spark(s, n), href=href,
+                        asof=_asof_day(last) if last is not None else None,
+                        sub=sub_fn(last) if last is not None else "data se dotahují", dfmt=dfmt))
+    return out
+
+
+@builder()
+def _storage_tiles():
+    return _simple_tiles(["stor_EU", "stor_CZ", "stor_DE"], lambda d: f"plynárenský den {_asof_day(d)}", 45, "+,.2f")
+
+
+@builder()
+def _flow_tiles():
+    return (_simple_tiles(["flow_no"], lambda d: "GASSCO nominace výstupů NCS")
+            + _simple_tiles(["lng_eu"], lambda d: "GIE ALSI, součet terminálů"))
+
+
+@builder()
+def _weather_tiles():
+    tiles = []
+    for region in ("CZ", "DE"):
+        key = f"temp_{region}"
+        group, label, unit, fmt, dunit, href, _fn = KEY_NUMBERS[key]
+        s, fc, last = temp_anomaly(region)
+        v, dd, ww, _ = _changes(s)
+        sub = (f"předpověď 7 dní {fc:+.1f} °C".replace(".", ",") if fc is not None else "") if last is not None \
+            else "data se dotahují"
+        state = None if v is None else ("warn" if abs(v) >= 3 else None)
+        tiles.append(tile(key, group, label, v, unit, fmt, dd, ww, spark=_spark(s), href=href,
+                          asof=_asof_day(last) if last is not None else None, sub=sub, state=state))
+    return tiles
+
+
+@builder()
+def _hydro_tile():
+    dev, fill = hydro_no()
+    if fill.empty:
+        return [tile("hydro_no", "nordic", "Hydro NO vs. medián", None, "p.b.", href="/nordic?tab=hydro",
+                     sub="data se dotahují")]
+    _, _, ww, last = _changes(fill)
+    v = dev.dropna().iloc[-1] if not dev.dropna().empty else None
+    wk = last.isocalendar()
+    sub = f"plnění {fill.iloc[-1]:.1f} %".replace(".", ",")
+    if ww is not None:
+        sub += f", w/w {ww:+.1f} p.b.".replace(".", ",")
+    return [tile("hydro_no", "nordic", "Hydro NO vs. medián", v, "p.b.", "+,.1f", None, None,
+                 spark=_spark(dev, 26), href="/nordic?tab=hydro", asof=f"týden {wk[1]}/{wk[0]}", sub=sub,
+                 state=None if v is None else ("bad" if v < -10 else "warn" if v < -5 else None))]
 
 
 @builder()

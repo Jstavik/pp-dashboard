@@ -1,0 +1,26 @@
+{% import "macros.html" as m %}
+<form class="controls no-print">
+  {{ m.date("date", c.date, "📆 K datu", None, c.today) }}
+  {% if c.views %}{{ m.multiselect("views", c.views|map(attribute="name")|list, c.sel_views, "Přidat pohledy z Průzkumníku", placeholder="žádné") }}{% endif %}
+  <div class="field"><span class="field-label">Export</span>
+    <div class="report-actions">
+      <button type="button" class="btn primary" onclick="window.print()" title="Tisk / Uložit jako PDF z prohlížeče (A4)">🖨 Tisk</button>
+      <a class="btn" href="/api/report/{{ c.kind }}.pdf?{{ c.query }}" title="PDF ze serveru (grafy jako obrázky)">PDF</a>
+      <a class="btn" href="/api/report/{{ c.kind }}.xlsx?{{ c.query }}" title="Všechna čísla v Excelu (list na sekci)">XLSX</a>
+    </div>
+  </div>
+</form>
+{% if not c.views %}<p class="muted small no-print">Tip: v Průzkumníku si uložte pohled („Uložit pohled“) — tady ho pak přidáte do reportu.</p>{% endif %}
+<div class="report-doc" data-eager>
+  <header class="report-head">
+    <h2>{{ c.title }} <span class="muted">· {{ c.period }}</span></h2>
+    <p class="muted small">PP Dashboard · vytvořeno {{ c.created }} (Praha) · ceny EUR/MWh, časy Europe/Prague</p>
+  </header>
+  {% for sid, title in c.sections %}
+  <section class="report-sec">{{ m.chart(sid, 300 if sid != "klicova" else 200) }}</section>
+  {% endfor %}
+  {% for v in c.sel_view_objs %}
+  <section class="report-sec"><div class="frag" data-page="pruzkumnik" data-tab="pohled" data-query="{{ v.query }}">
+    <h3 class="section-title">Pohled: {{ v.name }}</h3>{{ m.chart("main", 340) }}</div></section>
+  {% endfor %}
+</div>

@@ -54,6 +54,8 @@
   </div>
   {% if c.views %}<ul class="views-list">
     {% for v in c.views %}<li><a href="/pruzkumnik?tab=pohled&{{ v.query }}">{{ v.name }}</a> <span class="muted small">{{ v.created }}</span>
+      <a class="small" href="/reporty?tab=denni&views={{ v.name|urlencode }}" title="Přidat do denního reportu">+ denní report</a>
+      <a class="small" href="/reporty?tab=tydenni&views={{ v.name|urlencode }}" title="Přidat do týdenního reportu">+ týdenní</a>
       <button type="button" class="link-btn" data-view-delete="{{ v.name }}" title="Smazat pohled">✕</button></li>{% endfor %}
   </ul>{% endif %}
 </div>

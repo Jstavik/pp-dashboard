@@ -12,8 +12,8 @@ NAV = [
     ("nordic", "Nordic", "🌊", [("nordic", "Nordic", "/nordic")]),
     ("pocasi", "Počasí", "🌦", [("pocasi", "Počasí", "/pocasi")]),
     ("pruzkumnik", "Průzkumník", "🔎", [("pruzkumnik", "Průzkumník", "/pruzkumnik")]),
-    ("reporty", "Reporty", "📋", [("report-denni", "Denní report", "/reporty/denni"),
-                                 ("report-tydenni", "Týdenní report", "/reporty/tydenni"),
+    ("reporty", "Reporty", "📋", [("reporty", "Denní report", "/reporty?tab=denni"),
+                                 ("reporty", "Týdenní report", "/reporty?tab=tydenni"),
                                  ("report", "Report plynu (záložky)", "/report")]),
 ]
 

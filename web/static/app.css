@@ -337,3 +337,26 @@ pre.sql { white-space: pre-wrap; font-size: .72rem; max-height: 320px; overflow:
   .feed:not(.expanded) .feed-item:nth-child(n+16) { display: none; }
   .feed-more { display: block; }
 }
+
+/* ── Reporty + tisk (A4) ─────────────────────────────────────────────── */
+.report-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.report-actions .btn { text-decoration: none; padding: 6px 12px; }
+.report-doc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.report-head h2 { margin: 0 0 2px; font-size: 1.25rem; }
+.report-head { border-bottom: 2px solid var(--accent); margin-bottom: 10px; padding-bottom: 6px; }
+.report-sec .chart-card { box-shadow: none; }
+@page { size: A4 portrait; margin: 12mm; }
+@media print {
+  :root { --bg: #fff; --surface: #fff; --border: #ccd3db; }
+  body { background: #fff; font-size: 11px; }
+  .topbar, .tabbar, .footer, .no-print, .chart-tools, .controls { display: none !important; }
+  .container { padding: 0; max-width: none; }
+  .report-doc { border: 0; padding: 0; }
+  .report-sec { break-inside: avoid; page-break-inside: avoid; }
+  .chart-card { border: 0; margin-bottom: 6px; }
+  .tab-panel[hidden] { display: none !important; }
+  a { color: inherit; text-decoration: none; }
+}
+.chart-card.is-empty .chart-msg { min-height: 90px; }
+.report-doc .chart-card.is-empty { opacity: .8; }
+@media print { .report-doc .chart-card.is-empty { display: none; } }

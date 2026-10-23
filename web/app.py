@@ -49,7 +49,7 @@ pd.set_option("mode.copy_on_write", True)
 
 def _load_tabs() -> None:
     # Import modulů záložek = registrace (pořadí určuje pořadí v navigaci)
-    from web.tabs import electricity, gas, report, energy_charts, market, nordic, weather, explorer, ceps_outages, cot  # noqa: F401
+    from web.tabs import electricity, gas, report, energy_charts, market, nordic, weather, explorer, ceps_outages, cot, reports  # noqa: F401
 
 
 _load_tabs()
@@ -205,6 +205,10 @@ def chart(request: Request, page_key: str, tab_key: str, chart_id: str):
         return JSONResponse({"error": f"Graf se nepodařilo vytvořit ({type(e).__name__}: {e})"})
     if fig is None:
         return JSONResponse({"empty": True})
+    from web.consistency import apply_entity_colors, is_empty
+    if is_empty(fig):
+        return JSONResponse({"empty": True})
+    apply_entity_colors(fig)
     payload = '{"config": %s, "figure": %s}' % (json.dumps(spec.config), _figure_json(fig))
     log.debug("graf %s/%s/%s %.2fs", page_key, tab_key, chart_id, time.monotonic() - t0)
     return Response(payload, media_type="application/json")
@@ -272,6 +276,32 @@ async def explorer_view_save(request: Request):
 def explorer_view_delete(name: str):
     from web.tabs.explorer import delete_view
     return {"views": delete_view(name)}
+
+
+@app.get("/api/report/{kind}.{fmt}")
+def report_export(request: Request, kind: str, fmt: str):
+    """Denní/týdenní report jako PDF (kaleido + Pillow) nebo XLSX (všechna čísla)."""
+    from core import report
+    from web.tabs.explorer import load_views
+    if kind not in report.KINDS or fmt not in ("pdf", "xlsx"):
+        raise HTTPException(404, "Report neexistuje")
+    p = Params.from_request(request)
+    asof = report.parse_date(p.str("date"))
+    names = set(p.list("views", []))
+    views = [(v["name"], v["query"]) for v in load_views() if v["name"] in names]
+    filename = f"{kind}_report_{asof:%Y%m%d}.{fmt}"
+    if fmt == "xlsx":
+        body = report.to_xlsx(kind, asof, views)
+        mt = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        try:
+            body = report.to_pdf(kind, asof, views)
+        except report.PdfUnavailable as e:
+            return HTMLResponse(f"<!doctype html><meta charset=utf-8><p style='font:16px system-ui;padding:24px'>"
+                                f"{e}</p><p style='font:16px system-ui;padding:0 24px'><a href='javascript:history.back()'>"
+                                f"← zpět</a></p>", status_code=503)
+        mt = "application/pdf"
+    return Response(body, media_type=mt, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.get("/api/csv/{name}")

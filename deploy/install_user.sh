@@ -65,6 +65,13 @@ if [ "$(cat "$VENV/.ppdash-req" 2>/dev/null || true)" != "$REQ_HASH" ]; then
 else
   say "závislosti beze změny"
 fi
+# Chrome pro export reportů do PDF (kaleido) — bez roota do uživatelského
+# adresáře; selhání nevadí (zbývá tisk z prohlížeče → PDF)
+if [ -x "$VENV/bin/plotly_get_chrome" ] && [ ! -f "$VENV/.ppdash-chrome" ]; then
+  say "stahuji Chrome pro export PDF (jednou, ~150 MB)"
+  if "$VENV/bin/plotly_get_chrome" -y >/dev/null 2>&1; then touch "$VENV/.ppdash-chrome"
+  else say "  Chrome se nepodařilo stáhnout — PDF z webu nepůjde, tisk z prohlížeče ano"; fi
+fi
 
 # ── 2. adresáře + env ────────────────────────────────────────────────────
 mkdir -p "$DATA/history" "$DATA/cache" "$CONF_DIR" "$UNIT_DIR"

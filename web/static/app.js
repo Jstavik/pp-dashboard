@@ -47,6 +47,7 @@
     L.paper_bgcolor = "rgba(0,0,0,0)";
     L.plot_bgcolor = "rgba(0,0,0,0)";
     L.font = Object.assign({}, L.font || {}, { color: c.text });
+    if (!L.separators) L.separators = ",\u00a0";  // česky: 1 234,5
     delete L.width;
     L.autosize = true;
     // osy bez explicitního nastavení by si vzaly bílou mřížku ze šablony plotly_white
@@ -125,16 +126,40 @@
     if (window.Plotly && el._ppFig) { try { Plotly.purge(el); } catch (e) { /* noop */ } }
     el._ppFig = null;
     var card = el.closest(".chart-card");
-    if (card) card.classList.remove("has-fig");
+    if (card) { card.classList.remove("has-fig"); card.classList.add("is-empty"); }
+    el.style.minHeight = "";
     el.innerHTML = '<div class="chart-msg ' + (cls || "") + '"></div>';
     el.firstChild.textContent = text;
   }
 
+  // česká lokalizace Plotly: názvy měsíců/dnů, desetinná čárka, mezera v tisících
+  var csLocaleDone = false;
+  function ensureCsLocale() {
+    if (csLocaleDone || !window.Plotly) return;
+    csLocaleDone = true;
+    try {
+      Plotly.register({
+        moduleType: "locale", name: "cs",
+        dictionary: { "Autoscale": "Automatické měřítko", "Zoom in": "Přiblížit", "Zoom out": "Oddálit",
+                      "Reset axes": "Obnovit osy", "Download plot as a png": "Stáhnout jako PNG" },
+        format: {
+          days: ["neděle", "pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota"],
+          shortDays: ["ne", "po", "út", "st", "čt", "pá", "so"],
+          months: ["leden", "únor", "březen", "duben", "květen", "červen", "červenec", "srpen", "září", "říjen", "listopad", "prosinec"],
+          shortMonths: ["led", "úno", "bře", "dub", "kvě", "čvn", "čvc", "srp", "zář", "říj", "lis", "pro"],
+          date: "%d.%m.%Y", decimal: ",", thousands: "\u00a0"
+        }
+      });
+    } catch (e) { /* starší plotly.js — zůstane angličtina */ }
+  }
+
   function renderFig(el, payload) {
-    var cfg = Object.assign({ responsive: true, displaylogo: false, displayModeBar: false }, payload.config || {});
+    ensureCsLocale();
+    var cfg = Object.assign({ responsive: true, displaylogo: false, displayModeBar: false, locale: "cs" }, payload.config || {});
     el._ppFig = payload.figure; el._ppCfg = cfg;
     var card = el.closest(".chart-card");
-    if (card) card.classList.add("has-fig");
+    if (card) { card.classList.add("has-fig"); card.classList.remove("is-empty"); }
+    el.style.minHeight = "";  // výška podle figury (min-height jen jako místo při načítání)
     var f = themed(payload.figure);
     if (!el.querySelector(".plot-container")) el.innerHTML = "";
     return Plotly.react(el, f.data || [], f.layout || {}, cfg).then(function () { bindCrossFilter(el); });
@@ -219,7 +244,7 @@
         if (el._ppUrl !== url) return;  // mezitím přišel novější požadavek
         el.classList.remove("loading");
         if (payload.error) return showMsg(el, payload.error, "err");
-        if (payload.empty || !payload.figure) return showMsg(el, "Data nejsou dostupná.");
+        if (payload.empty || !payload.figure) return showMsg(el, "Data se dotahují — pro tento výběr zatím nejsou k dispozici.");
         return whenPlotly().then(function () { return renderFig(el, payload); });
       })
       .catch(function (err) {
@@ -237,7 +262,8 @@
   function initCharts(root) {
     root.querySelectorAll(".chart[data-chart]").forEach(function (el) {
       addExportTools(el);
-      if (observer) observer.observe(el); else loadChart(el);
+      // report (tisk) potřebuje všechny grafy hned, ne až při skrolování
+      if (observer && !el.closest("[data-eager]")) observer.observe(el); else loadChart(el);
     });
   }
 
@@ -261,7 +287,7 @@
     var h = Math.max(el.clientHeight || 0, (f.layout && f.layout.height) || 0, 360);
     var w = Math.max(EXPORT_W, el.clientWidth || 0);
     f.layout.width = w; f.layout.height = h; f.layout.autosize = false;
-    Plotly.toImage({ data: f.data, layout: f.layout, config: { staticPlot: true } },
+    Plotly.toImage({ data: f.data, layout: f.layout, config: { staticPlot: true, locale: "cs" } },
                    { format: format, width: w, height: h, scale: format === "png" ? 3 : 1 })
       .then(function (url) {
         var a = document.createElement("a");
@@ -530,6 +556,29 @@
     });
     activate(active);
   }
+
+  // tisk: grafy přepočítat na šířku stránky (A4) a po tisku zpět
+  function resizeAll() {
+    if (!window.Plotly) return;
+    document.querySelectorAll(".chart").forEach(function (el) {
+      if (el._ppFig) { try { Plotly.Plots.resize(el); } catch (e) { /* noop */ } }
+    });
+  }
+  window.addEventListener("beforeprint", function () {
+    document.documentElement.setAttribute("data-print-theme", document.documentElement.getAttribute("data-theme") || "");
+    document.documentElement.setAttribute("data-theme", "light");
+    rethemeAll(); resizeAll();
+  });
+  if (window.matchMedia) {
+    var mq = matchMedia("print");
+    var onMq = function (e) { if (e.matches) resizeAll(); };
+    if (mq.addEventListener) mq.addEventListener("change", onMq); else if (mq.addListener) mq.addListener(onMq);
+  }
+  window.addEventListener("afterprint", function () {
+    var t = document.documentElement.getAttribute("data-print-theme");
+    if (t) document.documentElement.setAttribute("data-theme", t);
+    rethemeAll(); resizeAll();
+  });
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
   else start();
