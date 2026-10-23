@@ -47,10 +47,12 @@ from datetime import date
 
 import pandas as pd
 import requests
-import streamlit as st
 
-COT_PATH = "data/history/ice_cot.parquet"
-STATUS_PATH = "data/history/ice_cot_status.json"
+from core.cache import ttl_cache
+from core.settings import history_path
+
+COT_PATH = history_path("ice_cot.parquet")
+STATUS_PATH = history_path("ice_cot_status.json")
 STATUS_MAX_ENTRIES = 500
 
 BASE_URL = "https://www.ice.com/marketdata/publicdocs/mifid/commitment_of_traders"
@@ -271,12 +273,12 @@ def _append_status(entry: dict) -> None:
 
 # ── public read API ──────────────────────────────────────────────────────
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@ttl_cache(ttl=3600, maxsize=2)
 def load_ice_cot() -> pd.DataFrame:
     return _read_existing()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@ttl_cache(ttl=300, maxsize=2)
 def load_ice_cot_status() -> pd.DataFrame:
     attempts = _load_status_raw()
     cols = ["timestamp", "venue", "report_date", "success", "http_status",

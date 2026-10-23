@@ -1,12 +1,13 @@
 import glob
 import os
 import pandas as pd
-import streamlit as st
 
+from core.cache import ttl_cache
+from core.settings import history_path
 from data.partitioned_store import read_snapshot
 
-OUTAGES_PATH = "data/history/outages.parquet"
-OUTAGES_SNAPSHOTS_DIR = "data/history/outages_snapshots"
+OUTAGES_PATH = history_path("outages.parquet")
+OUTAGES_SNAPSHOTS_DIR = history_path("outages_snapshots")
 
 _EMPTY_ACTIVE_COLS = ["country", "plant_type", "production_resource_name", "start", "end",
                        "nominal_power", "avail_qty", "unavail_mw", "docstatus", "businesstype"]
@@ -21,7 +22,7 @@ def _empty_outages(now: pd.Timestamp) -> dict:
     }
 
 
-@st.cache_data(ttl=300)
+@ttl_cache(ttl=300, maxsize=8)
 def load_outages(country: str) -> dict:
     """Odstávky pro danou zemi — čte sdílený data/history/outages.parquet
     (JEDEN soubor pro všechny země, bez filtru na plant_type — všechny
@@ -58,7 +59,7 @@ def load_outages(country: str) -> dict:
     return {"active": active, "daily_by_type": daily_by_type, "now": now}
 
 
-@st.cache_data(ttl=3600)
+@ttl_cache(ttl=3600, maxsize=16)
 def load_outages_snapshot(country: str, days_back: int) -> pd.DataFrame:
     """Denní snapshot odstávek pro danou zemi z před days_back dny — pro
     charts.electricity_outages.fig_outages_delta. Čte
@@ -73,7 +74,7 @@ def load_outages_snapshot(country: str, days_back: int) -> pd.DataFrame:
     return df[df["country"] == country].copy()
 
 
-@st.cache_data(ttl=3600)
+@ttl_cache(ttl=3600, maxsize=8)
 def list_available_snapshot_dates(country: str) -> list:
     """Seřazený seznam dat (staré → nové), pro která existuje denní
     snapshot odstávek obsahující data dané země

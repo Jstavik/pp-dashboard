@@ -66,8 +66,8 @@ investigation — only the 6 retained ones are summarized here):
   disallowed, but chunking yearly keeps each request's response size
   predictable and keeps resumability granular).
 - public_power_forecast: real historical range too, but has an extra
-  production_type axis (solar/wind_onshore/wind_offshore/load/wind) fetched
-  as 5 separate calls per country — forecast_type is fixed to "day-ahead"
+  production_type axis (solar/wind_onshore/wind_offshore/load) fetched
+  as 4 separate calls per country — forecast_type is fixed to "day-ahead"
   (the one confirmed to hold real historical values). Each production_type
   is tracked as its own progress-key "<country>:<production_type>" (the
   parquet/partitioned geo_key column still just holds the plain country
@@ -82,7 +82,9 @@ investigation — only the 6 retained ones are summarized here):
   interval too long" beyond that), 1-second native resolution, data starts
   2022-05-01. See STORAGE above for how this module handles the volume.
 """
+import glob
 import json
+import logging
 import os
 import time
 from datetime import date, datetime, timedelta
@@ -90,14 +92,17 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import pyarrow.parquet as pq
 import requests
-import streamlit as st
 
+from core.cache import ttl_cache
+from core.settings import history_path
 from data.partitioned_store import read_partitioned, upsert_partitioned
 
+logger = logging.getLogger(__name__)
+
 BASE_URL = "https://api.energy-charts.info"
-DATA_PATH = "data/history/energy_charts.parquet"
-PROGRESS_PATH = "data/history/energy_charts_progress.json"
-PARTITIONED_ROOT = "data/history/energy_charts"
+DATA_PATH = history_path("energy_charts.parquet")
+PROGRESS_PATH = history_path("energy_charts_progress.json")
+PARTITIONED_ROOT = history_path("energy_charts")
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "pp-dashboard/1.0 (+https://github.com/Jstavik/pp-dashboard)"})
@@ -112,8 +117,13 @@ TIDY_COLUMNS = [
 # 3-day window, resampled to 5-min on the way in)
 ENDPOINTS = {
     "public_power":           {"param_style": "start_end", "param_name": "country"},
+    # "wind" (dřív 5. production_type) vyřazen: je to jen součet
+    # wind_onshore + wind_offshore (odvoditelný) a pro CZ server na tenhle
+    # dotaz trvale zavírá spojení bez odpovědi (RemoteDisconnected →
+    # ConnectionError v progress.json), zatímco wind_onshore pro CZ vrací
+    # 200 s nulou řádků — viz REBUILD_NOTES.md.
     "public_power_forecast":  {"param_style": "start_end", "param_name": "country",
-                                "production_types": ["solar", "wind_onshore", "wind_offshore", "load", "wind"],
+                                "production_types": ["solar", "wind_onshore", "wind_offshore", "load"],
                                 "extra_params": {"forecast_type": "day-ahead"}},
     "cbet":                   {"param_style": "start_end", "param_name": "country"},
     "cbpf":                   {"param_style": "start_end", "param_name": "country"},
@@ -129,6 +139,19 @@ FLAT_ENDPOINTS = {"installed_power", "frequency"}
 DEFAULT_PACE_S = 1.0
 FREQUENCY_RESAMPLE = "5min"
 
+# Síťové chyby (ConnectionError/RemoteDisconnected, Timeout) — kolik pokusů
+# a jaký základ exponenciálního backoffu. Dřív _get žádnou výjimku
+# nechytal: jedno zahozené spojení ukončilo celé (endpoint, země) combo
+# hned v prvním roce a označilo ho done=False.
+NETWORK_RETRIES = 3
+NETWORK_BACKOFF_S = 5
+
+# Inkrementální update: o kolik dní před konec uložených dat se začíná
+# znovu stahovat (pozdní revize posledních hodnot) a odkud začít, když
+# pro combo zatím nejsou žádná data (plná historie je úkol run_backfill).
+INCREMENTAL_OVERLAP_DAYS = 2
+INCREMENTAL_FRESH_START_DAYS = 7
+
 
 def _partitioned_base_dir(endpoint: str) -> str:
     return f"{PARTITIONED_ROOT}/{endpoint}"
@@ -137,12 +160,25 @@ def _partitioned_base_dir(endpoint: str) -> str:
 # ── low-level HTTP ─────────────────────────────────────────────────────────
 
 def _get(path: str, params: dict, pace: float = DEFAULT_PACE_S):
-    """GET with Retry-After-respecting 429 backoff. Returns (status, body)
-    where body is the parsed JSON dict, or the raw text for non-JSON /
-    error responses."""
+    """GET with Retry-After-respecting 429 backoff and NETWORK_RETRIES
+    retries (exponential backoff) on connection errors / timeouts. Returns
+    (status, body) where body is the parsed JSON dict, or the raw text for
+    non-JSON / error responses. Raises the last network error if all
+    retries fail."""
     url = f"{BASE_URL}{path}"
+    attempt = 0
     while True:
-        resp = SESSION.get(url, params=params, timeout=30)
+        try:
+            resp = SESSION.get(url, params=params, timeout=60)
+        except (requests.ConnectionError, requests.Timeout) as e:
+            attempt += 1
+            if attempt >= NETWORK_RETRIES:
+                raise
+            wait = NETWORK_BACKOFF_S * 2 ** (attempt - 1)
+            logger.warning("energy-charts %s %s: %s — pokus %d/%d, čekám %ds",
+                           path, params, type(e).__name__, attempt, NETWORK_RETRIES, wait)
+            time.sleep(wait)
+            continue
         if resp.status_code == 429:
             ra = int(resp.headers.get("retry-after", "10"))
             time.sleep(ra + 1)
@@ -435,27 +471,172 @@ def run_backfill(countries: list, start_date: str = "2018-01-01",
     return results
 
 
+# ── incremental update (scripts/update_all.py --only energy_charts) ────────
+
+def _last_timestamp_partitioned(endpoint: str, geo_key: str, series_ids: list = None):
+    """Poslední uložený timestamp pro (endpoint, geo_key[, series]) —
+    prochází měsíční soubory od nejnovějšího a čte jen 3 sloupce
+    s filtrem při čtení, takže se nenačítá celá historie."""
+    files = sorted(glob.glob(os.path.join(_partitioned_base_dir(endpoint), "*.parquet")))
+    filters = [("geo_key", "==", geo_key)]
+    if series_ids:
+        filters.append(("series_id", "in", list(series_ids)))
+    for f in reversed(files):
+        t = pq.read_table(f, columns=["timestamp"], filters=filters)
+        if t.num_rows:
+            return pd.to_datetime(t.column("timestamp").to_pandas(), utc=True).max()
+    return None
+
+
+def _last_timestamp_flat(endpoint: str, geo_key: str):
+    if not os.path.exists(DATA_PATH):
+        return None
+    t = pq.read_table(DATA_PATH, columns=["timestamp"],
+                      filters=[("endpoint", "==", endpoint), ("geo_key", "==", geo_key)])
+    if not t.num_rows:
+        return None
+    return pd.to_datetime(t.column("timestamp").to_pandas(), utc=True).max()
+
+
+def _fetch_range_chunks(endpoint: str, param_name: str, geo_value: str, geo_type: str,
+                         start: date, end: date, extra_params: dict = None):
+    """Jako _fetch_start_end_years, ale pro libovolný rozsah [start, end]
+    rozsekaný na kusy po nejvýš jednom kalendářním roce."""
+    extra_params = extra_params or {}
+    cur = start
+    while cur <= end:
+        chunk_end = min(date(cur.year, 12, 31), end)
+        status, body = _get(f"/v2/{endpoint}", {
+            param_name: geo_value, "start": cur.isoformat(), "end": chunk_end.isoformat(), **extra_params,
+        })
+        label = f"{cur.isoformat()}..{chunk_end.isoformat()}"
+        if status == 200:
+            yield label, _rows_from_body(body, endpoint, geo_value, geo_type), None
+        elif status in (400, 404):
+            yield label, [], None
+        else:
+            yield label, [], f"HTTP {status}: {str(body)[:300]}"
+        cur = chunk_end + timedelta(days=1)
+
+
+def _incremental_start(last, today: date, overlap_days: int = INCREMENTAL_OVERLAP_DAYS) -> date:
+    if last is None:
+        return today - timedelta(days=INCREMENTAL_FRESH_START_DAYS)
+    return min(last.date() - timedelta(days=overlap_days), today)
+
+
+def update_energy_charts(countries: list = ("cz",), endpoints: list = None, today: date = None,
+                         log=logger.info) -> dict:
+    """Denní inkrementální update — na rozdíl od run_backfill se neřídí
+    progress.json, ale KONCEM ULOŽENÝCH DAT pro každé combo: stáhne
+    [poslední timestamp - INCREMENTAL_OVERLAP_DAYS, dnes] (u forecastu
+    do zítřka — day-ahead), po chuncích, a každý chunk hned zapíše
+    (upsert/merge s dedupem → idempotentní, přerušení nic neztratí).
+    frequency: 3denní chunky, rovnou převzorkované na 5 min.
+
+    Vrací {"done": [(combo, rows)], "failed": [(combo, error)]}."""
+    today = today or date.today()
+    endpoint_names = endpoints if endpoints is not None else list(ENDPOINTS.keys())
+    results = {"done": [], "failed": []}
+
+    for endpoint in endpoint_names:
+        cfg = ENDPOINTS[endpoint]
+        style = cfg["param_style"]
+        param_name = cfg["param_name"]
+
+        if style == "chunk3day":
+            geo = cfg["fixed_geo_key"]
+            combos = [(geo, None)]
+        elif endpoint == "public_power_forecast":
+            combos = [(c, p) for c in countries for p in cfg["production_types"]]
+        else:
+            combos = [(c, None) for c in countries]
+
+        for geo_value, ptype in combos:
+            combo = f"{endpoint}::{geo_value}" + (f":{ptype}" if ptype else "")
+            rows_total, error = 0, None
+            try:
+                extra = dict(cfg.get("extra_params", {}))
+                if ptype:
+                    extra["production_type"] = ptype
+                if style == "single_call":
+                    gen = _fetch_single_call(endpoint, param_name, geo_value, geo_value, "country", extra)
+                elif style == "chunk3day":
+                    last = _last_timestamp_flat(endpoint, geo_value)
+                    start = _incremental_start(last, today, overlap_days=0)
+                    gen = _fetch_chunk3day(endpoint, param_name, geo_value, geo_value, "region", start, today)
+                else:
+                    if endpoint in PARTITIONED_ENDPOINTS:
+                        last = _last_timestamp_partitioned(endpoint, geo_value, [ptype] if ptype else None)
+                    else:
+                        last = _last_timestamp_flat(endpoint, geo_value)
+                    start = _incremental_start(last, today)
+                    end = today + timedelta(days=1) if endpoint == "public_power_forecast" else today
+                    gen = _fetch_range_chunks(endpoint, param_name, geo_value, "country", start, end, extra)
+                for label, chunk_rows, chunk_error in gen:
+                    if chunk_error:
+                        error = chunk_error
+                        break
+                    if chunk_rows:
+                        _write_rows(endpoint, chunk_rows)
+                        rows_total += len(chunk_rows)
+            except Exception as e:
+                error = f"{type(e).__name__}: {e}"
+            if error:
+                log(f"[energy_charts] {combo}: CHYBA {error}")
+                results["failed"].append((combo, error))
+            else:
+                log(f"[energy_charts] {combo}: {rows_total} řádků")
+                results["done"].append((combo, rows_total))
+    return results
+
+
 # ── public read API ─────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_energy_charts(endpoint: str = None, geo_key: str = None) -> pd.DataFrame:
+@ttl_cache(ttl=3600, maxsize=8)
+def load_energy_charts(endpoint: str = None, geo_key: str = None, date_from=None, date_to=None,
+                       series_ids: tuple = None) -> pd.DataFrame:
+    """Tidy data (TIDY_COLUMNS). date_from/date_to omezí čtení měsíčních
+    souborů i řádků, geo_key a series_ids se filtrují už při čtení —
+    BEZ nich by public_power pro všechny země a roky znamenalo GB v paměti
+    (2.5M řádků jen pro CZ ≈ 1.2 GB jako object). Volající ve webu by
+    měl vždy zadat endpoint + geo_key + okno."""
     frames = []
     endpoints_to_read = [endpoint] if endpoint else list(ENDPOINTS.keys())
+    filters = []
+    if geo_key is not None:
+        filters.append(("geo_key", "==", geo_key))
+    if series_ids:
+        filters.append(("series_id", "in", list(series_ids)))
 
     for ep in endpoints_to_read:
         if ep in PARTITIONED_ENDPOINTS:
-            df = read_partitioned(_partitioned_base_dir(ep))
+            df = read_partitioned(_partitioned_base_dir(ep), date_from=date_from, date_to=date_to,
+                                  filters=filters or None,
+                                  categories=["endpoint", "geo_key", "geo_type", "series_id",
+                                              "series_name", "unit", "resolution"])
             if not df.empty:
                 frames.append(df)
 
-    if os.path.exists(DATA_PATH):
-        flat = pd.read_parquet(DATA_PATH)
+    if os.path.exists(DATA_PATH) and (endpoint is None or endpoint in FLAT_ENDPOINTS):
+        flat_filters = list(filters)
         if endpoint is not None:
-            flat = flat[flat["endpoint"] == endpoint]
+            flat_filters.append(("endpoint", "==", endpoint))
+        flat = pq.read_table(DATA_PATH, filters=flat_filters or None).to_pandas()
         if not flat.empty:
             frames.append(flat)
 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=TIDY_COLUMNS)
-    if geo_key is not None:
-        df = df[df["geo_key"] == geo_key]
+    if df.empty:
+        return df.reset_index(drop=True)
+    if date_from is not None or date_to is not None:
+        ts = pd.to_datetime(df["timestamp"], utc=True)
+        mask = pd.Series(True, index=df.index)
+        if date_from is not None:
+            lo = pd.Timestamp(date_from)
+            mask &= ts >= (lo.tz_localize("UTC") if lo.tzinfo is None else lo)
+        if date_to is not None:
+            hi = pd.Timestamp(date_to)
+            mask &= ts <= (hi.tz_localize("UTC") if hi.tzinfo is None else hi)
+        df = df[mask]
     return df.reset_index(drop=True)

@@ -1,8 +1,20 @@
-import os
 import requests
 import pandas as pd
-import streamlit as st
 from datetime import date, timedelta
+
+from core.cache import ttl_cache
+from core.settings import history_path
+
+ENTSOG_FLOWS_DIR = history_path("entsog_flows")
+
+# Sloupce, které appka z fyzických toků reálně čte (adjacentSystemsLabel,
+# unit, flowStatus se nikde nepoužívají) — čtení jen jich šetří paměť.
+FLOW_COLUMNS = [
+    "countryKey", "countryLabel", "directionKey", "adjacentSystemsKey",
+    "pointsNames", "indicator", "value_GWh", "date",
+]
+FLOW_CATEGORY_COLUMNS = ["countryKey", "countryLabel", "directionKey",
+                         "adjacentSystemsKey", "pointsNames", "indicator"]
 
 POINTS_CONFIG = {
     "Brandov/Waidhaus (DE)": {"lat": 50.608, "lon": 13.388, "flag": "🇩🇪"},
@@ -22,6 +34,7 @@ def _short_name(s: str) -> str:
     if "Final" in s:                        return "Koneční spotřebitelé"
     return s[:35]
 
+@ttl_cache(ttl=300, disk=True)
 def fetch_entsog_flows(days: int = 90) -> pd.DataFrame:
     def _impl(d: int) -> pd.DataFrame:
         end   = date.today()
@@ -49,10 +62,10 @@ def fetch_entsog_flows(days: int = 90) -> pd.DataFrame:
         except Exception:
             return pd.DataFrame()
 
-    return st.cache_data(ttl=300, show_spinner=False)(_impl)(days)
+    return _impl(days)
 
 
-def load_entsog_history(date_from=None, date_to=None) -> pd.DataFrame:
+def load_entsog_history(date_from=None, date_to=None, categorical: bool = False) -> pd.DataFrame:
     """Fyzické toky ENTSO-G (data/history/entsog_flows/, měsíčně
     partitionované). date_from/date_to (volitelné) omezí čtení na měsíční
     soubory v daném rozsahu (viz partitioned_store.read_partitioned) —
@@ -68,13 +81,25 @@ def load_entsog_history(date_from=None, date_to=None) -> pd.DataFrame:
     historii, ne jen okno. Volající v app.py proto volá bez argumentů
     (plná historie) jen když je to skutečně potřeba (session_state flag
     nastavený příslušným checkboxem/tlačítkem), jinak s oknovaným
-    date_from (viz ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS)."""
-    return st.cache_data(ttl=300, show_spinner=False)(_load_entsog_history)(date_from, date_to)
+    date_from (viz ENTSOG_FLOWS_DEFAULT_WINDOW_MONTHS).
+
+    categorical=True (web) — textové sloupce jako pandas category: celá
+    historie od 2020 má pak ~35 MB místo ~1 GB (ověřeno na 1.5M řádcích).
+    Volající s categorical=True by měl před předáním do charts/ převést
+    vyfiltrovaný podvýběr zpět na object (core.frames.decat), protože
+    groupby přes category sloupce defaultně vrací všechny kombinace
+    kategorií (observed=False)."""
+    return _load_entsog_history(date_from, date_to, categorical)
 
 
-def _load_entsog_history(date_from=None, date_to=None) -> pd.DataFrame:
+@ttl_cache(ttl=300, maxsize=4)
+def _load_entsog_history(date_from=None, date_to=None, categorical: bool = False) -> pd.DataFrame:
     from data.partitioned_store import read_partitioned
-    df = read_partitioned("data/history/entsog_flows", fmt="parquet", date_from=date_from, date_to=date_to)
+    df = read_partitioned(
+        ENTSOG_FLOWS_DIR, fmt="parquet", date_from=date_from, date_to=date_to,
+        columns=FLOW_COLUMNS,
+        categories=FLOW_CATEGORY_COLUMNS if categorical else [],
+    )
     if not df.empty:
         # entsog_flows teď sdílí úložiště i s Allocation (viz
         # scripts/update_gas_history.py::update_entsog_allocation) —

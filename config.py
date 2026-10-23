@@ -1,9 +1,11 @@
-import os
 import pandas as pd
-import streamlit as st
+
+from core.settings import entsoe_token
 
 # ── KONFIGURACE ──────────────────────────────────────────────────
-ENTSOE_TOKEN = os.environ.get("ENTSOE_TOKEN") or st.secrets.get("ENTSOE_TOKEN")
+# Tokeny jen z env / ~/.config/ppdash/env (viz core/settings.py); fallback
+# na st.secrets zůstává jen kvůli dočasnému spouštění staré app.py.
+ENTSOE_TOKEN = entsoe_token()
 THRESHOLD    = 20          # MWh — práh DEFICIT / SURPLUS
 PEAK_HOURS   = set(range(8, 20))
 DG_BASE      = "https://api.deltagreen.cz/api/proteus/external/v1"
@@ -398,7 +400,9 @@ def sparkline_svg(values, color="#1565C0", width=140, height=28):
 
 
 def data_status_row(sources: list) -> None:
-    """Zobrazí řádek se stavem datových zdrojů."""
+    """Zobrazí řádek se stavem datových zdrojů (jen stará Streamlit app —
+    web má vlastní web/status.py)."""
+    import streamlit as st
     parts = []
     for s in sources:
         name  = s["name"]

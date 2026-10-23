@@ -1,3 +1,6 @@
 __pycache__/
 .streamlit/secrets.toml
 scratch/
+.cache/
+.pytest_cache/
+*.egg-info/

@@ -1,13 +1,15 @@
 import pandas as pd
-import streamlit as st
 
+from core.cache import ttl_cache
+from core.settings import history_path
 from data.partitioned_store import read_partitioned
 
 _EMPTY_GENERATION_COLS = ["date", "country", "source_type", "psr_code", "mw", "year", "day_of_year"]
 
 
-@st.cache_data(ttl=3600)
-def load_generation(country: str, start: pd.Timestamp = None, end: pd.Timestamp = None) -> pd.DataFrame:
+@ttl_cache(ttl=3600, maxsize=8)
+def load_generation(country: str, start: pd.Timestamp = None, end: pd.Timestamp = None,
+                    source_type: str = None) -> pd.DataFrame:
     """Výroba podle zdroje pro danou zemi — long formát (date, country,
     source_type, psr_code, mw) ze sjednoceného partitionovaného úložiště
     (data/history/generation/<country>/), doplněné o year/day_of_year pro
@@ -19,11 +21,17 @@ def load_generation(country: str, start: pd.Timestamp = None, end: pd.Timestamp 
     filtr na úrovni měsíčních souborů, ne až po přečtení celého
     datasetu) — jinak by start/end omezovaly jen VÝSLEDEK, ne špičkovou
     paměť při čtení, což byl celý smysl date-scopingu (viz
-    entsog_operational.py::load_eu_operational)."""
+    entsog_operational.py::load_eu_operational).
+
+    source_type (volitelné) — načte jen jeden zdroj (pyarrow filtr při
+    čtení). Pro sezonní graf (celá historie, ale jen jeden zdroj) to na
+    DE_LU znamená desítky MB místo stovek."""
     from config import COUNTRY_TIMEZONES
 
-    df = read_partitioned(f"data/history/generation/{country}", fmt="parquet",
-                           date_from=start, date_to=end)
+    df = read_partitioned(history_path("generation", country), fmt="parquet",
+                           date_from=start, date_to=end,
+                           filters=[("source_type", "==", source_type)] if source_type else None,
+                           categories=["country", "source_type", "psr_code"])
     if df.empty:
         return pd.DataFrame(columns=_EMPTY_GENERATION_COLS)
 

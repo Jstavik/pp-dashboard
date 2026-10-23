@@ -1,10 +1,10 @@
-import os
 import pandas as pd
-import streamlit as st
 
+from core.cache import ttl_cache
+from core.settings import history_path
 from data.partitioned_store import read_partitioned
 
-DAP_DIR = "data/history/dap_europe"
+DAP_DIR = history_path("dap_europe")
 
 DAP_COUNTRIES = {
     "CZ": "CZ", "DE": "DE_LU", "FR": "FR", "AT": "AT", "SK": "SK",
@@ -37,7 +37,7 @@ CENTERS = {
 }
 
 
-@st.cache_data(ttl=300)
+@ttl_cache(ttl=300, maxsize=2)
 def load_dap_europe() -> pd.DataFrame:
     df = read_partitioned(DAP_DIR, fmt="parquet")
     if df.empty:
@@ -46,7 +46,7 @@ def load_dap_europe() -> pd.DataFrame:
     return df[df["date"] == last].copy()
 
 
-@st.cache_data(ttl=300)
+@ttl_cache(ttl=300, maxsize=2)
 def load_dap_europe_all() -> pd.DataFrame:
     """Jako load_dap_europe(), ale bez oříznutí na poslední den — pro
     date picker v interaktivním DAP Mapa tabu (app.py::tab_dap_mapa),

@@ -1,12 +1,27 @@
+import logging
 import requests, time, os
 from datetime import date
 import pandas as pd
-import streamlit as st
 
 from data.partitioned_store import read_partitioned, upsert_partitioned
 from config import ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS
+from core.cache import ttl_cache
+from core.settings import history_path
 
-OPERATIONAL_DIR = "data/history/entsog_operational"
+log = logging.getLogger(__name__)
+
+OPERATIONAL_DIR = history_path("entsog_operational")
+
+# Sloupce, které UI (Nominace, Kapacity) skutečně čte — id/periodFrom/
+# periodTo/value/periodType/pointKey/pointType/flowStatus se nepoužívají.
+# Načítat jen tyhle + category dtype = zlomek paměti (celý dataset má
+# ~4.6M řádků, jako object sloupce ~4.8 GB).
+UI_COLUMNS = [
+    "indicator", "operatorKey", "operatorLabel", "pointLabel", "directionKey",
+    "unit", "value_GWh", "periodFrom_dt", "periodTo_dt", "lastUpdateDateTime",
+]
+UI_CATEGORY_COLUMNS = ["indicator", "operatorKey", "operatorLabel", "pointLabel",
+                       "directionKey", "unit"]
 
 # ENTSO-G /operationaldata BEZ pointKey/pointLabel filtru vrací najednou
 # všechny body Evropy. Konsolidovaná vrstva pro VŠECHNY /operationaldata
@@ -204,7 +219,7 @@ def _process(rows: list) -> pd.DataFrame:
 
 
 def _log(log_path: str, line: str):
-    print(line)
+    log.info(line)
     if log_path:
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -410,10 +425,10 @@ def update_eu_operational():
         new_data = pd.concat(frames, ignore_index=True)
         touched = upsert_partitioned(new_data, OPERATIONAL_DIR, "periodFrom_dt", ["id"], fmt="parquet")
         written = [(mo, n) for mo, n, w in touched if w]
-        print(f"ENTSOG operational (history): {sum(n for _, n in written)} řádků v {len(written)} přepsaných "
-              f"měsících ({len(touched) - len(written)} beze změny) → {OPERATIONAL_DIR}/")
+        log.info(f"ENTSOG operational (history): {sum(n for _, n in written)} řádků v {len(written)} přepsaných "
+                 f"měsících ({len(touched) - len(written)} beze změny) → {OPERATIONAL_DIR}/")
     else:
-        print("ENTSOG operational (history): žádná data")
+        log.warning("ENTSOG operational (history): žádná data")
 
     backfill_open_ended(OPEN_ENDED_INDICATORS)
 
@@ -425,15 +440,30 @@ _CATEGORY_COLS = [
 ]
 
 
-def _load_operational(date_from=None, date_to=None) -> pd.DataFrame:
-    df = read_partitioned(OPERATIONAL_DIR, fmt="parquet", date_from=date_from, date_to=date_to)
+def _country_series(operator_key: pd.Series) -> pd.Series:
+    """country_from_operator_key přes celý sloupec — u category dtype se
+    funkce volá jen jednou na kategorii (rychlé i na milionech řádků)."""
+    if isinstance(operator_key.dtype, pd.CategoricalDtype):
+        mapping = {c: country_from_operator_key(c) for c in operator_key.cat.categories}
+        return operator_key.map(mapping).astype(object).fillna("??")
+    return operator_key.astype(object).map(country_from_operator_key, na_action="ignore").fillna("??")
+
+
+def _with_country(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    df["country"] = df["operatorKey"].apply(country_from_operator_key)
+    df["country"] = _country_series(df["operatorKey"])
     for col in _CATEGORY_COLS:
-        if col in df.columns:
+        if col in df.columns and df[col].dtype != "category":
             df[col] = df[col].astype("category")
     return df
+
+
+@ttl_cache(ttl=ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS, maxsize=2)
+def _load_operational(date_from=None, date_to=None) -> pd.DataFrame:
+    df = read_partitioned(OPERATIONAL_DIR, fmt="parquet", date_from=date_from, date_to=date_to,
+                          columns=UI_COLUMNS, categories=UI_CATEGORY_COLUMNS)
+    return _with_country(df)
 
 
 def load_eu_operational(date_from=None, date_to=None) -> pd.DataFrame:
@@ -443,11 +473,14 @@ def load_eu_operational(date_from=None, date_to=None) -> pd.DataFrame:
 
     date_from/date_to (volitelné) omezí čtení na měsíční soubory v daném
     rozsahu (viz partitioned_store.read_partitioned) — bez nich se čte
-    CELÁ historie od HISTORY_START, což pro tenhle dataset znamená ~2GB
-    v paměti (ověřeno naživo, 2026-08-26: 171 měsíčních souborů, 4.36M
-    řádků). Volající (typicky UI s výběrem konkrétního bodu/období) by
-    měl date_from/date_to nastavit na rozumné okno, ne spoléhat na
-    default = všechno.
+    CELÁ historie od HISTORY_START (~4.6M řádků). Volající (typicky UI
+    s výběrem konkrétního bodu/období) by měl date_from/date_to nastavit
+    na rozumné okno, ne spoléhat na default = všechno. Web místo toho
+    používá load_operational_point() (jen jeden bod, filtr při čtení).
+
+    Čtou se jen UI_COLUMNS rovnou jako category (pyarrow) — dřív se
+    nejdřív načetly všechny sloupce jako object a kategorizovaly až pak
+    (špička paměti = plná object verze).
 
     POZOR pro OPEN_ENDED_INDICATORS (kapacita/interrupce): jejich
     periodFrom_dt nese VALIDITY okno, klidně roky staré (viz komentář u
@@ -455,31 +488,56 @@ def load_eu_operational(date_from=None, date_to=None) -> pd.DataFrame:
     NEBUDE zahrnovat celé, i když jsou aktuálně platné. Date-okno je
     bezpečné pro HISTORY_INDICATORS (Nomination/Renomination/GCV/Wobbe),
     kde periodFrom_dt odpovídá skutečnému dni. UI pro kapacitu/interrupce
-    by mělo volat bez date_from/date_to (nebo s vlastním, širším řešením).
-
-    date_from/date_to jsou SKUTEČNÉ argumenty cachované funkce (ne
-    closure), aby je Streamlit správně zahrnul do cache klíče — jinak by
-    st.cache_data vracelo první nacachovaný rozsah i pro jiné volání.
-    Kategorizace sloupců (viz _CATEGORY_COLS) probíhá uvnitř _load_operational,
-    ne až v app.py při každém rerunu — bez tohohle měl obyčejný df.copy()
-    (na přidání country sloupce) v app.py ArrayMemoryError na konsolidaci
-    ~190MB object-dtype bloku (ověřeno naživo) — plain string sloupce
-    opakované přes miliony řádků jsou v paměti řádově dražší než jejich
-    pár set unikátních hodnot. id a periodFrom_dt/periodTo_dt zůstávají
-    beze změny — id je skoro unikátní na řádek (kategorizace by
-    nepomohla) a date sloupce se porovnávají (>=, <=) v grafech, což na
-    category dtype není bezpečné."""
-    return st.cache_data(ttl=ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS, show_spinner=False)(_load_operational)(date_from, date_to)
+    volá load_eu_operational_open_ended()."""
+    return _load_operational(date_from, date_to)
 
 
+@ttl_cache(ttl=ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS, maxsize=4)
+def operational_index(date_from=None) -> pd.DataFrame:
+    """Malý přehled (country, pointLabel, indicator) — unikátní kombinace
+    v HISTORY_INDICATORS datech od date_from. Pro výběrové seznamy v UI
+    (země → bod → indikátor) bez načtení hodnot."""
+    df = read_partitioned(OPERATIONAL_DIR, fmt="parquet", date_from=date_from,
+                          columns=["operatorKey", "pointLabel", "indicator"],
+                          categories=["operatorKey", "pointLabel", "indicator"])
+    if df.empty:
+        return pd.DataFrame(columns=["country", "pointLabel", "indicator"])
+    df = df.dropna(subset=["pointLabel"]).drop_duplicates()
+    df["country"] = _country_series(df["operatorKey"])
+    out = df[["country", "pointLabel", "indicator"]].astype(str).drop_duplicates()
+    return out[out["country"] != "??"].reset_index(drop=True)
+
+
+@ttl_cache(ttl=ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS, maxsize=16)
+def load_operational_point(point_label: str, country: str = None, date_from=None, date_to=None) -> pd.DataFrame:
+    """HISTORY_INDICATORS data jednoho bodu (Nomination/Renomination/GCV/
+    Wobbe) — filtr na pointLabel a indikátory se aplikuje UŽ PŘI ČTENÍ
+    (pyarrow pushdown), v paměti je jen ten jeden bod. country (ISO
+    prefix operatorKey) rozliší body, které pod stejným pointLabel hlásí
+    obě strany hranice (např. Cieszyn)."""
+    df = read_partitioned(
+        OPERATIONAL_DIR, fmt="parquet", date_from=date_from, date_to=date_to,
+        columns=UI_COLUMNS,
+        filters=[("pointLabel", "==", point_label), ("indicator", "in", HISTORY_INDICATORS)],
+    )
+    df = _with_country(df)
+    if not df.empty and country:
+        df = df[df["country"] == country]
+    return df.reset_index(drop=True)
+
+
+@ttl_cache(ttl=ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS, maxsize=1)
 def _load_open_ended() -> pd.DataFrame:
+    # Filtr VYLOUČENÍM HISTORY_INDICATORS (viz docstring níž) přímo při
+    # čtení — dřív per-soubor pandas row_filter přes plné načtení.
     df = read_partitioned(
         OPERATIONAL_DIR, fmt="parquet",
-        row_filter=lambda d: d[~d["indicator"].isin(HISTORY_INDICATORS)],
+        columns=UI_COLUMNS, categories=UI_CATEGORY_COLUMNS,
+        filters=[("indicator", "not in", HISTORY_INDICATORS)],
     )
     if df.empty:
         return df
-    df["country"] = df["operatorKey"].apply(country_from_operator_key)
+    df["country"] = _country_series(df["operatorKey"]).astype("category")
     return df
 
 
@@ -501,13 +559,9 @@ def load_eu_operational_open_ended() -> pd.DataFrame:
     naživo). Vyloučení je vůči tomu odolné, přesný seznam by tenhle
     záznam tiše ztratil.
 
-    Bezpečné paměťově i bez date-okna: row_filter v read_partitioned
-    filtruje PER SOUBOR před concat, takže se čte všech ~170 měsíčních
-    souborů (I/O), ale drží se v paměti jen filtrovaný zbytek — OPEN_ENDED
-    indikátory jsou řádově menší objem než HISTORY_ (ověřeno na VIP
-    Brandov: ~11-27 řádků na bod/indikátor za CELOU historii, ne denní
-    záznam jako Nomination/Renomination/GCV/Wobbe)."""
-    return st.cache_data(ttl=ENTSOG_OPERATIONAL_CACHE_TTL_SECONDS, show_spinner=False)(_load_open_ended)()
+    Paměťově bezpečné: filtr se aplikuje při čtení (pyarrow), OPEN_ENDED
+    indikátory jsou řádově menší objem než HISTORY_ (~130k řádků)."""
+    return _load_open_ended()
 
 
 # Dočasný alias — app.py zatím importuje load_cz_operational beze změny,

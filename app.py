@@ -80,6 +80,8 @@ with st.sidebar:
 
     if st.button("🔄 Obnovit data", use_container_width=True, type="primary"):
         st.cache_data.clear()
+        from core.cache import clear_all as _clear_core_cache
+        _clear_core_cache()  # data/ už necachuje přes st.cache_data, ale core.cache
         st.rerun()
 
     st.markdown("---")

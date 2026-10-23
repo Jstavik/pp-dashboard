@@ -19,7 +19,63 @@ import os
 import pandas as pd
 
 
-def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_to=None, row_filter=None) -> pd.DataFrame:
+def _select_files(base_dir: str, fmt: str, date_from=None, date_to=None) -> list:
+    files = sorted(glob.glob(os.path.join(base_dir, f"*.{fmt}")))
+    if date_from is not None or date_to is not None:
+        lo = pd.Timestamp(date_from).strftime("%Y-%m") if date_from is not None else None
+        hi = pd.Timestamp(date_to).strftime("%Y-%m") if date_to is not None else None
+        def _in_range(path):
+            month = os.path.splitext(os.path.basename(path))[0]
+            if lo is not None and month < lo:
+                return False
+            if hi is not None and month > hi:
+                return False
+            return True
+        files = [f for f in files if _in_range(f)]
+    return files
+
+
+def _normalize_arrow_table(table):
+    """Sjednotí typy, které se mezi měsíčními soubory historicky liší
+    (string vs large_string, timestamp[us/ns] v UTC vs Europe/Prague) —
+    jinak by concat_tables selhal. Časové sloupce s tz se převedou na
+    timestamp[ns, UTC] (totéž, co dřív dělal pd.to_datetime(..., utc=True)
+    ve volajících), int64/double a null sloupce sjednotí až
+    concat_tables(promote_options="permissive")."""
+    import pyarrow as pa
+    cols, names = [], []
+    for i, field in enumerate(table.schema):
+        col = table.column(i)
+        if pa.types.is_large_string(field.type):
+            col = col.cast(pa.string())
+        elif pa.types.is_timestamp(field.type) and field.type.tz is not None:
+            col = col.cast(pa.timestamp("ns", tz="UTC"))
+        cols.append(col)
+        names.append(field.name)
+    return pa.table(cols, names=names)
+
+
+def _read_parquet_arrow(files: list, columns=None, filters=None, categories=None) -> pd.DataFrame:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    tables = []
+    for f in files:
+        cols = None
+        if columns is not None:
+            present = set(pq.read_schema(f).names)
+            cols = [c for c in columns if c in present]
+        t = pq.read_table(f, columns=cols, filters=filters)
+        if t.num_rows:
+            tables.append(_normalize_arrow_table(t))
+    if not tables:
+        return pd.DataFrame(columns=list(columns) if columns else None)
+    table = pa.concat_tables(tables, promote_options="permissive")
+    cats = [c for c in (categories or []) if c in table.schema.names]
+    return table.to_pandas(categories=cats or None, date_as_object=True)
+
+
+def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_to=None, row_filter=None,
+                     columns=None, filters=None, categories=None) -> pd.DataFrame:
     """Načte a sloučí měsíční soubory v base_dir (data/history/<zdroj>/*.fmt).
 
     date_from/date_to (volitelné) omezí čtení jen na soubory {YYYY-MM}.fmt
@@ -34,22 +90,31 @@ def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_t
     entsog_operational.py::load_eu_operational_open_ended), ale výsledek
     je řádkově malý (jen pár sloupcových hodnot z každého souboru). Drží
     špičkovou paměť na velikosti jednoho souboru + filtrovaného výsledku,
-    ne na velikosti celého datasetu."""
-    files = sorted(glob.glob(os.path.join(base_dir, f"*.{fmt}")))
-    if date_from is not None or date_to is not None:
-        lo = pd.Timestamp(date_from).strftime("%Y-%m") if date_from is not None else None
-        hi = pd.Timestamp(date_to).strftime("%Y-%m") if date_to is not None else None
-        def _in_range(path):
-            month = os.path.splitext(os.path.basename(path))[0]
-            if lo is not None and month < lo:
-                return False
-            if hi is not None and month > hi:
-                return False
-            return True
-        files = [f for f in files if _in_range(f)]
+    ne na velikosti celého datasetu.
+
+    columns / filters / categories (jen parquet, volitelné) — paměťově
+    úsporné čtení přes pyarrow kvůli provozu na 2 GB RAM:
+    - columns: načíst jen tyto sloupce (chybějící v souboru se ignorují),
+    - filters: pyarrow filtr (DNF list, např. [("pointLabel", "==", "X")])
+      aplikovaný při čtení každého souboru (predicate pushdown),
+    - categories: textové sloupce, které se rovnou vytvoří jako pandas
+      category (entsog_flows celá historie: ~1 GB jako object → ~35 MB).
+    Pokud je zadaný kterýkoli z nich, čte se cestou pyarrow (typy
+    sjednocené, viz _normalize_arrow_table); bez nich přesně jako dřív.
+    row_filter se v pyarrow cestě aplikuje až na výsledný DataFrame."""
+    files = _select_files(base_dir, fmt, date_from, date_to)
     if not files:
         return pd.DataFrame()
-    reader = pd.read_parquet if fmt == "parquet" else pd.read_csv
+    if fmt == "parquet" and (columns is not None or filters is not None or categories is not None):
+        df = _read_parquet_arrow(files, columns=columns, filters=filters, categories=categories)
+        return row_filter(df) if row_filter is not None and not df.empty else df
+    if fmt == "parquet":
+        reader = pd.read_parquet
+    elif columns is not None:
+        wanted = set(columns)
+        reader = lambda f: pd.read_csv(f, usecols=lambda c: c in wanted)  # noqa: E731
+    else:
+        reader = pd.read_csv
     frames = (reader(f) for f in files)
     if row_filter is not None:
         frames = (row_filter(df) for df in frames)
@@ -63,8 +128,11 @@ def last_date_partitioned(base_dir: str, date_col: str, fmt: str = "parquet"):
     files = sorted(glob.glob(os.path.join(base_dir, f"*.{fmt}")))
     if not files:
         return None
-    reader = pd.read_parquet if fmt == "parquet" else pd.read_csv
-    df = reader(files[-1])
+    # jen sloupec s datem — ne celý soubor (OPTIMIZATION_REPORT.md, update_entsog)
+    if fmt == "parquet":
+        df = pd.read_parquet(files[-1], columns=[date_col])
+    else:
+        df = pd.read_csv(files[-1], usecols=[date_col])
     if df.empty:
         return None
     return pd.to_datetime(df[date_col], utc=True).max()

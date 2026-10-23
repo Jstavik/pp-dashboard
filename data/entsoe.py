@@ -1,14 +1,38 @@
 import concurrent.futures
 
+import threading
+
 import pandas as pd
-import streamlit as st
-from entsoe import EntsoePandasClient
 
-from config import ENTSOE_TOKEN, ENTSOE_REQUEST_TIMEOUT_S
+from config import ENTSOE_REQUEST_TIMEOUT_S
+from core.cache import ttl_cache
+from core.settings import entsoe_token
+
+_client_obj = None
+_client_lock = threading.Lock()
 
 
-@st.cache_resource
+class EntsoeTokenMissing(RuntimeError):
+    pass
+
+
 def _get_client():
+    """Klient se vytváří LÍNĚ (dřív při importu modulu — bez ENTSOE_TOKEN
+    tak spadl už import data.entsoe a s ním celá aplikace)."""
+    global _client_obj
+    if _client_obj is not None:
+        return _client_obj
+    with _client_lock:
+        if _client_obj is None:
+            token = entsoe_token()
+            if not token:
+                raise EntsoeTokenMissing("ENTSOE_TOKEN není nastavený (env / ~/.config/ppdash/env)")
+            _client_obj = _make_client(token)
+    return _client_obj
+
+
+def _make_client(token):
+    from entsoe import EntsoePandasClient
     # timeout — bez tohohle requests čeká na odpověď neomezeně dlouho
     # (Python requests default = None = žádný timeout), takže try/except
     # kolem volání nikdy nezachytí viset spojení, jen skutečnou chybu.
@@ -30,14 +54,12 @@ def _get_client():
     # DNS/remote-disconnect chyby, NE pro read-timeout (dosud pozorovaný
     # dominantní způsob selhání proti ENTSO-E) — tam žádný retry_count
     # rozdíl nedělá, jeden hang = jeden timeout.
-    return EntsoePandasClient(api_key=ENTSOE_TOKEN, timeout=ENTSOE_REQUEST_TIMEOUT_S, retry_count=2)
+    return EntsoePandasClient(api_key=token, timeout=ENTSOE_REQUEST_TIMEOUT_S, retry_count=2)
 
 
-client = _get_client()
-
-
-@st.cache_data(ttl=60 * 30, show_spinner=False)
+@ttl_cache(ttl=60 * 30, disk=True)
 def fetch_entsoe_data():
+    client = _get_client()
     now        = pd.Timestamp.now(tz="Europe/Prague")
     start_day  = now.normalize()
     end_imbal  = now + pd.Timedelta(hours=1)
@@ -154,8 +176,9 @@ def fetch_entsoe_data():
     return imbal, gen_actual, load_actual, load_fc, raw_out, now
 
 
-@st.cache_data(ttl=60 * 15, show_spinner=False)
+@ttl_cache(ttl=60 * 15, disk=True)
 def fetch_dap(day_offset: int = 0):
+    client = _get_client()
     now   = pd.Timestamp.now(tz="Europe/Prague")
     start = now.normalize() + pd.Timedelta(days=day_offset)
     if start.tzinfo is None:
@@ -175,8 +198,9 @@ def fetch_dap(day_offset: int = 0):
     return raw.dropna()
 
 
-@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
+@ttl_cache(ttl=60 * 60 * 24, disk=True)
 def fetch_installed_capacity():
+    client = _get_client()
     now   = pd.Timestamp.now(tz="Europe/Prague")
     start = now.normalize()
     end   = start + pd.Timedelta(days=1)
@@ -192,8 +216,9 @@ def fetch_installed_capacity():
         return pd.Series(dtype=float)
 
 
-@st.cache_data(ttl=60 * 15, show_spinner=False)
+@ttl_cache(ttl=60 * 15, disk=True)
 def fetch_activation_prices():
+    client = _get_client()
     now   = pd.Timestamp.now(tz="Europe/Prague")
     start = now.normalize()
     end   = now + pd.Timedelta(hours=1)
@@ -215,8 +240,9 @@ def fetch_activation_prices():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=60 * 30, show_spinner=False)
+@ttl_cache(ttl=60 * 30, disk=True)
 def fetch_wind_solar_forecast():
+    client = _get_client()
     now       = pd.Timestamp.now(tz="Europe/Prague")
     start_day = now.normalize()
     end_day   = start_day + pd.Timedelta(days=2)
@@ -239,8 +265,9 @@ def fetch_wind_solar_forecast():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=60 * 60, show_spinner=False)
+@ttl_cache(ttl=60 * 60, disk=True)
 def fetch_reserves():
+    client = _get_client()
     now      = pd.Timestamp.now(tz="Europe/Prague")
     start    = now.normalize()
     end      = now.normalize() + pd.Timedelta(days=10)

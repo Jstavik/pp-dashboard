@@ -1,17 +1,19 @@
-import re
 import glob
+import logging
 import requests
 import pandas as pd
 import os
-import streamlit as st
-from datetime import timedelta
 
 from config import MSMM3_TO_GWH
+from core.cache import ttl_cache
+from core.settings import history_path, history_root
 from data.partitioned_store import write_daily_snapshot, read_snapshot, read_partitioned, upsert_partitioned
 
-GASSCO_NOMINATIONS_DIR = "data/history/gassco_nominations"
-GASSCO_UMM_PATH = "data/history/gassco_umm.parquet"
-GASSCO_UMM_SNAPSHOTS_DIR = "data/history/gassco_umm_snapshots"
+log = logging.getLogger(__name__)
+
+GASSCO_NOMINATIONS_DIR = history_path("gassco_nominations")
+GASSCO_UMM_PATH = history_path("gassco_umm.parquet")
+GASSCO_UMM_SNAPSHOTS_DIR = history_path("gassco_umm_snapshots")
 
 
 def _get_session() -> requests.Session:
@@ -129,7 +131,7 @@ def fetch_gassco_umm() -> pd.DataFrame:
             resp = session.get("https://umm.gassco.no/xlexport", timeout=30)
             if resp.status_code != 200:
                 last_err = f"HTTP {resp.status_code} z /xlexport"
-                print(f"  GASSCO UMM: pokus {attempt}/2 selhal — {last_err}")
+                log.warning(f"GASSCO UMM: pokus {attempt}/2 selhal — {last_err}")
                 if attempt < 2:
                     _time.sleep(5)
                     continue
@@ -137,7 +139,7 @@ def fetch_gassco_umm() -> pd.DataFrame:
             break
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
-            print(f"  GASSCO UMM: pokus {attempt}/2 selhal — {last_err}")
+            log.warning(f"GASSCO UMM: pokus {attempt}/2 selhal — {last_err}")
             if attempt < 2:
                 _time.sleep(5)
                 continue
@@ -149,7 +151,7 @@ def fetch_gassco_umm() -> pd.DataFrame:
         raw.columns = [_XLEXPORT_COLUMNS.get(tuple(c), c[0]) for c in raw.columns]
         df = raw.dropna(subset=["messageId"]).reset_index(drop=True)
         if df.empty:
-            print("  GASSCO UMM: /xlexport OK, ale export neobsahuje žádné messageId řádky")
+            log.warning("GASSCO UMM: /xlexport OK, ale export neobsahuje žádné messageId řádky")
             return df
 
         df["messageId"] = df["messageId"].astype(str)
@@ -170,7 +172,7 @@ def fetch_gassco_umm() -> pd.DataFrame:
                 df[col] = pd.to_datetime(df[col], utc=True, errors="coerce")
         return df
     except Exception as e:
-        print(f"  GASSCO UMM: chyba při zpracování /xlexport — {type(e).__name__}: {e}")
+        log.error(f"GASSCO UMM: chyba při zpracování /xlexport — {type(e).__name__}: {e}")
         return pd.DataFrame()
 
 
@@ -297,26 +299,24 @@ def update_gassco_umm():
     znamená skutečné zrušení odstávky (návrat kapacity), ne rutinní
     revizi — je to plnohodnotný záznam v exportu, ne něco, co bychom
     měli speciálně řešit při zápisu."""
-    os.makedirs("data/history", exist_ok=True)
+    os.makedirs(history_root(), exist_ok=True)
     new_data = fetch_gassco_umm()
     if new_data.empty:
-        print("  GASSCO UMM: žádná data")
-        return
+        raise RuntimeError("GASSCO UMM: žádná data (viz varování výš)")
 
     combined = new_data.sort_values(["base_id", "revision"]).reset_index(drop=True)
     combined.to_parquet(GASSCO_UMM_PATH, index=False)
-    print(f"  GASSCO UMM: {len(combined)} řádků (kompletní stav) → {GASSCO_UMM_PATH}")
+    log.info(f"GASSCO UMM: {len(combined)} řádků (kompletní stav) → {GASSCO_UMM_PATH}")
 
     snap_written = write_daily_snapshot(combined, GASSCO_UMM_SNAPSHOTS_DIR, fmt="parquet")
-    print(f"  GASSCO UMM snapshot: {'zapsán nový den' if snap_written else 'dnešní už existuje'}")
+    log.info(f"GASSCO UMM snapshot: {'zapsán nový den' if snap_written else 'dnešní už existuje'}")
 
 
+@ttl_cache(ttl=300, maxsize=2)
 def load_gassco_umm() -> pd.DataFrame:
-    def _load():
-        if not os.path.exists(GASSCO_UMM_PATH):
-            return pd.DataFrame()
-        return pd.read_parquet(GASSCO_UMM_PATH)
-    return st.cache_data(ttl=300, show_spinner=False)(_load)()
+    if not os.path.exists(GASSCO_UMM_PATH):
+        return pd.DataFrame()
+    return pd.read_parquet(GASSCO_UMM_PATH)
 
 
 def load_gassco_umm_snapshot(days_back: int) -> pd.DataFrame:
@@ -340,7 +340,7 @@ def list_available_umm_snapshot_dates() -> list:
     return dates
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@ttl_cache(ttl=300, disk=True)
 def fetch_realtime_nominations() -> pd.DataFrame:
     """Aktuální nominace z realTimeAtom.xml — bez session.
 
@@ -389,7 +389,7 @@ def fetch_realtime_nominations() -> pd.DataFrame:
 
         return pd.DataFrame(records)
     except Exception as e:
-        print(f"realTimeAtom chyba: {e}")
+        log.warning(f"realTimeAtom chyba: {e}")
         return pd.DataFrame()
 
 
@@ -401,34 +401,38 @@ def update_gassco():
     tomhle okně vyskytují, uzavřené starší měsíce zůstávají nedotčené.
     Na rozdíl od dřívějšího plného přepisu CSV tak historie NEZÁVISÍ na
     tom, jak daleko API okno zrovna sahá."""
-    os.makedirs("data/history", exist_ok=True)
-    print("  GASSCO nominace...")
+    os.makedirs(history_root(), exist_ok=True)
+    log.info("GASSCO nominace...")
     df = fetch_gassco_nominations()
     if df.empty:
-        print("  GASSCO: žádná data")
-        return
+        raise RuntimeError("GASSCO: žádná data (API nic nevrátilo)")
     touched = upsert_partitioned(df, GASSCO_NOMINATIONS_DIR, "date", ["point", "date"], fmt="csv")
     written = [(m, n) for m, n, w in touched if w]
-    print(f"  GASSCO: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
-          f"({len(touched) - len(written)} beze změny) → {GASSCO_NOMINATIONS_DIR}/")
+    log.info(f"GASSCO: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
+             f"({len(touched) - len(written)} beze změny) → {GASSCO_NOMINATIONS_DIR}/")
 
 
+@ttl_cache(ttl=3600, maxsize=2)
+def load_gassco_history() -> pd.DataFrame:
+    """Jen historie nominací z disku (bez živého realTimeAtom)."""
+    df_hist = read_partitioned(GASSCO_NOMINATIONS_DIR, fmt="csv")
+    if not df_hist.empty:
+        df_hist["date"] = pd.to_datetime(df_hist["date"], utc=True)
+    return df_hist
+
+
+@ttl_cache(ttl=300, maxsize=2)
 def load_gassco() -> pd.DataFrame:
-    def _load():
-        df_hist = read_partitioned(GASSCO_NOMINATIONS_DIR, fmt="csv")
-        if not df_hist.empty:
-            df_hist["date"] = pd.to_datetime(df_hist["date"], utc=True)
+    """Historie nominací + dnešní živá hodnota z realTimeAtom.xml."""
+    df_hist = load_gassco_history()
+    df_live = fetch_realtime_nominations()
 
-        df_live = fetch_realtime_nominations()
+    if df_live.empty:
+        return df_hist
+    if df_hist.empty:
+        return df_live
 
-        if df_live.empty:
-            return df_hist
-        if df_hist.empty:
-            return df_live
-
-        live_date = df_live["date"].iloc[0]
-        df_hist = df_hist[df_hist["date"].dt.date != live_date.date()]
-        df_combined = pd.concat([df_hist, df_live], ignore_index=True)
-        return df_combined.sort_values(["point", "date"]).reset_index(drop=True)
-
-    return st.cache_data(ttl=300, show_spinner=False)(_load)()
+    live_date = df_live["date"].iloc[0]
+    df_hist = df_hist[df_hist["date"].dt.date != live_date.date()]
+    df_combined = pd.concat([df_hist, df_live], ignore_index=True)
+    return df_combined.sort_values(["point", "date"]).reset_index(drop=True)

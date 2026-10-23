@@ -1,11 +1,12 @@
-import os
 import pandas as pd
-import streamlit as st
 
+from core.cache import ttl_cache
+from core.settings import history_path, gie_api_key
 from data.partitioned_store import read_partitioned
 
-GIE_ALL_DIR = "data/history/gie_all_storage"
-GIE_KEY     = "628043ec28b2f2395a95f5adad7ec983"
+GIE_ALL_DIR = history_path("gie_all_storage")
+# Klíč GIE AGSI+/ALSI jen z env (GIE_API_KEY) — dřív natvrdo v repu.
+GIE_KEY     = gie_api_key()
 
 VARIABLES = {
     "full":             ("% plnosti",          "%"),
@@ -25,12 +26,14 @@ FIXED_COUNTRIES = [
     ("SK", "Slovensko"),
 ]
 
+# Sloupce, které appka z GIE CSV čte (zbytek ~15 sloupců se nepoužívá).
+GIE_COLUMNS = ["gasDayStart", "country_code"] + list(VARIABLES.keys())
 
+
+@ttl_cache(ttl=3600, maxsize=2)
 def load_gie_all() -> pd.DataFrame:
     """Načte GIE data z měsíčně partitionovaného úložiště. Fallback na prázdný DataFrame."""
-    def _load():
-        df = read_partitioned(GIE_ALL_DIR, fmt="csv")
-        if not df.empty:
-            df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
-        return df
-    return st.cache_data(ttl=3600, show_spinner=False)(_load)()
+    df = read_partitioned(GIE_ALL_DIR, fmt="csv", columns=GIE_COLUMNS)
+    if not df.empty:
+        df["gasDayStart"] = pd.to_datetime(df["gasDayStart"])
+    return df
