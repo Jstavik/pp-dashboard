@@ -1,0 +1,10 @@
+{% import "macros.html" as m %}
+{% if c.empty %}{% include "tabs/nordic/_empty.html" %}{% else %}
+<form class="controls">
+  {{ m.select("area", c.areas, c.area, "Zóna", c.names) }}
+  {{ m.daterange(c.d_from, c.d_to, "📆 Období", c.presets, c.min_d, c.max_d) }}
+  {{ m.radio("kind", ["physical", "scheduled"], c.kind, "Druh", {"physical": "fyzické", "scheduled": "plánované"}) }}
+</form>
+{{ m.chart("zone", 420) }}
+{{ m.chart("continent", 420) }}
+{% endif %}

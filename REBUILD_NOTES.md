@@ -108,6 +108,36 @@ výsledkem dotazu (malá tabulka), kdyby byl drag&drop potřeba.
   v logu); reálná rychlost backfillu. Testováno s falešným klientem
   (`tests/test_entsoe_history.py`).
 
+### Nordic (`data/nordic.py`, stránka **Nordic**)
+- **Co už bylo**: `hydro_reservoirs/` = ENTSO-E 16.1.D (Aggregated Filling
+  Rate of Water Reservoirs), **týdně, po celých zemích** (20 zemí vč. NO, SE,
+  FI; GWh; od 12/2019). Žádné zóny, žádná min/max statistika.
+- **Doplněno** (úlohy ve výchozím běhu 2× denně, skupina `nordic`):
+  | Dataset | Úloha | Zdroj | Obsah |
+  |---|---|---|---|
+  | `nve_reservoirs.parquet` (+ `_stats`) | `nve` | NVE Magasinstatistikk, bez klíče | plnění % a TWh, celé NO + NO1–NO5, týdně (historie celá v 1 requestu), statistika min/medián/max po týdnech |
+  | `fingrid/` | `fingrid` | Fingrid open data, **`FINGRID_API_KEY`** (zdarma), bez klíče se přeskočí | spotřeba, výroba, vítr, jádro, voda, prognózy, přenosy FI–SE1/SE3/EE/NO (15 min) |
+  | `energinet/<dataset>/` | `energinet` | Energi Data Service, bez klíče | `ProductionConsumptionSettlement` (výroba/spotřeba/výměny DK1/DK2 hodinově), `Forecasts_Hour` (prognózy OZE) — sloupce převedené obecně na série |
+- **Švédsko**: volně strojově čitelná data o nádržích nejsou (Energiföretagen
+  „Kraftläget“ jen PDF/Excel, Nord Pool hydro placený) → SE z ENTSO-E.
+- **Stránka Nordic** (`/nordic`): Ceny a spready (ceny NO1–5, SE1–4, FI,
+  DK1–2, DE_LU; spread vůči DE nebo „systémové ceně“ — Nord Pool systémová
+  cena není volně, použit **proxy = prostý průměr nordických zón**, tabulka
+  průměrů a spreadů), Hydrobilance (NVE plnění aktuální rok vs. min–max a
+  medián, KPI vs. medián a vs. loni, tabulka NO1–5; ENTSO-E NO/SE/FI vs.
+  medián/pásmo předchozích let), Toky (saldo zóny po sousedech, Nordic
+  NO+SE+FI ↔ okolí DK/DE/NL/PL/LT/EE), Finsko a Dánsko (Fingrid, Energinet).
+  Vše i v Průzkumníku (datasety NVE, Fingrid, Energinet, hydro).
+- **NEOVĚŘENO**: tvar JSON NVE (`dato_Id`, `omrType` NO/EL, `omrnr`,
+  `iso_aar`, `iso_uke`, `fyllingsgrad` 0–1, `fylling_TWh`, `kapasitet_TWh`;
+  `HentOffentligDataMinMaxMedian`: `minFyllingsgrad`, `medianFyllingsgrad`…) —
+  parsování je case-insensitive a toleruje chybějící pole; **ID datasetů
+  Fingrid** (124 spotřeba, 74 výroba, 75 vítr, 188 jádro, 191 voda, 165/245/248
+  prognózy, 87/89/180/187 přenosy) a tvar `/api/datasets/{id}/data`
+  (`data[].startTime/value`, `pagination.lastPage`), limit ~10 req/min;
+  Energinet parametry `start/end/timezone=utc/limit=0` a názvy datasetů
+  (Energinet je občas přejmenovává — chyba jednoho = WARN).
+
 ## Kolo 2 (2026-10-23): vlastní databáze, živá data, Energy-Charts, export, nasazení bez roota
 
 ### Audit historie (`data/history` → `PPDASH_DATA_DIR/history`)

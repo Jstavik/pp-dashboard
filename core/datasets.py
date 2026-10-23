@@ -51,6 +51,11 @@ DATASETS = [
     Dataset("entsoe_load", "entsoe_load", 36, "time", subdirs=True),
     Dataset("entsoe_ws_forecast", "entsoe_ws", 36, "time", subdirs=True),
     Dataset("entsoe_flows", "entsoe_flows", 36, "time", subdirs=True),
+    # Nordic (data/nordic.py, ve výchozím běhu 2× denně)
+    Dataset("nve_reservoirs.parquet", "nve", 24 * 10, "date"),
+    Dataset("nve_reservoirs_stats.parquet", "nve", float("inf")),
+    Dataset("fingrid", "fingrid", 36, "time"),
+    Dataset("energinet", "energinet", 72, "time", subdirs=True),
     # týdně (timer ppdash-update-cot, st + záloha čt/so)
     Dataset("ice_cot.parquet", "cot", 24 * 12, "report_date"),
     Dataset("ice_cot_status.json", "cot", 24 * 11),
@@ -291,6 +296,27 @@ EXPLORE = [
         (Dim("country", "Země"),), "ENTSO-E Aggregated Filling Rate of Water Reservoirs", "hydro_reservoirs",
         native="1W", default_days=3 * 365, default_cat="country",
         default_filters=(("country", ("NO", "SE", "FI")),)),
+    ExploreSpec(
+        "nve", "Nádrže Norsko — NVE (týdně)", "Nordic", "nve_reservoirs.parquet", "CAST(\"date\" AS TIMESTAMPTZ)",
+        (Measure("pct", "Plnění", "filling_pct", "%", "avg", "avg"),
+         Measure("twh", "Zásoba", "filling_twh", "TWh", "sum", "avg"),
+         Measure("cap", "Kapacita", "capacity_twh", "TWh", "sum", "avg")),
+        (Dim("area", "Oblast"),), "NVE Magasinstatistikk", "nve_reservoirs.parquet", native="1W",
+        default_days=5 * 365, default_cat="area", default_filters=(("area", ("NO",)),),
+        description="Plnění nádrží celé Norsko (NO) a elspot oblasti NO1–NO5, týdně od 1995."),
+    ExploreSpec(
+        "fingrid", "Fingrid — Finsko", "Nordic", "fingrid/*.parquet", "CAST(\"time\" AS TIMESTAMPTZ)",
+        (Measure("mw", "Výkon", "value", "MW", "sum", "avg", power=True),),
+        (Dim("series", "Série"),), "Fingrid open data (API klíč)", "fingrid", native="15min", align="hour",
+        default_days=14, default_cat="series", default_filters=(("series", ("spotřeba", "výroba", "vítr")),)),
+    ExploreSpec(
+        "energinet", "Energinet — Dánsko (DK1/DK2)", "Nordic", "energinet/*/*.parquet",
+        "CAST(\"time\" AS TIMESTAMPTZ)",
+        (Measure("v", "Hodnota", "value", "MWh/h", "sum", "avg", power=True),),
+        (Dim("dataset", "Dataset", partition=True), Dim("area", "Oblast"), Dim("series", "Série")),
+        "Energinet Energi Data Service", "energinet", native="1h", default_days=14, default_cat="series",
+        default_filters=(("dataset", ("ProductionConsumptionSettlement",)),),
+        description="Obecně převedené sloupce datasetů (série = název sloupce, u prognóz typ|sloupec)."),
     ExploreSpec(
         "entsog_flows", "Toky plynu (ENTSO-G, denní)", "Plyn", "entsog_flows/*.parquet",
         "CAST(\"date\" AS TIMESTAMPTZ)",

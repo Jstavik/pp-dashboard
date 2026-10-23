@@ -1,0 +1,16 @@
+{% import "macros.html" as m %}
+{% if c.has_nve %}
+<form class="controls">{{ m.select("area", c.areas, c.area, "Oblast (NVE)", c.names) }}</form>
+<div class="kpi-row">
+  {{ m.kpi("Plnění " ~ c.kpi.oblast, c.kpi.plnění|fmt(",.1f"), "týden " ~ c.kpi.týden, unit="%") }}
+  {{ m.kpi("Zásoba", c.kpi.TWh|fmt(",.1f"), unit="TWh") }}
+  {{ m.kpi("vs. medián", c.kpi.vs_median|fmt("+,.1f"), unit="p.b.") }}
+  {{ m.kpi("vs. loni", c.kpi.vs_lonsko|fmt("+,.1f"), unit="p.b.") }}
+</div>
+{{ m.chart("nve", 420) }}
+<div class="card panel">{{ m.section("Norsko — aktuální týden po oblastech") }}{{ m.table(c.table) }}</div>
+{% else %}
+<div class="alert">NVE data zatím nejsou (úloha <code>nve</code>, 2× denně; NVE publikuje ve středu).</div>
+{% endif %}
+{% if c.has_entsoe %}{{ m.chart("entsoe", 380) }}{% endif %}
+<p class="muted small">Švédské nádrže nemají volné strojové API (Energiföretagen jen PDF/Excel) — SE a FI z ENTSO-E (týdně, celé země).</p>

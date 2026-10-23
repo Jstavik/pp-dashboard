@@ -1,0 +1,6 @@
+{% import "macros.html" as m %}
+{% if c.fingrid %}{{ m.chart("fingrid", 400) }}
+{% elif not c.fingrid_key %}<div class="alert">Fingrid: nastavte <code>FINGRID_API_KEY</code> v <code>~/.config/ppdash/env</code> (zdarma po registraci na data.fingrid.fi) — bez klíče se úloha přeskakuje.</div>
+{% else %}<div class="alert">Fingrid data zatím nejsou (úloha <code>fingrid</code>).</div>{% endif %}
+{% if c.energinet %}{{ m.chart("energinet", 400) }}{% else %}<div class="alert">Energinet data zatím nejsou (úloha <code>energinet</code>).</div>{% endif %}
+<p class="muted small">Všechny série (i prognózy a výměny) jsou v Průzkumníku: datasety „Fingrid — Finsko“ a „Energinet — Dánsko“.</p>

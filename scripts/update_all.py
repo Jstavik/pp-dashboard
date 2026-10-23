@@ -18,6 +18,7 @@ Použití:
     entsoe = entsoe_prices, entsoe_load, entsoe_ws, entsoe_flows (vlastní timer, 3× denně — ve výchozím běhu NE)
     cot    = cot (ICE MiFID II, týdenní — ve výchozím běhu se NEspouští)
     energy_charts
+    nordic = nve, fingrid (jen s FINGRID_API_KEY), energinet
     all    = všechno včetně live a cot
 
 Idempotentní: všechny zápisy jsou upsert s dedupem / write-once snapshoty,
@@ -106,6 +107,12 @@ def _tasks() -> dict:
             return getattr(eh, name)()
         return run
 
+    def nordic(name):
+        def run():
+            from data import nordic as nd
+            return getattr(nd, name)()
+        return run
+
     return {
         "entsog":             ("ENTSO-G fyzické toky (všechny země)", u.update_entsog),
         "entsog_allocation":  ("ENTSO-G Allocation (všechny země)", u.update_entsog_allocation),
@@ -123,6 +130,9 @@ def _tasks() -> dict:
         "outages":            ("Odstávky (ENTSO-E, všechny země)", per_country(u.update_outages, "Outages")),
         "energy_charts":      ("Energy-Charts (public_power, forecast, cbet, cbpf, installed, frequency)", energy_charts),
         "cot":                ("ICE MiFID II Commitments of Traders", u.update_cot),
+        "nve":                ("NVE nádrže Norsko (týdně, NO + NO1–5)", nordic("update_nve")),
+        "fingrid":            ("Fingrid open data FI (jen s FINGRID_API_KEY)", nordic("update_fingrid")),
+        "energinet":          ("Energinet Energi Data Service DK", nordic("update_energinet")),
         "entsoe_prices":      ("ENTSO-E day-ahead ceny všech bidding zón", entsoe("update_prices")),
         "entsoe_load":        ("ENTSO-E spotřeba skutečná + prognóza D-1", entsoe("update_load")),
         "entsoe_ws":          ("ENTSO-E prognóza větru a slunce (day-ahead)", entsoe("update_ws_forecast")),
@@ -133,7 +143,7 @@ def _tasks() -> dict:
 TASK_ORDER = [
     "ceps", "gassco_realtime", "gassco_umm",
     "entsog", "entsog_allocation", "gie", "hydro", "entsog_operational", "lng",
-    "gassco", "dap_europe", "generation", "outages", "energy_charts", "cot",
+    "gassco", "dap_europe", "generation", "outages", "energy_charts", "nve", "fingrid", "energinet", "cot",
     "entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows",
 ]
 LIVE_TASKS = ["ceps", "gassco_realtime", "gassco_umm"]
@@ -143,6 +153,7 @@ GROUPS = {
     "power": ["hydro", "dap_europe", "generation", "outages"],
     "live":  list(LIVE_TASKS),
     "entsoe": list(ENTSOE_TASKS),
+    "nordic": ["nve", "fingrid", "energinet"],
     "all":   list(TASK_ORDER),
 }
 DEFAULT_EXCLUDE = {"cot", *LIVE_TASKS, *ENTSOE_TASKS}

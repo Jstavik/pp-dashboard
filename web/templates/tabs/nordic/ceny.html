@@ -1,0 +1,11 @@
+{% import "macros.html" as m %}
+{% if c.empty %}{% include "tabs/nordic/_empty.html" %}{% else %}
+<form class="controls">
+  {{ m.daterange(c.d_from, c.d_to, "📆 Období", c.presets, c.min_d, c.max_d) }}
+  {{ m.radio("ref", c.ref_labels.keys()|list, c.ref, "Spread vůči", c.ref_labels) }}
+</form>
+{{ m.chart("prices", 440) }}
+{{ m.chart("spreads", 400) }}
+<div class="card panel">{{ m.section("Průměry za období (denní průměry)") }}{{ m.table(c.summary) }}</div>
+<p class="muted small">Systémová cena Nord Pool není volně dostupná — „systémová (proxy)“ = prostý průměr cen NO1–5, SE1–4, FI, DK1–2.</p>
+{% endif %}

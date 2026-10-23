@@ -49,7 +49,7 @@ pd.set_option("mode.copy_on_write", True)
 
 def _load_tabs() -> None:
     # Import modulů záložek = registrace (pořadí určuje pořadí v navigaci)
-    from web.tabs import electricity, gas, report, energy_charts, market, explorer, ceps_outages, cot  # noqa: F401
+    from web.tabs import electricity, gas, report, energy_charts, market, nordic, explorer, ceps_outages, cot  # noqa: F401
 
 
 _load_tabs()
