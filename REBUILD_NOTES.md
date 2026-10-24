@@ -1,6 +1,6 @@
 # REBUILD_NOTES — přechod ze Streamlitu na FastAPI (větev `rebuild/fastapi`)
 
-Stav k 2026-10-24 (kolo 5, starší kola níže). Větev založená z `main` @ 7a36a68. `main` ani
+Stav k 2026-10-24 (kolo 6, starší kola níže). Větev založená z `main` @ 7a36a68. `main` ani
 `.github/workflows` se neměnily, `data/history/` v repu zůstává.
 
 **Důležité omezení ověření:** v pracovním prostředí nebyly k dispozici API
@@ -8,6 +8,147 @@ tokeny a síť k datovým zdrojům byla zablokovaná (povolené jen PyPI).
 Živá API ověřuje jiné sezení v kontejneru (LXC); co tam ověřeno nebylo, je
 označené **NEOVĚŘENO**. Web a výpočty jsou ověřené nad skutečnými daty
 z `data/history/` v repu.
+
+## Kolo 6 (2026-10-24): oprava kompakce LNG, CEE flowchart plynu, kontrola entry/exit, kopírování grafů, nový vzhled jako výchozí, Elektřina z úložiště
+
+Zpětná vazba z nasazení: nový vzhled Plyn (zásobníky) se líbí; údržba na kopii plných dat
+16 044 → 3 844 souborů, 52,6 s, 1 chyba (`lng_storage/2023`: kontrolní součet nesedí).
+
+### 1. Oprava CSV kompakce (`core/maintenance.py`)
+Příčina (reprodukováno na `lng_storage/2023` z repa): pandas odvozuje typy po měsících —
+sloupec `contractedCapacity` je v lednu text (`-`, prázdné), od března float. Po sloučení
+je sloupec smíšený (float + text), po zápisu a znovunačtení celý text a **prázdná buňka**
+se hashovala jinak (`∅` ve smíšeném sloupci vs. `None` v textovém). Počet řádků seděl.
+Oprava: CSV se slučuje **jako text** (`dtype=str`, bez převodu prázdných buněk na NaN),
+chybějící sloupec = prázdná buňka. Zápis je tak bajtově věrný originálu (např. `22.30`
+zůstane `22.30`, `1e-05` taky) a kontrolní součet porovnává text s textem. Čtení
+(`read_partitioned`) dál odvozuje typy jako dřív. Parquet beze změny. Test
+`test_compaction_csv_mixed_types_lng` (se starým kódem padá stejnou chybou jako
+v kontejneru). Kopie dat z repa: údržba 1 873 → 1 008 souborů, 0 chyb.
+
+### 2. CEE flowchart plynu (`core/gasflow.py`, `charts/flowchart.py`, Plyn → Mapa)
+Vzor: gasconnect.at „Daily CEE flowchart“ (stránku se z prostředí nepodařilo načíst — síť
+blokovaná; schéma navrženo podle zadání). **Schéma, ne mapa**: země jako boxy, Norsko jako
+pruh nahoře, LNG terminály jako přítoky, menší uzly pro sousedy mimo výběr (UK, DK, LU, ES,
+RO, RS, LT, „Jih: DZ/LY/TAP“ pro Itálii) — kreslí se jen když přes ně teče plyn.
+- **Šipka** = čistý fyzický tok přes hranici (součet všech bodů hranice) ve směru toku,
+  hodnota z pohledu **přijímající** země (entry), když ji nehlásí, odesílající (exit).
+  Tloušťka ~ √objem, barva = změna proti předchozímu dni / týdnu (zelená roste, červená
+  klesá, šedá ±max(2 GWh, 3 %)), přerušovaná = nulový tok. Tooltip: oba směry, srovnání,
+  kontrola entry/exit.
+- **Box země**: plnění zásobníků % (barva podle prahů 25/50/75), TWh, vtláčení/těžba za den
+  (GIE AGSI+), „spotřeba ≈“ = odvozená bilance **vstupy z hranic − výstupy + LNG + domácí
+  těžba + (těžba − vtláčení zásobníků)**; vedle „(hl. …)“ = exit do distribuce a ke
+  koncovým zákazníkům hlášený ENTSO-G (jen když dává smysl, např. DE hlásí jen část).
+  Tooltip má celý rozpad. CH, NO, UA do ENTSO-G nehlásí → toky z pohledu sousedů
+  (pozor: `countryKey=CH` v ENTSO-G je ve skutečnosti TAP — ignoruje se).
+- **Vnější body** („Transmission“ bez kódu země) se přiřazují podle názvu bodu
+  (`EXTERNAL_POINTS`: Dornum/Emden/Zeebrugge ZPT/Dunkerque/St. Fergus/Easington → NO,
+  Velké Kapušany/Bereg/Budince/GCP UA → UA, Horgos/Kiskundorozsma → RS, Mazara/Gela/
+  Melendugno → Jih…). ENTSO-G některé body slučuje do jednoho řádku (HU: Horgos + Bereg)
+  → partner „RS/UA“ (v bilanci, nekreslí se jako šipka).
+- Ovládání: kalendář + **posuvník** (120 dní), srovnání s předchozím dnem/týdnem, jednotky
+  **GWh/d nebo mcm/d** (1 mcm ≈ 10,55 GWh, stejný převod jako GASSCO). Výchozí den = poslední
+  úplný den ENTSO-G (≥ 80 % mediánu řádků). Stav v URL (`?tab=mapa&date=…&cmp=w&unit=mcm`).
+- **SVG renderuje server** → ostré v každém rozlišení; tmavý režim přebarví CSS, export je
+  vždy světlý. Mobil: schéma 960 px široké s posunem prstem, klepnutí = tooltip.
+  Export: 📋 kopírovat, PNG (3×), SVG, CSV/XLSX (`/api/csv/flowchart`).
+- Geografická mapa zůstala jako druhý pohled (přepínač „Pohled“).
+- Ověřeno nad daty z repa (21. 10. 2026) screenshoty desktop/tmavý/mobil; čísla sedí
+  s Toky (např. DE→CZ 166 GWh/d, CZ: těžba ze zásobníků 60, spotřeba ≈ 238 vs. hlášeno 221).
+
+### 3. Kontrola entry/exit — metodika
+- **Úroveň „hranice“** (hlavní, odpovídá šipkám): `entsog_flows` (ENTSO-G /aggregateddata,
+  souhrn všech bodů hranice za zónu TSO). Exit země A do B (`countryKey=A,
+  direction=exit, adjacentSystemsKey=TransmissionB…`) vs. entry země B z A, stejný
+  plynárenský den, GWh/d. Zvlášť pro **Physical Flow** (fyzický tok, měřené hodnoty) a
+  **Allocation** (alokace = obchodně přidělené množství po uzávěrce; liší se od fyzického
+  toku o linepack/odchylky, ale exit A a entry B by si měly odpovídat). Zóny se slučují
+  na zemi (BeLux → BE, THE → DE, Yamal → PL, IUK → UK…). Páry, kde hlásí jen jedna strana
+  (CH, UA, NO, vnější body), se nekontrolují.
+- **Úroveň „bod“**: `entsog_operational` indikátor **Renomination** (poslední renominace,
+  tedy plán, ne měření — fyzické toky po bodech v úložišti nejsou). Na propojovacím bodě
+  (`pointKey`, stejný pro obě strany) exit operátora země A vs. entry operátora země B
+  (země z prefixu `operatorKey`), jen body typu „Cross-Border…“. Ukazuje body, kde se
+  strany „nespárovaly“ (matching) nebo jedna strana publikuje jinak (např. Überackern DE
+  0 vs. AT 60,6 GWh/d, VIP DK-THE).
+- **Práh**: odchylka = |entry − exit| > **5 GWh/d** **a zároveň** > **5 %** z většího
+  z obou. Nastavení: `PPDASH_EE_REL_PCT`, `PPDASH_EE_ABS_GWH` v `~/.config/ppdash/env`;
+  na záložce Entry/exit jde přepsat ve formuláři.
+- Kde se ukazuje: (a) ⚠ u šipky ve flowchartu (tooltip s oběma hodnotami), (b) ⚠ v
+  geografické mapě uprostřed mezi zeměmi (hover), (c) tabulka „Nesrovnalosti entry/exit“
+  pod schématem a nová záložka **Plyn → Entry/exit** (rozsah dní, prahy, úroveň, nejčastější
+  páry, CSV/XLSX), (d) **Přehled dne**: událost „Plyn A→B: exit ≠ entry o … GWh/d“ (hranice
+  ve výběru flowchartu, poslední 2 dny, max 5 za den), (e) **Denní report**: sekce
+  „Nesrovnalosti entry/exit“ (jen když nějaké jsou; i v PDF/XLSX).
+- Nález nad daty z repa: NL→DE exit 1 091 vs. entry 622 GWh/d (fyzický tok, dlouhodobě;
+  alokace jen −13 %), BE↔NL, DE→AT (−19 %), ES→FR, GR→BG.
+
+### 4. 📋 Kopírovat obrázek
+U každého grafu (Plotly) i u schématu tlačítko v liště exportu. PNG ve světlém vzhledu
+s bílým pozadím, šířka okna grafu (800–1 100 px) × **2** (Outlook/Word/PowerPoint ostré,
+ne obří). `navigator.clipboard.write([new ClipboardItem({"image/png": Promise})])` —
+Promise se předává hned v kliknutí (Safari jinak odmítne). Potvrzení „Zkopírováno ✓ —
+vložte Ctrl+V“. Bez podpory (starší Firefox, iOS bez ClipboardItem, http) nebo při odmítnutí:
+PNG se otevře v novém okně + hláška „pravé tlačítko / dlouhý stisk → Kopírovat obrázek“.
+Ověřeno v headless Chromiu (obsah schránky: PNG 2 400 × 2 120 schéma, 2 200 × 760 graf).
+**NEOVĚŘENO** na skutečném Safari/Firefoxu/iOS a přes Cloudflare (HTTPS je podmínka).
+
+### 5. Nový vzhled jako výchozí
+- Výchozí na **Plyn, Elektřina, Nordic, Trh EU, Počasí**; v novém vzhledu jsou nahoře
+  přehledové záložky (✨) a **za nimi všechny původní záložky beze změny** (Toky, LNG,
+  GASSCO… vypadají jako dřív, jen mají export + kopírování). Přepínač „přepnout na starý /
+  nový“ (cookie na rok). Ostatní stránky beze změny.
+- Nové přehledy: **Trh EU** (KPI cen zón, mřížka 9 zón letos vs. pásmo 5 let se stejným
+  měřítkem, spready proti DE, spotřeba CZ vs. pásmo, tabulka), **Počasí** (KPI odchylky
+  teploty na 7 dní + HDD 14 dní vs. normál pro CZ/DE/Nordic, teplota CZ letos vs. pásmo +
+  předpověď ECMWF, odchylky teploty 60 dní + předpověď, vítr a slunce DE, tabulka),
+  **Elektřina → ✨ Odstávky** (nedostupný výkon CZ podle zdroje 30 dní zpět / 90 dopředu,
+  KPI, největší odstávky dnes).
+- Trh EU a Počasí ověřeny jen nad **syntetickými daty** (v repu nejsou) → **NEOVĚŘENO
+  s reálnými daty**.
+
+### 6. Elektřina z úložiště (`data/entsoe_store.py`)
+- Z úložiště: **DA ceny CZ dnes/zítra** (`entsoe_prices`, záložka DAP ceny + baterie),
+  **prognóza zatížení** (`entsoe_load` forecast; Odchylka & Generace, ČEPS graf),
+  **prognóza větru/slunce** (`entsoe_ws_forecast`). Stejný tvar dat jako dřív → grafy beze
+  změny. Živé API jen jako záloha, když v úložišti den chybí (typicky zítřejší ceny před
+  během 13:20); stavový řádek / poznámka ukazuje „úložiště“ nebo „živě“.
+- Živě dál (v úložišti nejsou nebo jen 1× denně): systémová odchylka a cena (ENTSO-E jako
+  fallback k ČEPS), výroba podle zdrojů za dnešek, odstávky PU/GU (úložiště má jen GU),
+  aktivační ceny, rezervy. `fetch_entsoe_data(with_load=False)` = o 2 dotazy méně na otevření.
+- Tlačítko **⟳ Aktualizovat teď** na Elektřině spouští nový cíl `elektrina` = skupina
+  `power` + `entsoe_prices`, `entsoe_load`, `entsoe_ws` (systemd `ppdash-run@elektrina`).
+
+### Testy (kolo 6)
+**375 testů** zelených (i s `PPDASH_TEST_EMPTY=1`): `tests/test_gasflow.py` (přiřazení
+partnerů a zón, tabulka hranic, kontrola hranic s prahy, bodová kontrola z renominací,
+flowchart + bilance + validní SVG, mcm, prahy z env, feed a report, web: schéma, posuvník,
+pohled mapa, záložka Entry/exit, CSV/XLSX), CSV kompakce LNG (`test_maintenance.py`),
+`tests/test_entsoe_store.py` (ceny/zatížení/OZE z úložiště, záloha živě, snapshot bez
+živého dotazu na zatížení, cíl tlačítka), `test_v2.py` (výchozí nový vzhled se všemi
+záložkami, nové přehledy vč. syntetických dat).
+
+### Co ověřit v kontejneru (kolo 6)
+1. `git pull` a restart webu (`systemctl --user restart ppdash-web`); unity se neměnily.
+2. **Údržba na kopii** znovu: `cp -a ~/ppdash-data /tmp/pp-copy && PPDASH_DATA_DIR=/tmp/pp-copy
+   .venv/bin/python scripts/update_all.py --only maintenance -v` → `lng_storage/2023` bez
+   chyby, 0 chyb celkem. Pak ostře přes /stav.
+3. `/plyn` → ✨ Přehled, pak **Mapa**: schéma pro poslední den, posuvník, d/d a t/t, mcm/d;
+   zkontrolovat pár šipek proti Toky (DE→CZ, SK→AT, HU→SK) a bilanci CZ (spotřeba ≈ vs.
+   hlášeno). Hledat, jestli nějaká hranice chybí nebo má opačný směr (**NEOVĚŘENO** na plné
+   historii — data z repa končí 23. 10.).
+4. **Entry/exit**: `/plyn?tab=entry-exit` za posledních 7 dní — dávají páry smysl? Případně
+   upravit prahy (`PPDASH_EE_REL_PCT`, `PPDASH_EE_ABS_GWH`). Přehled dne → události „Plyn
+   A→B: exit ≠ entry“ po dalším běhu přehledu; Reporty → Denní → sekce Nesrovnalosti.
+5. **📋 Kopírovat obrázek** přes Cloudflare (HTTPS) v Chrome/Edge, Safari (macOS, iOS),
+   Firefox: vložit do Outlooku/Wordu/PowerPointu; na iOS/Firefox čekat otevření PNG v novém
+   okně + hlášku.
+6. **Nový vzhled**: `/trh-eu`, `/pocasi` (reálná data!), `/elektrina` → ✨ Odstávky; přepnutí
+   na starý a zpět.
+7. **Elektřina**: DAP ceny ukazují „D0 úložiště, D+1 úložiště“ (odpoledne po 13:20) nebo
+   „živě“ dopoledne; ⟳ Aktualizovat teď na Elektřině → `journalctl --user -u
+   'ppdash-run@elektrina' -n 30` (běží i entsoe_prices/load/ws).
 
 ## Kolo 5 (2026-10-24): audit dat, údržba, aktualizace na tlačítko, nový vzhled
 
@@ -883,6 +1024,8 @@ Závěr: **příčina je na straně API**, kód ji ale zhoršoval.
 - Detekce „nových odstávek“ se pamatuje jen v rámci procesu (po restartu
   web první porovnání nemá) — stejné jako dřív session_state.
 - `fetch_reserves()` 10 dní natvrdo, `load_gie_all()` čte všechny roky.
+- Flowchart: fyzické toky po jednotlivých bodech v úložišti nejsou (jen souhrn po hranicích
+  a renominace po bodech) — bodová kontrola entry/exit je proto z renominací.
 - Přihlášení řeší výhradně Cloudflare Access — aplikace sama žádnou
   autentizaci nemá (`/api/cache/clear` je POST bez ochrany).
 
