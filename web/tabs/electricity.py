@@ -71,8 +71,8 @@ def dashboard(p):
     return {
         "status": [
             status_item("ČEPS", ceps["now"].date() if ceps.get("now") is not None else None, 1),
-            status_item("ENTSO-E", now_naive, 48),
-            status_item("DAP", now_naive, 48),
+            status_item("ENTSO-E (odchylka, výroba — živě)", now_naive, 48),
+            status_item(f"Prognóza zatížení ({_src('load_fc')})", now_naive, 48),
         ],
         "ema": b["ema_periods"], "thr": b["threshold"], "benefit": b["benefit"],
         "n_int": n_int, "benefit_total": (n_int or 0) * 0.25 * b["benefit"],
@@ -125,10 +125,10 @@ def _ch_load(p):
 
 @chart(PAGE, "dashboard", "wind_solar")
 def _ch_wind_solar(p):
-    from data.entsoe import fetch_wind_solar_forecast
+    from data.entsoe_store import wind_solar_forecast
     from charts.generation import fig_wind_solar_forecast
     snap = entsoe_snapshot()
-    return fig_wind_solar_forecast(fetch_wind_solar_forecast(), snap["now"], gen_raw=snap["gen_raw"])
+    return fig_wind_solar_forecast(wind_solar_forecast(), snap["now"], gen_raw=snap["gen_raw"])
 
 
 @chart(PAGE, "dashboard", "gen_area")
@@ -337,12 +337,17 @@ def _ch_delta(p):
 
 # ── DAP ceny ────────────────────────────────────────────────────────────
 
+def _src(kind: str) -> str:
+    from data.entsoe_store import source
+    return source(kind)
+
+
 def _dap_series():
     """(D0, D+1) DAP; při nedostupném ENTSO-E (chybí token, výpadek) prázdné
     řady — záložka pak ukáže hlášku místo chyby."""
-    from data.entsoe import fetch_dap
+    from data.entsoe_store import dap
     try:
-        return fetch_dap(0), fetch_dap(1)
+        return dap(0), dap(1)
     except Exception as e:
         log.warning("DAP nedostupné: %s", e)
         empty = pd.Series(dtype=float, name="dap_EUR_MWh")
@@ -382,6 +387,8 @@ def dap_tab(p):
                                              ("Min", "min"), ("Max", "max")]]
     return {
         **b,
+        "source": f"DA ceny: D0 {_src('dap0')}, D+1 {_src('dap1')} (úložiště = entsoe_prices, aktualizace 07:10 "
+                  "a 13:20 nebo tlačítkem ⟳ Aktualizovat teď; živě jen když den v úložišti chybí)",
         "d0_label": f"D0 — {now.strftime('%d.%m.%Y')}",
         "d1_label": f"D+1 — {(now + pd.Timedelta(days=1)).strftime('%d.%m.%Y')}",
         "stats_d0": stats(s_d0), "stats_d1": stats(s_d1),

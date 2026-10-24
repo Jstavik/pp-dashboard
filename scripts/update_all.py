@@ -163,6 +163,8 @@ ENTSOE_TASKS = ["entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows"]
 GROUPS = {
     "gas":   ["entsog", "entsog_allocation", "entsog_operational", "gie", "lng", "gassco"],
     "power": ["hydro", "dap_europe", "generation", "outages"],
+    # tlačítko na stránce Elektřina: power + to, co stránka čte z úložiště ENTSO-E
+    "elektrina": ["hydro", "dap_europe", "generation", "outages", "entsoe_prices", "entsoe_load", "entsoe_ws"],
     "live":  list(LIVE_TASKS),
     "entsoe": list(ENTSOE_TASKS),
     "nordic": ["nve", "fingrid", "energinet"],

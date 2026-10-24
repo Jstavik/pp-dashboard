@@ -58,7 +58,10 @@ def _make_client(token):
 
 
 @ttl_cache(ttl=60 * 30, disk=True)
-def fetch_entsoe_data():
+def fetch_entsoe_data(with_load: bool = True):
+    """Živý snapshot ENTSO-E pro Elektřinu. with_load=False (web) — prognózu
+    zatížení bere web z úložiště (data/entsoe_store.py), skutečné zatížení
+    z ČEPS; vrací se prázdné řady a o 2 dotazy na API méně."""
     client = _get_client()
     now        = pd.Timestamp.now(tz="Europe/Prague")
     start_day  = now.normalize()
@@ -125,16 +128,16 @@ def fetch_entsoe_data():
         fut_vol         = executor.submit(client.query_imbalance_volumes, "CZ", start=start_day, end=end_imbal)
         fut_price       = executor.submit(_fetch_price)
         fut_gen         = executor.submit(_fetch_gen)
-        fut_load_actual = executor.submit(_fetch_load_actual)
-        fut_load_fc     = executor.submit(_fetch_load_fc)
+        fut_load_actual = executor.submit(_fetch_load_actual) if with_load else None
+        fut_load_fc     = executor.submit(_fetch_load_fc) if with_load else None
         fut_pu          = executor.submit(_fetch_unavail, "PU", client.query_unavailability_of_production_units)
         fut_gu          = executor.submit(_fetch_unavail, "GU", client.query_unavailability_of_generation_units)
 
         vol         = fut_vol.result()
         pri         = fut_price.result()
         gen         = fut_gen.result()
-        load_actual = fut_load_actual.result()
-        load_fc     = fut_load_fc.result()
+        load_actual = fut_load_actual.result() if with_load else pd.Series(dtype="float64", name="actual_MW")
+        load_fc     = fut_load_fc.result() if with_load else pd.Series(dtype="float64", name="forecast_MW")
         pu_raw      = fut_pu.result()
         gu_raw      = fut_gu.result()
     finally:

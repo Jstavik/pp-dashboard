@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
     "gas":           ("Plyn (ENTSO-G, GIE, LNG, GASSCO)", "gas", 600),
     "power":         ("Elektřina ČR/EU (výroba, odstávky, DAP, hydro)", "power", 900),
+    "elektrina":     ("Elektřina (výroba, odstávky, hydro, DA ceny, prognóza zatížení a OZE)", "elektrina", 900),
     "entsoe":        ("ENTSO-E (ceny zón, spotřeba, prognóza OZE, toky)", "entsoe", 900),
     "entsoe_prices": ("ENTSO-E day-ahead ceny", "entsoe_prices", 600),
     "nordic":        ("Nordic (NVE, Fingrid, Energinet)", "nordic", 900),

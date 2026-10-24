@@ -104,7 +104,7 @@ def status_page(request: Request):
 
 
 # stránka → cíl tlačítka „Aktualizovat teď“ (core/jobs.py::TARGETS)
-PAGE_REFRESH = {"plyn": "gas", "elektrina": "power", "odstavky-ceps": "power", "trh-eu": "entsoe",
+PAGE_REFRESH = {"plyn": "gas", "elektrina": "elektrina", "odstavky-ceps": "power", "trh-eu": "entsoe",
                 "nordic": "nordic", "pocasi": "weather", "energy-charts": "energy_charts", "cot": "cot",
                 "report": "gas"}
 

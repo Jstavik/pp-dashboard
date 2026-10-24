@@ -1,4 +1,5 @@
 {% import "macros.html" as m %}
+<p class="muted small">ℹ️ {{ c.source }}</p>
 {{ m.chart("dap", 330) }}
 <div class="grid-2">
   {% for label, stats in [(c.d0_label, c.stats_d0), (c.d1_label, c.stats_d1)] %}

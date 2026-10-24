@@ -1,7 +1,8 @@
 """Sdílené výpočty pro víc záložek (hlavička Elektřiny, ČEPS odstávky).
 
 ENTSO-E snapshot (fetch_entsoe_data, TTL 30 min) nese odstávky PU/GU,
-prognózu zatížení, ceny odchylky a generaci podle PSR. Odchylka a výroba
+ceny odchylky a generaci podle PSR (živě); prognóza zatížení jde
+z úložiště (data/entsoe_store.py). Odchylka a výroba
 v hlavičce jdou z ČEPS (živě po minutě, OPTIMIZATION_REPORT.md: ČEPS má
 menší zpoždění než ENTSO-E); ENTSO-E je jen fallback, když ČEPS nic nevrátí.
 """
@@ -48,12 +49,13 @@ _changes = _OutageChanges()
 
 def entsoe_snapshot() -> dict:
     from data.entsoe import fetch_entsoe_data
+    from data.entsoe_store import load_forecast
     from charts.imbalance import parse_imbalance
     from charts.outages import parse_outages
 
     error = None
     try:
-        imbal_raw, gen_raw, load_actual, load_fc, out_raw, now = fetch_entsoe_data()
+        imbal_raw, gen_raw, load_actual, load_fc, out_raw, now = fetch_entsoe_data(with_load=False)
     except Exception as e:
         log.warning("ENTSO-E nedostupné: %s", e)
         error = f"{type(e).__name__}: {e}"
@@ -64,6 +66,10 @@ def entsoe_snapshot() -> dict:
         load_fc     = pd.Series(dtype="float64", name="forecast_MW")
         out_raw     = pd.DataFrame()
 
+    try:
+        load_fc = load_forecast()  # úložiště entsoe_load, živě jen když tam dnešek chybí
+    except Exception as e:
+        log.warning("prognóza zatížení: %s", e)
     df_imbal = parse_imbalance(imbal_raw)
     df_out = parse_outages(out_raw)
     changes = _changes.update(now if error is None else None, df_out)
