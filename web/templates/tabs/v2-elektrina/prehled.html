@@ -1,0 +1,19 @@
+{% import "macros.html" as m %}
+{% if not c.has_da and not c.has_gen %}<div class="alert alert-warn">Data se dotahují — zatím nejsou k dispozici (ENTSO-E ceny a výroba).</div>
+{% else %}
+<div class="v2">
+  <div class="v2-kpis">{% for k in c.kpis %}{{ m.kpi(k.label, k.value, k.sub, unit=k.unit) }}{% endfor %}</div>
+  {% if c.has_da %}
+  {{ m.chart("base", 400) }}
+  <div class="v2-grid-2">
+    <div>{{ m.chart("recent", 340) }}{{ m.chart("spread", 260) }}</div>
+    <div>{{ m.chart("profile", 320) }}
+      <div class="card panel"><h3 class="section-title">Čísla za grafy</h3>{{ m.table(c.table) }}
+      <p class="muted small">Base = průměr hodin dne dodávky, peak = 8–20 h po–pá (místní čas). Zdroj ENTSO-E (SDAC).</p></div>
+    </div>
+  </div>
+  {% endif %}
+  {% if c.has_gen %}{{ m.chart("gen", 560) }}{% endif %}
+  <p class="muted small">Živá data ČEPS (odchylka, SVR), odstávky a rezervy jsou ve <a href="?vzhled=stary">starém vzhledu</a>.</p>
+</div>
+{% endif %}

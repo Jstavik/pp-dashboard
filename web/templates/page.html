@@ -3,11 +3,15 @@
 {% from "macros.html" import refresh_button %}
 {% block content %}
 <div class="page" data-page="{{ page.key }}" data-active="{{ active_tab }}" data-initial-query="{{ initial_query }}">
-  {% if page.key == "elektrina" %}
+  {% if page.key in ("elektrina", "v2-elektrina") %}
   <div id="page-header" data-src="/frag-header/elektrina" data-refresh="60" class="page-header loading-block"></div>
   {% endif %}
-  {% if refresh_target %}<div class="page-tools">{{ refresh_button(refresh_target) }}</div>{% endif %}
-  <div class="tabbar" role="tablist">
+  {% if refresh_target or look %}<div class="page-tools">
+    {% if look == "novy" %}<span class="look-toggle">Nový vzhled<span class="look-badge">prototyp</span> · <a href="/{{ base_key }}?vzhled=stary">přepnout na starý</a></span>
+    {% elif look == "stary" %}<span class="look-toggle"><a href="/{{ base_key }}?vzhled=novy">✨ Vyzkoušet nový vzhled</a> <span class="muted small">(prototyp, starý zůstává)</span></span>{% endif %}
+    {% if refresh_target %}{{ refresh_button(refresh_target) }}{% endif %}
+  </div>{% endif %}
+  <div class="tabbar" role="tablist"{% if page.tabs|length < 2 %} style="display: none"{% endif %}>
     {% for tkey in page.tabs %}{% set t = tabs[(page.key, tkey)] %}
       <button type="button" role="tab" class="tab{{ ' active' if tkey == active_tab }}" data-tab="{{ tkey }}"
               aria-selected="{{ 'true' if tkey == active_tab else 'false' }}">{{ t.title }}{% if t.refresh %}<span class="live-dot" title="Automatická obnova po {{ t.refresh }} s"></span>{% endif %}</button>

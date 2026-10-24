@@ -1,0 +1,20 @@
+{% import "macros.html" as m %}
+{% if not c.has_nve and not c.has_prices %}<div class="alert alert-warn">Data se dotahují — zatím nejsou k dispozici (NVE, ENTSO-E ceny).</div>
+{% else %}
+<div class="v2">
+  <div class="v2-kpis">{% for k in c.kpis %}{{ m.kpi(k.label, k.value, k.sub, unit=k.unit) }}{% endfor %}</div>
+  {% if c.has_nve %}
+  <div class="v2-grid-2">
+    {{ m.chart("hydro", 400) }}
+    <div class="card panel"><h3 class="section-title">Hydrobilance Norska</h3>{{ m.table(c.hydro_table) }}
+      <p class="muted small">NVE Magasinstatistikk (týdně, interpolováno na dny pro pásmo 5 let).</p></div>
+  </div>
+  {{ m.chart("hydro_multi", 300) }}
+  {% endif %}
+  {% if c.has_prices %}
+  {{ m.chart("spreads", 520) }}
+  <div class="card panel"><h3 class="section-title">Ceny zón</h3>{{ m.table(c.price_table) }}</div>
+  {% endif %}
+  <p class="muted small">Toky, Finsko/Dánsko a ENTSO-E nádrže SE/FI ve <a href="?vzhled=stary">starém vzhledu</a>.</p>
+</div>
+{% endif %}
