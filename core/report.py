@@ -241,6 +241,37 @@ def fig_events(asof, weekly=False):
     return fig
 
 
+def fig_gas_mismatch(asof):
+    """Poznámka do Denního reportu: hranice/body, kde exit ≠ entry (core/gasflow.py)."""
+    from core import gasflow as gf
+    days = [d for d in gf.available_days() if d <= asof.date()]
+    if not days:
+        return None
+    day = days[-1]
+    m = gf.mismatches(day)
+    if m.empty:
+        return None
+    m = m.head(15)
+    rel, ab = gf.thresholds()
+    ind = {"Physical Flow": "fyzický tok", "Allocation": "alokace", "Renomination": "renominace"}
+    f = lambda v: f"{v:,.1f}".replace(",", " ").replace(".", ",")  # noqa: E731
+    cols = {"směr": [f"{a} → {b}" for a, b in zip(m["from"], m["to"])],
+            "bod / hranice": [p if lv == "bod" else "hranice (souhrn)" for p, lv in zip(m["point"], m["level"])],
+            "veličina": [ind.get(i, i) for i in m["indicator"]],
+            "exit A GWh/d": [f(v) for v in m["exit"]], "entry B GWh/d": [f(v) for v in m["entry"]],
+            "rozdíl": [("+" if v > 0 else "−") + f(abs(v)) for v in m["diff"]], "%": [f"{v:.0f}" for v in m["rel"]]}
+    fig = go.Figure(go.Table(
+        columnwidth=[60, 230, 70, 70, 70, 60, 35],
+        header=dict(values=list(cols), fill_color="#eef2f7", align="left", font=dict(size=11, color="#1d2733")),
+        cells=dict(values=list(cols.values()), align="left", fill_color="#ffffff", font=dict(size=10, color="#1d2733"),
+                   height=22)))
+    fig.update_layout(title=dict(text=f"Plyn: nesrovnalosti entry/exit {day:%d.%m.%Y} (práh {rel:g} % a {ab:g} GWh/d)",
+                                 x=0, font=dict(size=14)),
+                      height=min(700, 80 + 24 * (len(m) + 1)), margin=dict(l=10, r=10, t=40, b=10),
+                      font=dict(family=FONT), paper_bgcolor="#ffffff")
+    return fig
+
+
 SECTIONS = {
     "denni": [
         ("klicova", "Klíčová čísla", lambda a: fig_key_numbers(a)),
@@ -249,6 +280,7 @@ SECTIONS = {
         ("spread", "Spread CZ–DE", lambda a: fig_spread(a)),
         ("zasobniky", "Zásobníky plynu", lambda a: fig_storage(a)),
         ("toky", "Toky plynu", lambda a: fig_flows(a)),
+        ("entryexit", "Nesrovnalosti entry/exit", lambda a: fig_gas_mismatch(a)),
         ("teplota", "Teplota vs. normál", lambda a: fig_temp(a)),
         ("udalosti", "Události", lambda a: fig_events(a)),
     ],

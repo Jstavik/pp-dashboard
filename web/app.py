@@ -352,7 +352,15 @@ def csv_export(request: Request, name: str):
     fn = registry.CSVS.get(name)
     if fn is None:
         raise HTTPException(404, "Export neexistuje")
-    df, filename = fn(Params.from_request(request))
+    p = Params.from_request(request)
+    fmt = p.str("fmt", "csv", choices=["csv", "xlsx"])
+    p._items = [(k, v) for k, v in p._items if k != "fmt"]
+    df, filename = fn(p)
+    if fmt == "xlsx":
+        from web import export
+        body = export.dataframe_xlsx_bytes(df.reset_index(), {"export": name, "parametry": str(p)})
+        return Response(body, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f'attachment; filename="{filename[:-4]}.xlsx"'})
     buf = io.StringIO()
     df.to_csv(buf)
     return Response(buf.getvalue().encode("utf-8"), media_type="text/csv; charset=utf-8",

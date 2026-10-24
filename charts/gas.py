@@ -666,3 +666,30 @@ def fig_gas_map(
         paper_bgcolor="white",
     )
     return fig
+
+
+def add_mismatch_markers(fig: go.Figure, mm: pd.DataFrame) -> go.Figure:
+    """⚠ na hranicích, kde exit země A ≠ entry země B (core.gasflow.mismatches,
+    jen úroveň „hranice“) — značka uprostřed mezi středy zemí, detail v tooltipu."""
+    if mm is None or mm.empty:
+        return fig
+    mm = mm[mm["level"] == "hranice"]
+    lat, lon, txt = [], [], []
+    for (a, b), g in mm.groupby(["from", "to"]):
+        ca, cb = CENTERS_MAP.get(COUNTRY_CODES_MAP.get(a, "")), CENTERS_MAP.get(COUNTRY_CODES_MAP.get(b, ""))
+        if ca is None or cb is None:
+            continue
+        lat.append((ca[0] + cb[0]) / 2 + 0.25)
+        lon.append((ca[1] + cb[1]) / 2)
+        lines = [f"<b>⚠ {a} → {b}: exit ≠ entry</b>"]
+        for r in g.itertuples(index=False):
+            ind = {"Physical Flow": "fyzický tok", "Allocation": "alokace"}.get(r.indicator, r.indicator)
+            lines.append(f"{ind}: exit {a} {r.exit:,.1f} · entry {b} {r.entry:,.1f} GWh/d "
+                         f"(rozdíl {r.diff:+,.1f}, {r.rel:.0f} %)".replace(",", " ").replace(".", ","))
+        txt.append("<br>".join(lines))
+    if lat:
+        fig.add_trace(go.Scattermap(
+            lat=lat, lon=lon, mode="markers+text", text=["⚠"] * len(lat), textfont=dict(size=16, color="#E65100"),
+            marker=dict(size=20, color="rgba(249,168,37,.35)"), hovertext=txt, hoverinfo="text",
+            name="Nesrovnalost exit/entry", showlegend=False))
+    return fig

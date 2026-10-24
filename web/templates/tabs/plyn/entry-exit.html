@@ -1,0 +1,16 @@
+{% import "macros.html" as m %}
+<form class="controls">
+  {{ m.daterange(c.d_from, c.d_to, "📆 Dny", None, c.min_d, c.max_d) }}
+  {{ m.number("rel", c.rel, "Práh rozdílu %", 0, 100, 0.5, "Odchylka se hlásí, když je relativní I absolutní rozdíl nad prahem") }}
+  {{ m.number("abs", c.abs, "Práh GWh/d", 0, 10000, 0.5) }}
+  {{ m.multiselect("levels", ["hranice", "bod"], c.levels, "Úroveň", c.level_labels) }}
+</form>
+<p class="muted">Porovnává se, co hlásí země A jako <b>exit</b> do země B, s tím, co hlásí země B jako <b>entry</b> ze země A — stejný plynárenský den, GWh/d. Odchylka = relativní rozdíl nad {{ "%g"|format(c.rel) }} % <i>a zároveň</i> absolutní nad {{ "%g"|format(c.abs) }} GWh/d. Metodika: REBUILD_NOTES (kolo 6).</p>
+{% if c.pairs %}
+<div class="metric-grid">
+{% for r in c.pairs %}<div class="metric"><div class="m-label">⚠ {{ r["from"] }} → {{ r["to"] }}</div><div class="m-value">{{ r.n }}×</div><div class="muted small">{{ r.level }}</div></div>{% endfor %}
+</div>
+{% endif %}
+{{ m.section("Nesrovnalosti entry/exit (" ~ c.n ~ ")") }}
+{{ m.table(c.table, empty="V tomto období žádná odchylka nad prahem.") }}
+<p class="small"><a href="/api/csv/entry-exit?{{ c.query }}" download>⬇ CSV</a> · <a href="/plyn?tab=mapa&date={{ c.d_to }}">Schéma toků k {{ c.d_to.strftime("%d.%m.%Y") }} →</a></p>

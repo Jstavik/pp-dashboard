@@ -260,6 +260,7 @@
   }
 
   function initCharts(root) {
+    initSvgCharts(root);
     root.querySelectorAll(".chart[data-chart]").forEach(function (el) {
       addExportTools(el);
       // report (tisk) potřebuje všechny grafy hned, ne až při skrolování
@@ -309,13 +310,15 @@
     bar.className = "chart-tools";
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", "Export grafu");
-    [["png", "PNG", "Obrázek PNG (vysoké rozlišení, světlý režim)"],
+    [["copy", "📋 Kopírovat obrázek", "Zkopírovat graf jako obrázek PNG do schránky (vložit do Outlooku, Wordu, PowerPointu)"],
+     ["png", "PNG", "Obrázek PNG (vysoké rozlišení, světlý režim)"],
      ["svg", "SVG", "Vektorový obrázek SVG (světlý režim)"],
      ["csv", "CSV", "Data za grafem (CSV)"],
      ["xlsx", "XLSX", "Data za grafem (Excel)"]].forEach(function (b) {
       var btn = document.createElement("button");
       btn.type = "button"; btn.textContent = b[1]; btn.title = b[2]; btn.dataset.fmt = b[0];
       btn.addEventListener("click", function () {
+        if (b[0] === "copy") return copyImage(function () { return figPngBlob(el); }, btn);
         if (b[0] === "png" || b[0] === "svg") return saveImage(el, b[0]);
         var a = document.createElement("a");
         a.href = dataUrl(el, b[0]); a.download = "";
@@ -325,6 +328,187 @@
     });
     card.appendChild(bar);
   }
+
+  /* ── kopírování obrázku do schránky ───────────────────────────────── */
+  // PNG ve světlém vzhledu, 2× rozlišení (ostré v Outlooku/Wordu/PowerPointu,
+  // ale ne obří). navigator.clipboard.write + ClipboardItem potřebuje HTTPS
+  // (web jde přes Cloudflare) — ClipboardItem dostane Promise<Blob> hned
+  // v obsluze kliknutí, jinak by ho Safari odmítl (ztráta „user gesture“).
+  // Bez podpory (starší Firefox, iOS bez ClipboardItem, http): PNG se otevře
+  // v novém okně a hláška poradí kopírovat odtamtud.
+  var COPY_W = 1100;
+
+  function toast(text, ms) {
+    var t = document.querySelector(".pp-toast");
+    if (!t) { t = document.createElement("div"); t.className = "pp-toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
+    t.textContent = text;
+    t.classList.add("show");
+    clearTimeout(t._ppT);
+    t._ppT = setTimeout(function () { t.classList.remove("show"); }, ms || 1800);
+  }
+
+  function dataUrlToBlob(url) {
+    var parts = url.split(","), bin = atob(parts[1]), arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: "image/png" });
+  }
+
+  function figPngBlob(el) {
+    if (!el._ppFig || !window.Plotly) return Promise.reject(new Error("graf ještě není načtený"));
+    var f = themed(el._ppFig, true);
+    var w = Math.min(Math.max(el.clientWidth || 0, 800), COPY_W);
+    var h = Math.max(el.clientHeight || 0, (f.layout && f.layout.height) || 0, 320);
+    f.layout.width = w; f.layout.height = h; f.layout.autosize = false;
+    return Plotly.toImage({ data: f.data, layout: f.layout, config: { staticPlot: true, locale: "cs" } },
+                          { format: "png", width: w, height: h, scale: 2 }).then(dataUrlToBlob);
+  }
+
+  function copyImage(makeBlob, btn) {
+    var canClip = window.isSecureContext && navigator.clipboard && navigator.clipboard.write && window.ClipboardItem;
+    var label = btn ? btn.textContent : "";
+    var done = function () {
+      toast("Zkopírováno ✓ — vložte Ctrl+V");
+      if (btn) { btn.textContent = "✓ Zkopírováno"; setTimeout(function () { btn.textContent = label; }, 1600); }
+    };
+    var win = null;
+    var fallback = function (why) {
+      makeBlob().then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        if (win && !win.closed) { win.location.href = url; }
+        else if (!window.open(url, "_blank")) {
+          var a = document.createElement("a"); a.href = url; a.download = "graf.png";
+          document.body.appendChild(a); a.click(); a.remove();
+        }
+        toast((why || "Prohlížeč neumí vložit obrázek do schránky") +
+              " — PNG je otevřené v novém okně: pravé tlačítko / dlouhý stisk → Kopírovat obrázek.", 6000);
+      }).catch(function (err) { if (win) win.close(); toast("Obrázek se nepodařilo vytvořit: " + err.message, 4000); });
+    };
+    if (!canClip) {
+      win = window.open("", "_blank");  // otevřít hned (blokování vyskakovacích oken)
+      return fallback();
+    }
+    try {
+      navigator.clipboard.write([new window.ClipboardItem({ "image/png": makeBlob() })])
+        .then(done, function (err) { fallback("Kopírování odmítnuto (" + (err && err.name || "chyba") + ")"); });
+    } catch (err) {
+      fallback();
+    }
+  }
+
+  /* ── SVG schémata (toky plynu CEE) ─────────────────────────────────── */
+  // SVG renderuje server (ostré v každém rozlišení); barvy pro tmavý režim
+  // přebíjí app.css. Export bere čistý klon (vložený <style> = světlý).
+  function svgMarkup(svg) {
+    var c = svg.cloneNode(true);
+    c.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    c.removeAttribute("style");
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(c);
+  }
+
+  function svgPngBlob(svg, scale) {
+    return new Promise(function (resolve, reject) {
+      var vb = svg.viewBox.baseVal, w = vb.width || svg.clientWidth, h = vb.height || svg.clientHeight;
+      var img = new Image();
+      img.onload = function () {
+        var cv = document.createElement("canvas");
+        cv.width = Math.round(w * scale); cv.height = Math.round(h * scale);
+        var ctx = cv.getContext("2d");
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.drawImage(img, 0, 0, cv.width, cv.height);
+        cv.toBlob(function (b) { if (b) resolve(b); else reject(new Error("canvas")); }, "image/png");
+      };
+      img.onerror = function () { reject(new Error("SVG se nepodařilo převést")); };
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgMarkup(svg));
+    });
+  }
+
+  function svgFileBase(box) {
+    var stamp = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Prague", hour12: false })
+      .replace(/[-:]/g, "").replace(" ", "-").slice(0, 13);
+    return (box.dataset.svg || "schema") + "_" + stamp;
+  }
+
+  function download(href, name) {
+    var a = document.createElement("a");
+    a.href = href; a.download = name || "";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  function initSvgCharts(root) {
+    root.querySelectorAll(".svg-chart").forEach(function (box) {
+      var svg = box.querySelector("svg");
+      var card = box.closest(".chart-card");
+      if (!svg || !card || card.querySelector(".chart-tools")) return;
+      // nativní <title> by na desktopu duplikoval vlastní tooltip
+      svg.querySelectorAll("title").forEach(function (t) { t.remove(); });
+      card.classList.add("has-fig");
+      var bar = document.createElement("div");
+      bar.className = "chart-tools";
+      bar.setAttribute("role", "group");
+      bar.setAttribute("aria-label", "Export schématu");
+      [["copy", "📋 Kopírovat obrázek", "Zkopírovat schéma jako obrázek PNG do schránky"],
+       ["png", "PNG", "Obrázek PNG (3× rozlišení, světlý režim)"],
+       ["svg", "SVG", "Vektorový obrázek SVG"],
+       ["csv", "CSV", "Data za schématem (CSV)"],
+       ["xlsx", "XLSX", "Data za schématem (Excel)"]].forEach(function (b) {
+        if ((b[0] === "csv" || b[0] === "xlsx") && !box.dataset.csv) return;
+        var btn = document.createElement("button");
+        btn.type = "button"; btn.textContent = b[1]; btn.title = b[2]; btn.dataset.fmt = b[0];
+        btn.addEventListener("click", function () {
+          if (b[0] === "copy") return copyImage(function () { return svgPngBlob(svg, 2); }, btn);
+          if (b[0] === "png") return svgPngBlob(svg, 3).then(function (blob) {
+            var u = URL.createObjectURL(blob); download(u, svgFileBase(box) + ".png");
+            setTimeout(function () { URL.revokeObjectURL(u); }, 4000);
+          });
+          if (b[0] === "svg") {
+            var u = URL.createObjectURL(new Blob([svgMarkup(svg)], { type: "image/svg+xml" }));
+            download(u, svgFileBase(box) + ".svg");
+            return setTimeout(function () { URL.revokeObjectURL(u); }, 4000);
+          }
+          download(box.dataset.csv + (b[0] === "xlsx" ? "&fmt=xlsx" : ""), "");
+        });
+        bar.appendChild(btn);
+      });
+      card.appendChild(bar);
+    });
+    // posuvník dní → pole data ve stejném formuláři (pak se formulář odešle sám)
+    root.querySelectorAll("input[type=range][data-days]").forEach(function (r) {
+      var days = JSON.parse(r.dataset.days || "[]");
+      var lbl = r.parentElement.querySelector(".field-label");
+      var fmt = function (d) { var p = d.split("-"); return +p[2] + ". " + +p[1] + ". " + p[0]; };
+      var base = lbl ? lbl.textContent : "";
+      var show = function () { if (lbl && days[r.value]) lbl.textContent = base.replace(/\s*—.*$/, "") + " — " + fmt(days[r.value]); };
+      show();
+      r.addEventListener("input", show);
+      r.addEventListener("change", function () {
+        var f = r.closest("form"), inp = f && f.querySelector('input[name="' + (r.dataset.target || "date") + '"]');
+        if (inp && days[r.value]) inp.value = days[r.value];
+      });
+    });
+  }
+
+  // tooltip schématu: hover (myš) i klepnutí (dotyk)
+  var svgTip = null;
+  function showSvgTip(node, x, y) {
+    if (!svgTip) { svgTip = document.createElement("div"); svgTip.className = "svg-tip"; document.body.appendChild(svgTip); }
+    svgTip.textContent = node.getAttribute("data-tip");
+    svgTip.style.display = "block";
+    var w = svgTip.offsetWidth, h = svgTip.offsetHeight;
+    var left = Math.min(x + 14, window.innerWidth - w - 8), top = y + 16;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, y - h - 12);
+    svgTip.style.left = Math.max(8, left) + "px"; svgTip.style.top = top + "px";
+  }
+  function hideSvgTip() { if (svgTip) svgTip.style.display = "none"; }
+  document.addEventListener("mousemove", function (e) {
+    var n = e.target.closest && e.target.closest(".svg-chart [data-tip]");
+    if (n) showSvgTip(n, e.clientX, e.clientY); else if (svgTip && svgTip.style.display === "block" && !svgTip._pinned) hideSvgTip();
+  });
+  document.addEventListener("click", function (e) {
+    var n = e.target.closest && e.target.closest(".svg-chart [data-tip]");
+    if (n) { showSvgTip(n, e.clientX, e.clientY); svgTip._pinned = true; }
+    else if (svgTip) { svgTip._pinned = false; hideSvgTip(); }
+  });
+  window.addEventListener("scroll", function () { if (svgTip && !svgTip._pinned) hideSvgTip(); }, { passive: true });
 
   function rethemeAll() {
     document.querySelectorAll(".chart").forEach(function (el) {

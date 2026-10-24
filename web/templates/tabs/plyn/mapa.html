@@ -2,8 +2,30 @@
 {{ m.status_row(c.status) }}
 {% if c.empty %}<div class="alert alert-warn">ENTSO-G data nejsou dostupná.</div>
 {% else %}
+<form class="controls">
+  {{ m.radio("view", c.views, c.view, "Pohled", c.view_labels) }}
+  {% if c.view == "schema" and c.day %}
+  {{ m.date("date", c.day, "📅 Plynárenský den", c.days[0], c.days[-1]) }}
+  <label class="field day-slider"><span class="field-label">Posuvník (posledních {{ c.slider_days|length }} dní)</span>
+    <input type="range" min="0" max="{{ c.slider_days|length - 1 }}" value="{{ c.slider_i }}" data-days='{{ c.slider_days|tojson }}' data-target="date" aria-label="Den"></label>
+  {{ m.radio("cmp", c.compares, c.compare, "Porovnat", c.compare_labels) }}
+  {{ m.radio("unit", c.units, c.unit, "Jednotky", c.unit_labels) }}
+  {% endif %}
+</form>
+{% if c.view == "schema" %}
+{% if c.svg %}
+<div class="card chart-card svg-card">
+  <div class="svg-chart" data-svg="toky-cee" data-csv="/api/csv/flowchart?{{ c.export_q }}">{{ c.svg|safe }}</div>
+</div>
+<p class="muted small">Šipka = čistý fyzický tok přes hranici (součet bodů, hodnota z pohledu přijímající země; když ji nehlásí, odesílající). Na mobilu posouvejte schéma prstem; klepnutím na šipku nebo zemi se ukážou detaily. ⚠ = exit odesílající země ≠ entry přijímající (práh {{ "%.0f"|format(c.thresholds[0]) }} % a {{ "%.0f"|format(c.thresholds[1]) }} GWh/d).</p>
+{{ m.section("Nesrovnalosti entry/exit — " ~ c.day.strftime("%d.%m.%Y")) }}
+{{ m.table(c.mismatch, empty="Žádná odchylka nad prahem — exit a entry na všech hranicích a bodech sedí.") }}
+<p class="small"><a href="/plyn?tab=entry-exit&to={{ c.day }}">Všechny nesrovnalosti a nastavení prahů →</a></p>
+{% else %}<div class="alert alert-warn">Pro vybraný den nejsou data.</div>{% endif %}
+{% else %}
 {{ m.chart("map", 720) }}
-<p class="muted small">Data ENTSO-G: D-2 ({{ c.d2.strftime("%d.%m.%Y") }}) · Norské nominace: live (realTimeAtom.xml)</p>
+<p class="muted small">Data ENTSO-G: D-2 ({{ c.d2.strftime("%d.%m.%Y") }}) · Norské nominace: live (realTimeAtom.xml) · ⚠ = nesrovnalost exit/entry na hranici</p>
+{% endif %}
 {% if c.storage %}
 {{ m.section("Zásobníky plynu — aktuální stav") }}
 <div class="metric-grid">

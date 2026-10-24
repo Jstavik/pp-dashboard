@@ -383,3 +383,35 @@ table.data td.wrap { white-space: normal; min-width: 220px; }
 .look-toggle { margin-right: auto; font-size: 13px; }
 .look-toggle a { text-decoration: none; }
 .look-badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--accent-soft, #e6effa); margin-left: 4px; }
+
+/* ── kopírování do schránky, SVG schémata (toky plynu CEE) ───────────── */
+.pp-toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); z-index: 1000; max-width: min(92vw, 560px);
+  background: var(--text); color: var(--bg, #fff); padding: 10px 16px; border-radius: 10px; box-shadow: var(--shadow);
+  font-size: .9rem; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+}
+.pp-toast.show { opacity: .95; transform: translate(-50%, 0); }
+.svg-card { overflow: hidden; }
+.svg-chart { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.svg-chart svg { display: block; width: 100%; height: auto; }
+@media (max-width: 760px) {
+  .svg-chart svg { width: 960px; max-width: none; }
+  .svg-card .chart-tools { position: static; opacity: 1; pointer-events: auto; justify-content: flex-end; flex-wrap: wrap;
+                           box-shadow: none; border: 0; margin: 0 0 4px; }
+  .svg-card { display: flex; flex-direction: column-reverse; }
+}
+.svg-tip {
+  position: fixed; z-index: 999; display: none; max-width: min(92vw, 420px); white-space: pre-line;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: .82rem; line-height: 1.35; box-shadow: var(--shadow); pointer-events: none;
+}
+.day-slider input[type=range] { width: min(320px, 70vw); }
+[data-theme="dark"] .gf .gf-bg { fill: var(--surface); }
+[data-theme="dark"] .gf .gf-box { fill: #1d2733; stroke: #3a4858; }
+[data-theme="dark"] .gf .gf-ext { fill: #24303d; stroke: #3a4858; }
+[data-theme="dark"] .gf .gf-head { fill: #24303d; }
+[data-theme="dark"] .gf .gf-t { fill: #e3e9f0; }
+[data-theme="dark"] .gf .gf-m { fill: #9fb0c0; }
+[data-theme="dark"] .gf .gf-lbl { fill: #1d2733; stroke: #3a4858; }
+[data-theme="dark"] .gf .gf-bar { fill: #2a3644; }
+[data-theme="dark"] .gf text[fill="#37474f"] { fill: #cfd8e3; }

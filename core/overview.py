@@ -583,6 +583,31 @@ def _weather_alerts():
     return out
 
 
+@builder()
+def _gas_entry_exit_events():
+    """Nesrovnalosti exit země A ≠ entry země B na hranicích ve střední Evropě
+    (core/gasflow.py, poslední 2 dny ENTSO-G, max 5 největších za den)."""
+    from core import gasflow as gf
+    out = []
+    for day in gf.available_days()[-2:]:
+        m = gf.mismatches(day)
+        m = m[(m["level"] == "hranice") & m["from"].isin(gf.MAIN) & m["to"].isin(gf.MAIN)]
+        seen = set()
+        for r in m.to_dict("records"):
+            pair = (r["from"], r["to"])
+            if pair in seen or len(seen) >= 5:
+                continue
+            seen.add(pair)
+            ind = "fyzický tok" if r["indicator"] == "Physical Flow" else "alokace"
+            n = lambda v, sign="": f"{v:{sign},.0f}".replace(",", " ").replace("-", "−")  # noqa: E731
+            out.append(_ev(f"ee:{day}:{r['from']}-{r['to']}", pd.Timestamp(day).tz_localize(TZ) + pd.Timedelta(hours=34),
+                           "Plyn", f"Plyn {r['from']}→{r['to']}: exit ≠ entry o {n(r['diff'], '+')} GWh/d ({r['rel']:.0f} %)",
+                           f"{day:%d.%m.}, {ind}: exit {r['from']} {n(r['exit'])} vs. entry {r['to']} {n(r['entry'])} "
+                           "GWh/d (ENTSO-G)",
+                           f"/plyn?tab=entry-exit&to={day}", "warn"))
+    return out
+
+
 @builder(live=True)
 def _imbalance_alerts():
     s = _ceps_imbalance(hours=3)

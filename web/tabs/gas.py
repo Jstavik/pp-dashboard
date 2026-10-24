@@ -15,7 +15,7 @@ from config import (
     ENTSOG_NOMINATION_DEFAULT_MONTHS, storage_color,
 )
 from core.cache import ttl_cache
-from web.registry import page, tab, chart
+from web.registry import page, tab, chart, csv
 from web.util import decat, options, table, status_item, safe_max_date, date_range_from_params
 
 PAGE = "plyn"
@@ -78,10 +78,48 @@ def _gie():
     return load_gie_all()
 
 
+VIEWS = ["schema", "mapa"]
+VIEW_LABELS = {"schema": "🔀 Schéma toků (CEE)", "mapa": "🗺️ Geografická mapa"}
+UNITS = ["gwh", "mcm"]
+UNIT_LABELS = {"gwh": "GWh/d", "mcm": "mcm/d"}
+COMPARE = ["d", "w"]
+COMPARE_LABELS = {"d": "s předchozím dnem", "w": "s předchozím týdnem"}
+
+
+def _flow_state(p):
+    """Vybraný den (posuvník/kalendář), srovnání, jednotka — pro schéma i export."""
+    from core import gasflow as gf
+    days = gf.available_days()
+    last = days[-1] if days else None
+    day = p.date("date", last) if last else None
+    if day and days and day not in days:
+        older = [d for d in days if d <= day]
+        day = older[-1] if older else days[0]
+    return {"days": days, "day": day, "compare": p.str("cmp", "d", choices=COMPARE),
+            "unit": p.str("unit", "gwh", choices=UNITS)}
+
+
+def _mismatch_table(df, unit="gwh", limit=None):
+    from core.gasflow import fmt_num
+    if df is None or df.empty:
+        return None
+    rows = []
+    for r in (df.head(limit) if limit else df).itertuples(index=False):
+        rows.append([f"{r.day:%d.%m.%Y}", "hranice (ENTSO-G souhrn)" if r.level == "hranice" else "bod (operátoři)",
+                     {"Physical Flow": "fyzický tok", "Allocation": "alokace", "Renomination": "renominace"}[r.indicator],
+                     f"{r[3]} → {r[4]}", r.point, fmt_num(r.exit, unit, 1), fmt_num(r.entry, unit, 1),
+                     ("+" if r.diff > 0 else "−") + fmt_num(abs(r.diff), unit, 1), f"{r.rel:.0f} %"])
+    u = UNIT_LABELS[unit]
+    return {"headers": ["Den", "Úroveň", "Veličina", "Směr", "Bod / hranice", f"Exit A ({u})", f"Entry B ({u})",
+                        "Rozdíl B − A", "Rozdíl %"], "rows": rows, "total": len(df),
+            "truncated": bool(limit and len(df) > limit)}
+
+
 @tab(PAGE, "mapa", "Mapa")
 def mapa(p):
     from data.gassco import load_gassco
     from data.hydro import load_hydro
+    view = p.str("view", "schema", choices=VIEWS)
     df = flows()
     df_gie = _gie()
     last_gie = None
@@ -97,7 +135,7 @@ def mapa(p):
             net = float(r.get("injection", 0) or 0) - float(r.get("withdrawal", 0) or 0)
             storage.append({"cc": r["country_code"], "full": full, "icon": icons[storage_color(full)],
                             "net": net, "twh": float(r.get("gasInStorage", 0) or 0)})
-    return {
+    ctx = {
         "status": [
             status_item("ENTSO-G", safe_max_date(df, "date"), 48),
             status_item("GIE zásobníky", last_gie, 72),
@@ -105,7 +143,79 @@ def mapa(p):
             status_item("Hydro", safe_max_date(load_hydro(), "date"), 200),
         ],
         "empty": df.empty, "storage": storage, "d2": date.today() - timedelta(days=2),
+        "view": view, "views": VIEWS, "view_labels": VIEW_LABELS,
     }
+    if view == "schema" and not df.empty:
+        from charts.flowchart import render_svg
+        from core import gasflow as gf
+        st = _flow_state(p)
+        ctx.update(st, units=UNITS, unit_labels=UNIT_LABELS, compares=COMPARE, compare_labels=COMPARE_LABELS)
+        if st["day"]:
+            fc = gf.flowchart(st["day"], st["compare"], st["unit"])
+            ctx["svg"] = render_svg(fc, st["unit"])
+            ctx["slider_days"] = [d.isoformat() for d in st["days"][-120:]]
+            ctx["slider_i"] = ctx["slider_days"].index(st["day"].isoformat()) if st["day"].isoformat() in \
+                ctx["slider_days"] else len(ctx["slider_days"]) - 1
+            ctx["mismatch"] = _mismatch_table(gf.mismatches(st["day"]), st["unit"], limit=12)
+            ctx["thresholds"] = gf.thresholds()
+            ctx["export_q"] = p.query(view="schema", date=st["day"].isoformat(), cmp=st["compare"], unit=st["unit"])
+    return ctx
+
+
+@csv("flowchart")
+def _csv_flowchart(p):
+    from core import gasflow as gf
+    st = _flow_state(p)
+    if not st["day"]:
+        return pd.DataFrame(), "toky_cee.csv"
+    df = gf.flowchart_table(gf.flowchart(st["day"], st["compare"], st["unit"])).set_index("typ")
+    return df, f"toky_cee_{st['day']:%Y%m%d}.csv"
+
+
+@csv("entry-exit")
+def _csv_entry_exit(p):
+    st = _ee_state(p)
+    return st["df"].set_index("day"), f"entry_exit_{st['d_to']:%Y%m%d}.csv"
+
+
+def _ee_state(p):
+    """Záložka Entry/exit: rozsah dní + prahy (výchozí z prostředí)."""
+    from core import gasflow as gf
+    rel0, abs0 = gf.thresholds()
+    days = gf.available_days()
+    last = days[-1] if days else date.today()
+    d_to = p.date("to", last)
+    d_from = p.date("from", d_to - timedelta(days=6))
+    if d_from > d_to:
+        d_from = d_to
+    rel = p.float("rel", rel0, lo=0, hi=100)
+    ab = p.float("abs", abs0, lo=0, hi=10000)
+    levels = p.list("levels", default=["hranice", "bod"], choices=["hranice", "bod"])
+    parts = []
+    for d in [x for x in days if d_from <= x <= d_to][-31:]:
+        m = gf.mismatches(d, rel, ab)
+        if not m.empty:
+            parts.append(m)
+    df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(
+        columns=["day", "level", "indicator", "from", "to", "point", "exit", "entry", "diff", "rel", "flag", "detail"])
+    df = df[df["level"].isin(levels)].drop(columns="flag")
+    return {"df": df, "d_from": d_from, "d_to": d_to, "rel": rel, "abs": ab, "levels": levels,
+            "min_d": days[0] if days else None, "max_d": last}
+
+
+@tab(PAGE, "entry-exit", "Entry/exit")
+def entry_exit(p):
+    st = _ee_state(p)
+    df = st["df"]
+    by_pair = (df.groupby(["from", "to", "level"]).size().reset_index(name="n").sort_values("n", ascending=False)
+               if not df.empty else df)
+    return {**{k: v for k, v in st.items() if k != "df"}, "n": len(df),
+            "table": _mismatch_table(df.assign(_a=df["diff"].abs()).sort_values(["day", "_a"], ascending=False)
+                                     .drop(columns="_a"), "gwh", limit=300),
+            "pairs": by_pair.head(8).to_dict("records") if not df.empty else [],
+            "level_labels": {"hranice": "hranice (ENTSO-G souhrn: fyzický tok, alokace)",
+                             "bod": "body (renominace operátorů)"},
+            "query": p.query(**{"from": st["d_from"], "to": st["d_to"]})}
 
 
 @chart(PAGE, "mapa", "map", displayModeBar=True, scrollZoom=True)
@@ -115,8 +225,12 @@ def _ch_map(p):
     df = flows()
     if df.empty:
         return None
+    from charts.gas import add_mismatch_markers
+    from core import gasflow as gf
     cutoff = df["date"].max() - pd.Timedelta(days=14)
-    return fig_gas_map(decat(df[df["date"] >= cutoff]), df_gassco=load_gassco())
+    fig = fig_gas_map(decat(df[df["date"] >= cutoff]), df_gassco=load_gassco())
+    day = gf.latest_day()
+    return add_mismatch_markers(fig, gf.mismatches(day)) if day else fig
 
 
 # ── Toky ────────────────────────────────────────────────────────────────
@@ -686,3 +800,8 @@ def _ch_hist_point(p):
     pts = [c for c in pivot.columns if pivot[c].abs().sum() > 0]
     point = p.str("point", pts[0] if pts else None, choices=pts)
     return fig_gas_point_history(pivot, point) if point else None
+
+
+# Entry/exit jako poslední záložka (registruje se hned za Mapou kvůli sdíleným funkcím)
+PAGES_TABS = __import__("web.registry", fromlist=["PAGES"]).PAGES[PAGE].tabs
+PAGES_TABS.append(PAGES_TABS.pop(PAGES_TABS.index("entry-exit")))
