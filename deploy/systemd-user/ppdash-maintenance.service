@@ -1,0 +1,20 @@
+[Unit]
+Description=PP Dashboard — týdenní údržba historie (kompakce, retence snapshotů, velikosti)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/ppdash/env
+Environment=PPDASH_DATA_DIR=@DATA@
+Environment=ARROW_DEFAULT_MEMORY_POOL=system
+Environment=MALLOC_ARENA_MAX=2
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@VENV@/bin/python scripts/update_all.py --only maintenance
+TimeoutStartSec=3h
+Nice=10
+CPUWeight=50
+IOWeight=50
+MemoryMax=800M
+# exit 3 = jiná aktualizace právě běží — není to chyba
+SuccessExitStatus=3
+NoNewPrivileges=yes

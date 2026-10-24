@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros.html" import refresh_button %}
 {% block title %}Stav dat · PP Dashboard{% endblock %}
 {% block content %}
 <div class="ov-head"><h1 class="ov-title">Stav dat a aktualizací <span class="muted">· {{ s.now }}</span></h1>
@@ -25,16 +26,33 @@
     {% if s.quota %}<li>Open-Meteo dnes (UTC {{ s.quota.date }}): ~{{ s.quota.used|round|int }} volání z denního limitu{% if s.quota.exhausted %} — <strong>kvóta vyčerpána</strong>, backfill pokračuje zítra{% endif %}</li>{% endif %}
     <li>Podrobnosti ze serveru: <code>deploy/status.sh --logs</code></li>
   </ul>
+  <h3 class="section-title">Úložiště a údržba</h3>
+  {% set m = s.maint %}
+  {% if m.error %}<p class="muted">Nelze spočítat: {{ m.error }}</p>{% else %}
+  <ul class="stat-list small">
+    <li>Historie celkem: <strong>{{ m.total_mb }} MB</strong> v {{ m.files }} souborech{% if m.per_year_mb %}, růst ~{{ m.per_year_mb }} MB/rok{% else %} (růst se ukáže po týdnu snímků velikostí){% endif %}</li>
+    {% if m.last %}<li>Poslední údržba {{ m.last.t }} ({{ m.last.secs }} s): soubory {{ m.last.files }}, MB {{ m.last.mb }}{% if m.last.errors %}, <strong>{{ m.last.errors }} chyb</strong>{% endif %}{% if m.last.skipped %}, {{ m.last.skipped }} přeskočeno (úloha běžela){% endif %}</li>
+    {% for a in m.last.actions %}<li class="muted">{{ a }}</li>{% endfor %}
+    {% else %}<li>Údržba zatím neběžela (timer <code>ppdash-maintenance</code> každou neděli 03:30).</li>{% endif %}
+    <li class="muted">Snapshoty odstávek a GASSCO UMM: plné {{ m.keep_days }} dní, starší jen změny. Pravidla: <code>core/maintenance.py::POLICY</code>.</li>
+  </ul>
+  <p>{{ refresh_button("maintenance", "Spustit údržbu teď", small=True) }}</p>
+  {% endif %}
 </div>
 <div class="card panel">
   <h3 class="section-title">Datasety — stáří dat</h3>
   <div class="table-wrap" style="max-height: 760px"><table class="data">
-    <thead><tr><th></th><th>Dataset</th><th>Zdroj (úloha)</th><th>Poslední data</th><th>Stáří</th><th>Limit</th><th>MB</th></tr></thead>
+    <thead><tr><th></th><th>Dataset</th><th>Zdroj (úloha)</th><th>Poslední data</th><th>Stáří</th><th>Limit</th><th>MB</th><th>Souborů</th><th>Růst MB/rok</th><th></th></tr></thead>
     <tbody>{% for d in s.datasets %}<tr class="{{ '' if d.ok else 'st-warn' }}">
-      <td>{{ '✓' if d.ok else ('…' if d.missing else '⚠') }}</td><td>{{ d.name }}</td><td>{{ d.task }}</td>
-      <td>{{ d.last if not d.missing else 'data se dotahují' }}</td><td>{{ d.age }}</td><td>{{ d.limit }}</td><td>{{ d.size }}</td></tr>{% endfor %}</tbody>
+      <td>{{ '✓' if d.ok else ('…' if d.missing else '⚠') }}</td><td>{{ d.name }}</td><td title="{{ d.schedule }}">{{ d.task }}<br><span class="muted small">{{ d.schedule }}</span></td>
+      <td>{{ d.last if not d.missing else 'data se dotahují' }}</td><td>{{ d.age }}</td><td>{{ d.limit }}</td><td>{{ d.size }}</td>
+      <td>{{ d.nfiles }}</td><td>{{ d.growth }}</td>
+      <td>{% if d.task_key %}{{ refresh_button(d.task_key, "Aktualizovat", small=True) }}{% endif %}</td></tr>{% endfor %}</tbody>
   </table></div>
 </div>
 </div>
-<script>setTimeout(function () { if (!document.hidden) location.reload(); }, 60000);</script>
+<script>setTimeout(function () {
+  // obnova po minutě — ne během ruční aktualizace (průběh se obnovuje sám)
+  if (!document.hidden && !document.querySelector("[data-watching='1']")) location.reload();
+}, 60000);</script>
 {% endblock %}

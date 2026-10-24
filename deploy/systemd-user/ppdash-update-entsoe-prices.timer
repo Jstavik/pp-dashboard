@@ -1,0 +1,10 @@
+[Unit]
+Description=PP Dashboard — ENTSO-E ceny 13:20 (po výsledcích SDAC ~12:45)
+
+[Timer]
+OnCalendar=*-*-* 13:20:00 Europe/Prague
+RandomizedDelaySec=3min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=PP Dashboard — údržba historie každou neděli 03:30
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00 Europe/Prague
+RandomizedDelaySec=3min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

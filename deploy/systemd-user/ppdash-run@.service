@@ -1,0 +1,24 @@
+[Unit]
+Description=PP Dashboard — ruční aktualizace „%i“ (tlačítko Aktualizovat teď na webu)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/ppdash/env
+Environment=PPDASH_DATA_DIR=@DATA@
+Environment=ARROW_DEFAULT_MEMORY_POOL=system
+Environment=MALLOC_ARENA_MAX=2
+Environment=PYTHONUNBUFFERED=1
+# kratší rozpočty backfillu — ruční běh má být rychlý, backfill dožene plánovaný běh
+Environment=PPDASH_GENERATION_BUDGET_S=300
+Environment=PPDASH_ENTSOE_BUDGET_S=600
+Environment=PPDASH_WEATHER_BUDGET_CALLS=300
+Environment=PPDASH_ENERGINET_BUDGET_S=300
+ExecStart=@VENV@/bin/python scripts/update_all.py --manual --only %i --job %i
+TimeoutStartSec=2h
+Nice=10
+CPUWeight=50
+IOWeight=50
+MemoryMax=800M
+SuccessExitStatus=3
+NoNewPrivileges=yes

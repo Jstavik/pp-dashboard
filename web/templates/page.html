@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ page.title }} · PP Dashboard{% endblock %}
+{% from "macros.html" import refresh_button %}
 {% block content %}
 <div class="page" data-page="{{ page.key }}" data-active="{{ active_tab }}" data-initial-query="{{ initial_query }}">
   {% if page.key == "elektrina" %}
   <div id="page-header" data-src="/frag-header/elektrina" data-refresh="60" class="page-header loading-block"></div>
   {% endif %}
+  {% if refresh_target %}<div class="page-tools">{{ refresh_button(refresh_target) }}</div>{% endif %}
   <div class="tabbar" role="tablist">
     {% for tkey in page.tabs %}{% set t = tabs[(page.key, tkey)] %}
       <button type="button" role="tab" class="tab{{ ' active' if tkey == active_tab }}" data-tab="{{ tkey }}"

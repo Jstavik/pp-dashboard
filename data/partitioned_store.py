@@ -19,14 +19,22 @@ import os
 import pandas as pd
 
 
+def _is_year_stem(stem: str) -> bool:
+    return len(stem) == 4 and stem.isdigit()
+
+
 def _select_files(base_dir: str, fmt: str, date_from=None, date_to=None) -> list:
     files = sorted(glob.glob(os.path.join(base_dir, f"*.{fmt}")))
     if date_from is not None or date_to is not None:
         lo = pd.Timestamp(date_from).strftime("%Y-%m") if date_from is not None else None
         hi = pd.Timestamp(date_to).strftime("%Y-%m") if date_to is not None else None
         def _in_range(path):
-            # měsíční ({YYYY-MM}) i denní ({YYYY-MM-DD}) partitiony — porovnává se měsíc
-            month = os.path.splitext(os.path.basename(path))[0][:7]
+            # měsíční ({YYYY-MM}), denní ({YYYY-MM-DD}) i roční ({YYYY} — po
+            # kompakci, core/maintenance.py) partitiony — porovnává se měsíc
+            stem = os.path.splitext(os.path.basename(path))[0]
+            if _is_year_stem(stem):
+                return (lo is None or stem >= lo[:4]) and (hi is None or stem <= hi[:4])
+            month = stem[:7]
             if lo is not None and month < lo:
                 return False
             if hi is not None and month > hi:
@@ -34,6 +42,44 @@ def _select_files(base_dir: str, fmt: str, date_from=None, date_to=None) -> list
             return True
         files = [f for f in files if _in_range(f)]
     return files
+
+
+_TIME_COLS = ("time", "date", "gasDayStart", "updated", "issued", "timestamp", "periodFrom_dt")
+
+
+def _month_bounds(date_from, date_to):
+    lo = pd.Timestamp(pd.Timestamp(date_from).strftime("%Y-%m-01"), tz="UTC") if date_from is not None else None
+    hi = (pd.Timestamp(pd.Timestamp(date_to).strftime("%Y-%m-01"), tz="UTC") + pd.offsets.MonthBegin(1)
+          if date_to is not None else None)
+    return lo, hi
+
+
+def _year_mask(col, lo, hi):
+    """Maska řádků ročního souboru v měsících [lo, hi) — stejný výběr, jako
+    kdyby se četly měsíční soubory (read_partitioned filtruje po měsících)."""
+    t = pd.to_datetime(pd.Series(col), utc=True, errors="coerce")
+    m = pd.Series(True, index=t.index)
+    if lo is not None:
+        m &= t >= lo
+    if hi is not None:
+        m &= t < hi
+    return m.to_numpy()
+
+
+def _is_year_file(path: str) -> bool:
+    return _is_year_stem(os.path.splitext(os.path.basename(path))[0])
+
+
+def container_path(base_dir: str, key: str, fmt: str):
+    """Soubor, do kterého po kompakci patří partition `key` ({YYYY-MM} nebo
+    {YYYY-MM-DD}): roční {YYYY}.fmt nebo měsíční {YYYY-MM}.fmt (denní
+    soubory zkompaktované do měsíce). None = žádný kontejner neexistuje."""
+    for stem in (key[:4], key[:7] if len(key) > 7 else None):
+        if stem:
+            p = os.path.join(base_dir, f"{stem}.{fmt}")
+            if os.path.exists(p):
+                return p
+    return None
 
 
 def _normalize_arrow_table(table):
@@ -61,7 +107,7 @@ def _normalize_arrow_table(table):
     return pa.table(cols, names=names)
 
 
-def _read_parquet_arrow(files: list, columns=None, filters=None, categories=None) -> pd.DataFrame:
+def _read_parquet_arrow(files: list, columns=None, filters=None, categories=None, trim=None) -> pd.DataFrame:
     """Sloupce z `categories` se čtou rovnou jako parquet dictionary
     (read_dictionary) — nikdy se nematerializují jako plné stringy, což
     drží špičku paměti nízko (entsog_flows celá historie: +40 MB RSS
@@ -74,7 +120,15 @@ def _read_parquet_arrow(files: list, columns=None, filters=None, categories=None
         present = pq.read_schema(f).names
         cols = [c for c in columns if c in present] if columns is not None else None
         dict_cols = [c for c in present if c in cats and (cols is None or c in cols)]
-        t = pq.read_table(f, columns=cols, filters=filters, read_dictionary=dict_cols or None)
+        tc = (next((c for c in _TIME_COLS if c in present), None)
+              if trim is not None and _is_year_file(f) else None)
+        extra = cols is not None and tc is not None and tc not in cols
+        t = pq.read_table(f, columns=cols + [tc] if extra else cols, filters=filters,
+                          read_dictionary=dict_cols or None)
+        if tc is not None and t.num_rows:
+            t = t.filter(pa.array(_year_mask(t.column(tc).to_pandas(), *trim)))
+            if extra:
+                t = t.drop_columns([tc])
         if t.num_rows:
             tables.append(_normalize_arrow_table(t))
     if not tables:
@@ -118,8 +172,9 @@ def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_t
     files = _select_files(base_dir, fmt, date_from, date_to)
     if not files:
         return pd.DataFrame()
+    trim = _month_bounds(date_from, date_to) if (date_from is not None or date_to is not None) else None
     if fmt == "parquet" and (columns is not None or filters is not None or categories is not None):
-        df = _read_parquet_arrow(files, columns=columns, filters=filters, categories=categories)
+        df = _read_parquet_arrow(files, columns=columns, filters=filters, categories=categories, trim=trim)
         return row_filter(df) if row_filter is not None and not df.empty else df
     if fmt == "parquet":
         reader = pd.read_parquet
@@ -129,6 +184,14 @@ def read_partitioned(base_dir: str, fmt: str = "parquet", date_from=None, date_t
     else:
         reader = pd.read_csv
     frames = (reader(f) for f in files)
+    if trim is not None and any(_is_year_file(f) for f in files):
+        base_reader = reader
+
+        def reader(f):  # noqa: F811 — roční soubor ořezat na měsíce okna
+            df = base_reader(f)
+            tc = next((c for c in _TIME_COLS if c in df.columns), None) if _is_year_file(f) else None
+            return df[_year_mask(df[tc], *trim)] if tc is not None and not df.empty else df
+        frames = (reader(f) for f in files)
     if row_filter is not None:
         frames = (row_filter(df) for df in frames)
     return pd.concat(frames, ignore_index=True)
@@ -180,6 +243,9 @@ def read_snapshot(base_dir: str, day: pd.Timestamp, fmt: str = "parquet") -> pd.
     day = pd.Timestamp(day).normalize()
     path = os.path.join(base_dir, f"{day.strftime('%Y-%m-%d')}.{fmt}")
     if not os.path.exists(path):
+        # starší dny po údržbě leží v archivu změn (core/maintenance.py)
+        if fmt == "parquet" and os.path.exists(os.path.join(base_dir, ARCHIVE_META)):
+            return read_archived_snapshot(base_dir, day.strftime("%Y-%m-%d"))
         return pd.DataFrame()
     return pd.read_parquet(path) if fmt == "parquet" else pd.read_csv(path)
 
@@ -232,7 +298,9 @@ def upsert_partitioned(
         # nefiltruje). Ověřeno na entsog_capacity — API vrací pravé
         # duplicitní řádky v rámci jednoho stažení.
         grp_new = grp_new.drop_duplicates(subset=dedup_subset, keep="last")
-        path = os.path.join(base_dir, f"{month}.{fmt}")
+        # po kompakci (core/maintenance.py) leží uzavřený rok/měsíc v jednom
+        # souboru {YYYY}/{YYYY-MM} — revize (překryv 2–3 dny) se mergují do něj
+        path = container_path(base_dir, month, fmt) or os.path.join(base_dir, f"{month}.{fmt}")
 
         if os.path.exists(path):
             existing = reader(path)
@@ -268,3 +336,163 @@ def upsert_partitioned(
         touched.append((month, len(combined), True))
 
     return touched
+
+
+# ── Archiv denních snapshotů („jen změny“) ──────────────────────────────
+#
+# Starší denní snapshoty (odstávky, GASSCO UMM) jsou z ~95 % stejné jako
+# předchozí den. core/maintenance.py je po N dnech přesune do jednoho
+# souboru base_dir/_archive.parquet: každý řádek snapshotu je tam jen
+# jednou s intervalem dnů (_from, _to), kdy v snapshotech nepřetržitě byl.
+# Snapshot dne D = řádky s _from ≤ D ≤ _to → rekonstrukce je přesná
+# (ověřuje se před smazáním denního souboru). _archive.json drží seznam
+# archivovaných dnů a sloupce/typy každého dne.
+
+ARCHIVE_FILE = "_archive.parquet"
+ARCHIVE_META = "_archive.json"
+
+
+def _canon_obj(x) -> str:
+    import datetime as dt
+    if x is None or x is pd.NaT or (isinstance(x, float) and x != x):
+        return "∅"
+    if isinstance(x, dt.datetime):  # vč. pd.Timestamp; aware i naive → ns UTC
+        return str(pd.Timestamp(x).value)
+    if isinstance(x, (int, float)) and not isinstance(x, bool):
+        return repr(float(x))
+    return str(x)
+
+
+def _col_hash(s: pd.Series):
+    """uint64 hash hodnot sloupce, nezávislý na typu (int 5 = float 5.0,
+    čas = ns UTC, chybějící hodnota = jedna hodnota)."""
+    import numpy as np
+    hp = pd.util.hash_pandas_object
+    if isinstance(s.dtype, pd.DatetimeTZDtype):
+        v = s.dt.tz_convert("UTC").dt.as_unit("ns").astype("int64").astype("float64")
+        return hp(v.where(s.notna(), np.nan), index=False).to_numpy()
+    if pd.api.types.is_datetime64_any_dtype(s):
+        v = s.dt.as_unit("ns").astype("int64").astype("float64")
+        return hp(v.where(s.notna(), np.nan), index=False).to_numpy()
+    if pd.api.types.is_bool_dtype(s):
+        return hp(s.astype(str), index=False).to_numpy()
+    if pd.api.types.is_numeric_dtype(s):
+        return hp(s.astype("float64"), index=False).to_numpy()
+    if isinstance(s.dtype, pd.CategoricalDtype):
+        s = s.astype(object)
+    kind = pd.api.types.infer_dtype(s, skipna=True)
+    if kind in ("string", "empty"):
+        return hp(s.where(s.notna(), None).astype(object), index=False).to_numpy()
+    return hp(s.map(_canon_obj), index=False).to_numpy()
+
+
+def canonical_rows(df: pd.DataFrame) -> pd.Series:
+    """Řádek → uint64 hash nezávislý na typech a pořadí sloupců. Pro
+    porovnání obsahu (kompakce, archiv snapshotů)."""
+    import numpy as np
+    if df.empty:
+        return pd.Series([], dtype="uint64")
+    h = np.zeros(len(df), dtype="uint64")
+    with np.errstate(over="ignore"):
+        for i, c in enumerate(sorted(df.columns)):
+            # jméno sloupce + pozice → pořadí sloupců nehraje roli, hodnoty v různých sloupcích ano
+            salt = np.uint64(int(pd.util.hash_array(np.array([str(c)], dtype=object))[0]) | 1)
+            h = h * np.uint64(1099511628211) + _col_hash(df[c]) * salt
+    return pd.Series(h, index=df.index)
+
+
+def content_checksum(df: pd.DataFrame) -> tuple:
+    """(počet řádků, součet hashů řádků mod 2^64) — na pořadí nezávislé."""
+    h = canonical_rows(df)
+    return len(h), int(h.sum()) if len(h) else 0
+
+
+def _archive_meta(base_dir: str) -> dict:
+    import json
+    p = os.path.join(base_dir, ARCHIVE_META)
+    if not os.path.exists(p):
+        return {"days": [], "schema": {}}
+    with open(p, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _row_keys(df: pd.DataFrame) -> pd.DataFrame:
+    h = canonical_rows(df).reset_index(drop=True)
+    return pd.DataFrame({"_kh": h, "_ko": h.groupby(h).cumcount().astype("int64")})
+
+
+def archive_snapshot_days(base_dir: str, days: list) -> dict:
+    """Přidá denní snapshoty `days` (["YYYY-MM-DD"], novější než poslední
+    archivovaný den) do archivu. Denní soubory NEMAŽE — to dělá volající
+    až po ověření (read_snapshot proti originálu). Vrací {"added", "rows"}."""
+    import json
+    meta = _archive_meta(base_dir)
+    apath = os.path.join(base_dir, ARCHIVE_FILE)
+    arch = pd.read_parquet(apath) if os.path.exists(apath) else pd.DataFrame()
+    added = 0
+    for day in sorted(days):
+        if meta["days"] and day <= meta["days"][-1]:
+            continue
+        snap = pd.read_parquet(os.path.join(base_dir, f"{day}.parquet")).reset_index(drop=True)
+        keys = _row_keys(snap)
+        prev = meta["days"][-1] if meta["days"] else None
+        if not arch.empty and prev is not None:
+            open_rows = arch.index[arch["_to"] == prev]
+            open_keys = pd.MultiIndex.from_frame(arch.loc[open_rows, ["_kh", "_ko"]])
+            cur_keys = pd.MultiIndex.from_frame(keys)
+            cont = open_keys.isin(cur_keys)
+            arch.loc[open_rows[cont], "_to"] = day
+            new_mask = ~cur_keys.isin(open_keys)
+        else:
+            new_mask = pd.Series(True, index=keys.index).to_numpy()
+        new = pd.concat([snap[new_mask].reset_index(drop=True), keys[new_mask].reset_index(drop=True)], axis=1)
+        new["_from"] = day
+        new["_to"] = day
+        arch = new if arch.empty else pd.concat([arch, new], ignore_index=True)
+        meta["days"].append(day)
+        meta["schema"][day] = {c: str(t) for c, t in snap.dtypes.items()}
+        added += 1
+    if added:
+        tmp = apath + ".tmp"
+        arch.to_parquet(tmp, index=False)
+        os.replace(tmp, apath)
+        with open(os.path.join(base_dir, ARCHIVE_META) + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        os.replace(os.path.join(base_dir, ARCHIVE_META) + ".tmp", os.path.join(base_dir, ARCHIVE_META))
+        _ARCHIVE_CACHE.pop(base_dir, None)
+    return {"added": added, "rows": len(arch)}
+
+
+_ARCHIVE_CACHE = {}
+
+
+def read_archived_snapshot(base_dir: str, day: str) -> pd.DataFrame:
+    meta = _archive_meta(base_dir)
+    if day not in meta.get("schema", {}):
+        return pd.DataFrame()
+    apath = os.path.join(base_dir, ARCHIVE_FILE)
+    mtime = os.path.getmtime(apath)
+    cached = _ARCHIVE_CACHE.get(base_dir)
+    if cached is None or cached[0] != mtime:
+        cached = (mtime, pd.read_parquet(apath))
+        _ARCHIVE_CACHE[base_dir] = cached
+    arch = cached[1]
+    schema = meta["schema"][day]
+    out = arch[(arch["_from"] <= day) & (arch["_to"] >= day)][list(schema)].reset_index(drop=True)
+    for c, t in schema.items():
+        if str(out[c].dtype) != t:
+            try:
+                out[c] = out[c].astype(t)
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def snapshot_days(base_dir: str, fmt: str = "parquet") -> list:
+    """Dny ("YYYY-MM-DD"), pro které je snapshot — denní soubory + archiv."""
+    days = set(_archive_meta(base_dir).get("days", [])) if os.path.isdir(base_dir) else set()
+    for f in glob.glob(os.path.join(base_dir, f"*.{fmt}")):
+        stem = os.path.basename(f).removesuffix(f".{fmt}")
+        if len(stem) == 10 and stem[4] == "-" and stem[7] == "-":
+            days.add(stem)
+    return sorted(days)

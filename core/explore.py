@@ -108,7 +108,12 @@ def files_for(spec: ExploreSpec, filters: dict = None, d_from: date = None, d_to
     out = []
     for f in files:
         stem = os.path.splitext(os.path.basename(f))[0]
-        if _PART_RE.match(stem):
+        if len(stem) == 4 and stem.isdigit():  # roční soubor po kompakci (core/maintenance.py)
+            if lo and stem < lo[:4] and not (lo.endswith("-01") and stem == str(int(lo[:4]) - 1)):
+                continue
+            if hi and stem > hi[:4]:
+                continue
+        elif _PART_RE.match(stem):
             month = stem[:7]
             if lo and month < (pd.Timestamp(lo + "-01") - pd.Timedelta(days=1)).strftime("%Y-%m"):
                 continue

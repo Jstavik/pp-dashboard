@@ -40,13 +40,13 @@ DATASETS = [
     Dataset("gassco_nominations", "gassco", 72, "date", fmt="csv"),
     Dataset("hydro_reservoirs", "hydro", 24 * 14, "date", fmt="csv"),
     Dataset("dap_europe", "dap_europe", 48, "date"),
-    Dataset("generation", "generation", 24, "date", subdirs=True),
-    Dataset("outages.parquet", "outages", 26),
-    Dataset("outages_snapshots", "outages", 26),
+    Dataset("generation", "generation", 36, "date", subdirs=True),
+    Dataset("outages.parquet", "outages", 30),
+    Dataset("outages_snapshots", "outages", 30),
     Dataset("energy_charts", "energy_charts", 36, "timestamp", subdirs=True),
     Dataset("energy_charts.parquet", "energy_charts", 36, "timestamp"),
     Dataset("energy_charts_progress.json", "-", float("inf")),  # jen ruční run_backfill
-    # ENTSO-E (timer ppdash-update-entsoe, 3× denně, data/entsoe_history.py)
+    # ENTSO-E (timer ppdash-update-entsoe 07:10, ceny navíc 13:20, data/entsoe_history.py)
     Dataset("entsoe_prices", "entsoe_prices", 36, "time", subdirs=True),
     Dataset("entsoe_load", "entsoe_load", 36, "time", subdirs=True),
     Dataset("entsoe_ws_forecast", "entsoe_ws", 36, "time", subdirs=True),
@@ -411,6 +411,11 @@ EXPLORE_BY_KEY = {e.key: e for e in EXPLORE}
 TASK_SCHEDULE = {
     "live": "každou minutu",
     "default": "2× denně (06:00, 17:00)",
+    "power": "1× denně (06:00)",
+    "entsoe": "1× denně (07:10)",
+    "entsoe_prices": "2× denně (07:10, 13:20 po SDAC)",
+    "dap_europe": "2× denně (06:00, 13:20 po SDAC)",
+    "weather": "4× denně (05:50, 11:50, 17:50, 23:50)",
     "cot": "týdně (st 14:00/19:00, záloha čt+so)",
 }
 
@@ -419,8 +424,16 @@ def schedule_for(spec: "ExploreSpec") -> str:
     ds = next((d for d in DATASETS if d.name == spec.dataset), None)
     if ds is None:
         return "—"
-    if ds.task in ("ceps", "gassco_realtime", "gassco_umm"):
+    return task_schedule(ds.task)
+
+
+def task_schedule(task: str) -> str:
+    if task in ("ceps", "gassco_realtime", "gassco_umm"):
         return TASK_SCHEDULE["live"]
-    if ds.task == "cot":
-        return TASK_SCHEDULE["cot"]
-    return TASK_SCHEDULE.get(ds.task, TASK_SCHEDULE["default"])
+    if task in TASK_SCHEDULE:
+        return TASK_SCHEDULE[task]
+    if task in ("entsoe_load", "entsoe_ws", "entsoe_flows"):
+        return TASK_SCHEDULE["entsoe"]
+    if task in ("generation", "outages", "hydro"):
+        return TASK_SCHEDULE["power"]
+    return TASK_SCHEDULE["default"]

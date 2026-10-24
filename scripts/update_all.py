@@ -19,6 +19,7 @@ Použití:
     cot    = cot (ICE MiFID II, týdenní — ve výchozím běhu se NEspouští)
     energy_charts
     weather = weather (Open-Meteo, vlastní timer 4× denně — ve výchozím běhu NE)
+    maintenance = údržba historie (týdně, ppdash-maintenance — ve výchozím běhu NE)
     nordic = nve, fingrid (jen s FINGRID_API_KEY), energinet
     all    = všechno včetně live a cot
 
@@ -112,6 +113,10 @@ def _tasks() -> dict:
         from data.weather import update_weather
         return update_weather()
 
+    def maintenance():
+        from core.maintenance import run_maintenance
+        return run_maintenance()
+
     def nordic(name):
         def run():
             from data import nordic as nd
@@ -143,6 +148,7 @@ def _tasks() -> dict:
         "entsoe_load":        ("ENTSO-E spotřeba skutečná + prognóza D-1", entsoe("update_load")),
         "entsoe_ws":          ("ENTSO-E prognóza větru a slunce (day-ahead)", entsoe("update_ws_forecast")),
         "entsoe_flows":       ("ENTSO-E fyzické toky + plánované výměny (CZ, sousedé, Nordic)", entsoe("update_flows")),
+        "maintenance":        ("Údržba historie: kompakce souborů, retence snapshotů, velikosti", maintenance),
     }
 
 
@@ -150,7 +156,7 @@ TASK_ORDER = [
     "ceps", "gassco_realtime", "gassco_umm",
     "entsog", "entsog_allocation", "gie", "hydro", "entsog_operational", "lng",
     "gassco", "dap_europe", "generation", "outages", "energy_charts", "nve", "fingrid", "energinet", "cot",
-    "entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows", "weather",
+    "entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows", "weather", "maintenance",
 ]
 LIVE_TASKS = ["ceps", "gassco_realtime", "gassco_umm"]
 ENTSOE_TASKS = ["entsoe_prices", "entsoe_load", "entsoe_ws", "entsoe_flows"]
@@ -161,9 +167,10 @@ GROUPS = {
     "entsoe": list(ENTSOE_TASKS),
     "nordic": ["nve", "fingrid", "energinet"],
     "weather": ["weather"],
+    "maintenance": ["maintenance"],
     "all":   list(TASK_ORDER),
 }
-DEFAULT_EXCLUDE = {"cot", "weather", *LIVE_TASKS, *ENTSOE_TASKS}
+DEFAULT_EXCLUDE = {"cot", "weather", "maintenance", *LIVE_TASKS, *ENTSOE_TASKS}
 
 
 def resolve(only: list, skip: list) -> list:
@@ -226,38 +233,84 @@ class _Lock:
             self.fh = None
 
 
-def run_tasks(names: list) -> list:
+def _lock_wait(name: str, default: float) -> float:
+    # minutové live úlohy nemá smysl dlouho držet — další běh je za minutu
+    return min(default, 40.0) if name in LIVE_TASKS else default
+
+
+def run_tasks(names: list, wait_s: float = 0, job=None) -> list:
     """Spustí úlohy postupně (chyba jedné nezastaví další). Vrací
-    [(name, status, sekundy, detail)], status ∈ OK | WARN | FAIL."""
+    [(name, status, sekundy, detail)], status ∈ OK | WARN | FAIL | SKIP.
+
+    Každá úloha běží pod svým zámkem (core/locks.py): když ji právě
+    provádí jiný proces (ruční „Aktualizovat teď“, údržba, jiný timer),
+    počká se nejvýš wait_s; když ji mezitím ten druhý proces úspěšně
+    dokončil, znovu se nespouští (SKIP)."""
+    from core.locks import Busy, task_lock
     tasks = _tasks()
     results = []
     for name in names:
         label, fn = tasks[name]
-        log.info(f"=== {name}: {label} ===")
         t0 = time.monotonic()
+        started = time.time()
+        waited = []
+
+        def on_wait(name=name):
+            waited.append(True)
+            log.info(f"{name}: úlohu právě provádí jiný proces — čekám")
+            if job:
+                job.update(state="waiting", current=name)
         try:
-            res = fn() or {}
-            n_err = int(res.get("errors", 0) or 0) if isinstance(res, dict) else 0
-            n_pend = int(res.get("pending", 0) or 0) if isinstance(res, dict) else 0
-            status = "WARN" if n_err else "OK"
-            detail = ", ".join(x for x in (f"{n_err} dílčích chyb" if n_err else "",
-                                           f"{n_pend} pokračuje příští běh" if n_pend else "") if x)
-        except Exception as e:
-            from core.updaters import UpdateError
-            if isinstance(e, UpdateError):  # očekávané selhání — bez tracebacku
-                log.error(f"{name}: SELHALO — {e}")
-            else:
-                log.exception(f"{name}: SELHALO — {type(e).__name__}: {e}")
-            status, detail = "FAIL", f"{type(e).__name__}: {e}"
-        results.append((name, status, time.monotonic() - t0, detail))
+            with task_lock(name, wait_s=_lock_wait(name, wait_s), on_wait=on_wait):
+                if waited and _finished_ok_since(name, started):
+                    results.append((name, "SKIP", time.monotonic() - t0, "mezitím aktualizováno jiným během"))
+                    continue
+                if job:
+                    job.update(state="running", current=name)
+                log.info(f"=== {name}: {label} ===")
+                results.append(_run_one(name, fn, t0))
+        except Busy:
+            log.warning(f"{name}: běží v jiném procesu — přeskočeno")
+            results.append((name, "SKIP", time.monotonic() - t0, "běží v jiném procesu"))
+        if job:
+            job.update(results=[list(r) for r in results])
     return results
+
+
+def _finished_ok_since(name: str, since: float) -> bool:
+    from core.runlog import load
+    runs = load().get(name) or []
+    if not runs:
+        return False
+    last = runs[-1]
+    import calendar
+    t = calendar.timegm(time.strptime(last["t"], "%Y-%m-%dT%H:%M:%SZ"))
+    return t >= since and last["status"] != "FAIL"
+
+
+def _run_one(name, fn, t0):
+    try:
+        res = fn() or {}
+        n_err = int(res.get("errors", 0) or 0) if isinstance(res, dict) else 0
+        n_pend = int(res.get("pending", 0) or 0) if isinstance(res, dict) else 0
+        status = "WARN" if n_err else "OK"
+        detail = ", ".join(x for x in (f"{n_err} dílčích chyb" if n_err else "",
+                                       f"{n_pend} pokračuje příští běh" if n_pend else "") if x)
+    except Exception as e:
+        from core.updaters import UpdateError
+        if isinstance(e, UpdateError):  # očekávané selhání — bez tracebacku
+            log.error(f"{name}: SELHALO — {e}")
+        else:
+            log.exception(f"{name}: SELHALO — {type(e).__name__}: {e}")
+        status, detail = "FAIL", f"{type(e).__name__}: {e}"
+    return (name, status, time.monotonic() - t0, detail)
 
 
 def _record_runs(results: list) -> None:
     """Posledních N běhů každé úlohy → history/.runs.json (stránka /stav, status.sh)."""
     try:
         from core.runlog import record
-        record(results)
+        record([r for r in results if r[1] != "SKIP"])
     except Exception as e:  # záznam nesmí shodit aktualizaci
         log.warning(f"záznam běhů selhal: {e}")
 
@@ -285,6 +338,12 @@ def main(argv=None) -> int:
     parser.add_argument("-q", "--quiet", action="store_true",
                         help="jen varování/chyby + jednořádkový souhrn (minutový timer)")
     parser.add_argument("--log-file", help="logovat navíc do souboru")
+    parser.add_argument("--manual", action="store_true",
+                        help="ruční běh (web „Aktualizovat teď“): bez skupinového zámku, jen zámky úloh")
+    parser.add_argument("--job", metavar="ID", help="zapisovat průběh do history/.jobs/ID.json (web)")
+    parser.add_argument("--wait-lock", type=float, default=None, metavar="S",
+                        help="kolik sekund čekat na zámek úlohy, kterou provádí jiný proces "
+                             "(výchozí 2 h, ruční běh 30 min, live 40 s)")
     try:
         args = parser.parse_args(argv)
     except SystemExit as e:
@@ -313,15 +372,31 @@ def main(argv=None) -> int:
                  else ".entsoe.lock" if set(names) <= set(ENTSOE_TASKS)
                  else ".weather.lock" if set(names) == {"weather"} else ".update.lock")
     lock = _Lock(history_root() / lock_name)
-    if not args.no_lock and not lock.acquire():
+    job = None
+    if args.job:
+        from core.jobs import JobFile
+        job = JobFile(args.job)
+        job.update(state="starting", tasks=names, pid=os.getpid())
+    if not args.no_lock and not args.manual and not lock.acquire():
         log.error(f"jiná aktualizace právě běží (zámek {lock.path})")
+        if job:
+            job.update(state="done", ok=False, message="jiná aktualizace stejné skupiny právě běží")
         return EXIT_LOCKED
+    wait_s = args.wait_lock if args.wait_lock is not None else (1800.0 if args.manual else 7200.0)
     try:
-        results = run_tasks(names)
+        results = run_tasks(names, wait_s=wait_s, job=job)
         _record_runs(results)
-        _refresh_overview(names)
+        if set(names) != {"maintenance"}:
+            _refresh_overview(names)
+    except BaseException as e:
+        if job:
+            job.update(state="done", ok=False, message=f"{type(e).__name__}: {e}")
+        raise
     finally:
         lock.release()
+    if job:
+        job.update(state="done", ok=not any(r[1] == "FAIL" for r in results),
+                   results=[list(r) for r in results])
 
     failed = [r for r in results if r[1] == "FAIL"]
     if args.quiet:

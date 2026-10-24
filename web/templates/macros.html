@@ -89,3 +89,11 @@
 {% if presets %}<div class="presets">{% for lbl, val in presets %}<button type="submit" name="range" value="{{ val }}">{{ lbl }}</button>{% endfor %}</div>{% endif %}
 </div>
 {%- endmacro %}
+
+
+{% macro refresh_button(target, label="Aktualizovat teď", small=False) %}
+<span class="refresh{{ ' refresh-sm' if small }}" data-refresh-target="{{ target }}">
+  <button type="button" class="btn refresh-btn" title="Stáhnout nová data hned (na pozadí, přes zámky úloh)">⟳ {{ label }}</button>
+  <span class="refresh-status muted small" aria-live="polite"></span>
+</span>
+{% endmacro %}

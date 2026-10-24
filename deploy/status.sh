@@ -9,8 +9,8 @@ REPO="${PPDASH_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 VENV="${PPDASH_VENV:-$REPO/.venv}"
 export PPDASH_DATA_DIR="${PPDASH_DATA_DIR:-$HOME/ppdash-data}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-SERVICES=(ppdash-web ppdash-live ppdash-update ppdash-update-cot ppdash-update-entsoe ppdash-update-weather)
-TIMERS=(ppdash-live.timer ppdash-update.timer ppdash-update-cot.timer ppdash-update-entsoe.timer ppdash-update-weather.timer)
+SERVICES=(ppdash-web ppdash-live ppdash-update ppdash-update-evening ppdash-update-cot ppdash-update-entsoe ppdash-update-entsoe-prices ppdash-update-weather ppdash-maintenance)
+TIMERS=(ppdash-update.timer ppdash-update-evening.timer ppdash-live.timer ppdash-update-cot.timer ppdash-update-entsoe.timer ppdash-update-entsoe-prices.timer ppdash-update-weather.timer ppdash-maintenance.timer)
 LOGS=0
 [ "${1:-}" = "--logs" ] && LOGS=1
 rc=0

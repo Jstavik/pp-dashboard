@@ -1,5 +1,5 @@
 [Unit]
-Description=PP Dashboard — aktualizace historie 2× denně (vše kromě live a COT)
+Description=PP Dashboard — ranní aktualizace historie (vše kromě live, COT, ENTSO-E skupiny a počasí)
 
 [Service]
 Type=oneshot

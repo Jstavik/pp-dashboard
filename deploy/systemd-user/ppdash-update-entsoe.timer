@@ -1,10 +1,8 @@
 [Unit]
-Description=PP Dashboard — ENTSO-E 07:10, 13:20 (po výsledcích SDAC) a 19:10 (Praha)
+Description=PP Dashboard — ENTSO-E 1× denně 07:10 (Praha); ceny navíc 13:20 (ppdash-update-entsoe-prices)
 
 [Timer]
 OnCalendar=*-*-* 07:10:00 Europe/Prague
-OnCalendar=*-*-* 13:20:00 Europe/Prague
-OnCalendar=*-*-* 19:10:00 Europe/Prague
 RandomizedDelaySec=3min
 Persistent=true
 

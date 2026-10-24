@@ -504,8 +504,78 @@
     }).catch(function () { /* necháme poslední stav */ });
   }
 
+  /* ── „Aktualizovat teď“ (core/jobs.py, /api/refresh/<cíl>) ─────────── */
+  var JOB_STATES = { queued: "spouští se…", starting: "spouští se…", waiting: "čeká na běžící aktualizaci",
+                     running: "běží", stale: "nedoběhlo (proces skončil bez výsledku)" };
+
+  function hhmm(sec) {
+    return new Date(sec * 1000).toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Prague" });
+  }
+
+  function renderJob(box, j) {
+    var btn = box.querySelector(".refresh-btn"), out = box.querySelector(".refresh-status");
+    var busy = ["queued", "starting", "waiting", "running"].indexOf(j.state) >= 0;
+    btn.disabled = busy || j.cooldown_left > 0;
+    var txt = "";
+    if (busy) {
+      txt = JOB_STATES[j.state] + (j.current ? ": " + j.current : "") +
+            (j.total_n ? " (" + Math.min(j.done_n + (j.state === "running" ? 1 : 0), j.total_n) + "/" + j.total_n + ")" : "");
+    } else if (j.state === "done") {
+      var bad = j.results.filter(function (r) { return r.status === "FAIL"; });
+      var warn = j.results.filter(function (r) { return r.status === "WARN"; });
+      txt = (j.ok === false ? "✗ " : "✓ ") + "dokončeno " + (j.finished ? hhmm(j.finished) : "") +
+            (bad.length ? " — selhalo: " + bad.map(function (r) { return r.task + " (" + r.detail + ")"; }).join(", ")
+             : warn.length ? " — s varováním: " + warn.map(function (r) { return r.task; }).join(", ") : "") +
+            (j.message && !j.results.length ? " — " + j.message : "");
+      if (j.cooldown_left > 0) btn.title = "Znovu za " + Math.ceil(j.cooldown_left / 60) + " min (ochrana zdrojů)";
+    } else if (j.state === "stale") {
+      txt = JOB_STATES.stale;
+    }
+    out.textContent = txt;
+    if (j.state === "done" && box.dataset.watching === "1") {
+      box.dataset.watching = "";
+      var a = document.createElement("a");
+      a.href = "#"; a.textContent = " · zobrazit nová data";
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        fetch("/api/cache/clear", { method: "POST" }).then(function () { location.reload(); });
+      });
+      out.appendChild(a);
+    }
+    return busy;
+  }
+
+  function pollJob(box) {
+    var url = "/api/refresh/" + encodeURIComponent(box.dataset.refreshTarget);
+    fetch(url, { headers: { "Accept": "application/json" } }).then(function (r) { return r.json(); }).then(function (j) {
+      if (renderJob(box, j)) { box.dataset.watching = "1"; setTimeout(function () { pollJob(box); }, 3000); }
+    }).catch(function () { setTimeout(function () { pollJob(box); }, 10000); });
+  }
+
+  function initRefresh(box) {
+    box.querySelector(".refresh-btn").addEventListener("click", function () {
+      var btn = this;
+      btn.disabled = true;
+      fetch("/api/refresh/" + encodeURIComponent(box.dataset.refreshTarget), { method: "POST" })
+        .then(function (r) { return r.json(); }).then(function (j) {
+          if (!j.started) {
+            renderJob(box, j);
+            box.querySelector(".refresh-status").textContent = j.message;
+            btn.disabled = j.state === "running" || j.state === "waiting";
+            if (btn.disabled) pollJob(box);
+            return;
+          }
+          box.dataset.watching = "1";
+          renderJob(box, j);
+          setTimeout(function () { pollJob(box); }, 1500);
+        }).catch(function () { btn.disabled = false; });
+    });
+    pollJob(box);
+  }
+
   /* ── start ─────────────────────────────────────────────────────────── */
   function start() {
+    document.querySelectorAll("[data-refresh-target]").forEach(initRefresh);
     var toggle = document.getElementById("theme-toggle");
     if (toggle) toggle.addEventListener("click", function () {
       var t = isDark() ? "light" : "dark";

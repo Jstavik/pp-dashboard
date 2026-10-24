@@ -1,0 +1,10 @@
+[Unit]
+Description=PP Dashboard — večerní aktualizace 17:00 (Praha), bez ENTSO-E
+
+[Timer]
+OnCalendar=*-*-* 17:00:00 Europe/Prague
+RandomizedDelaySec=3min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

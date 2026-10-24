@@ -103,6 +103,42 @@ def status_page(request: Request):
     return templates.TemplateResponse(request, "stav.html", {"s": context(), "nav_active": "stav"})
 
 
+# stránka → cíl tlačítka „Aktualizovat teď“ (core/jobs.py::TARGETS)
+PAGE_REFRESH = {"plyn": "gas", "elektrina": "power", "odstavky-ceps": "power", "trh-eu": "entsoe",
+                "nordic": "nordic", "pocasi": "weather", "energy-charts": "energy_charts", "cot": "cot",
+                "report": "gas"}
+
+
+def _job_view(st: dict) -> dict:
+    from web.status import TASK_LABELS
+    res = st.get("results") or []
+    names = st.get("tasks") or []
+    return {"state": st.get("state", "idle"), "ok": st.get("ok"), "message": st.get("message", ""),
+            "label": st.get("label", ""), "current": TASK_LABELS.get(st.get("current"), st.get("current")),
+            "done_n": len(res), "total_n": len(names), "cooldown_left": st.get("cooldown_left", 0),
+            "finished": st.get("finished"),
+            "results": [{"task": TASK_LABELS.get(r[0], r[0]), "status": r[1], "secs": round(r[2]),
+                         "detail": r[3]} for r in res]}
+
+
+@app.post("/api/refresh/{target}")
+def refresh_start(target: str):
+    from core import jobs
+    if jobs.target_info(target) is None:
+        raise HTTPException(404, "neznámá úloha")
+    r = jobs.start(target)
+    return JSONResponse({**_job_view(jobs.status(target)), "started": r["ok"], "message": r["message"]},
+                        status_code=202 if r["ok"] else 409)
+
+
+@app.get("/api/refresh/{target}")
+def refresh_status(target: str):
+    from core import jobs
+    if jobs.target_info(target) is None:
+        raise HTTPException(404, "neznámá úloha")
+    return _job_view(jobs.status(target))
+
+
 @app.get("/frag-overview", response_class=HTMLResponse, include_in_schema=False)
 def overview_fragment(request: Request):
     from web.overview import context
@@ -332,4 +368,5 @@ def page_view(request: Request, page_key: str):
     query = str(Params.from_request(request))
     return templates.TemplateResponse(request, "page.html", {
         "page": page, "active_tab": tab_key, "initial_query": query,
+        "refresh_target": PAGE_REFRESH.get(page.key),
     })

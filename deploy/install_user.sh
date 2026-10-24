@@ -26,7 +26,7 @@ DATA="${PPDASH_DATA_DIR:-$HOME/ppdash-data}"
 CONF_DIR="$HOME/.config/ppdash"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNITS_SRC="$REPO/deploy/systemd-user"
-TIMERS=(ppdash-update.timer ppdash-live.timer ppdash-update-cot.timer ppdash-update-entsoe.timer ppdash-update-weather.timer)
+TIMERS=(ppdash-update.timer ppdash-update-evening.timer ppdash-live.timer ppdash-update-cot.timer ppdash-update-entsoe.timer ppdash-update-entsoe-prices.timer ppdash-update-weather.timer ppdash-maintenance.timer)
 
 SEED=1 START=1 INITIAL=0
 for arg in "$@"; do

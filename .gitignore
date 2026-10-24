@@ -10,3 +10,7 @@ data/history/overview_events.json
 data/history/.runs.json
 data/history/.openmeteo_quota.json
 data/history/.*.lock
+data/history/.locks/
+data/history/.jobs/
+data/history/.sizes.json
+data/history/.maintenance.json

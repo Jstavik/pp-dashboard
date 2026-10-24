@@ -1,4 +1,3 @@
-import glob
 import os
 import pandas as pd
 
@@ -83,15 +82,22 @@ def list_available_snapshot_dates(country: str) -> list:
     Pro UI 'Porovnat s' selectbox — nabízí jen reálně dostupné dny, ne
     abstraktní 'D-N' posun. Historie roste den po dni od nasazení, takže
     tenhle seznam se sám prodlužuje s provozem."""
-    files = sorted(glob.glob(os.path.join(OUTAGES_SNAPSHOTS_DIR, "*.parquet")))
+    from data.partitioned_store import ARCHIVE_FILE, _archive_meta, snapshot_days
     dates = []
-    for f in files:
-        day_str = os.path.basename(f).removesuffix(".parquet")
-        try:
-            day = pd.Timestamp(day_str, tz="UTC")
-        except ValueError:
+    archived = set(_archive_meta(OUTAGES_SNAPSHOTS_DIR).get("days", []))
+    arch = None
+    for day_str in snapshot_days(OUTAGES_SNAPSHOTS_DIR):
+        f = os.path.join(OUTAGES_SNAPSHOTS_DIR, f"{day_str}.parquet")
+        if os.path.exists(f):
+            has = (pd.read_parquet(f, columns=["country"])["country"] == country).any()
+        elif day_str in archived:  # archiv změn (core/maintenance.py)
+            if arch is None:
+                arch = pd.read_parquet(os.path.join(OUTAGES_SNAPSHOTS_DIR, ARCHIVE_FILE),
+                                       columns=["country", "_from", "_to"])
+                arch = arch[arch["country"] == country]
+            has = ((arch["_from"] <= day_str) & (arch["_to"] >= day_str)).any()
+        else:
             continue
-        df = pd.read_parquet(f, columns=["country"])
-        if (df["country"] == country).any():
-            dates.append(day)
+        if has:
+            dates.append(pd.Timestamp(day_str, tz="UTC"))
     return dates

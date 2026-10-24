@@ -58,8 +58,12 @@ nano ~/.config/ppdash/env                        # ENTSOE_TOKEN=…, GIE_API_KEY
 |---|---|---|
 | `ppdash-web.service` | trvale | uvicorn, 1 worker, `MemoryHigh=1300M`, `MemoryMax=1600M` |
 | `ppdash-live.timer` | každou minutu (:20 s) | `update_all.py --only live -q`: ČEPS minutová data (odchylka, SVR, zatížení, výroba, OZE, frekvence, toky, cena odchylky), GASSCO realtime nominace, GASSCO UMM |
-| `ppdash-update.timer` | 06:00 a 17:00 Praha | `update_all.py`: ENTSO-G toky/allocation/operational, GIE, LNG, GASSCO nominace, hydro, DAP, výroba, odstávky, Energy-Charts |
-| `ppdash-update-entsoe.timer` | 07:10, 13:20, 19:10 Praha | `update_all.py --only entsoe`: ceny všech zón, spotřeba + prognóza, prognóza OZE, toky (vlastní zámek, backfill po částech s rozpočtem) |
+| `ppdash-update.timer` | 06:00 Praha | `update_all.py`: ENTSO-G toky/allocation/operational, GIE, LNG, GASSCO nominace, hydro, DAP, výroba, odstávky, Energy-Charts, Nordic |
+| `ppdash-update-evening.timer` | 17:00 Praha | `update_all.py --skip power`: totéž bez ENTSO-E úloh (plyn, Energy-Charts, Nordic) |
+| `ppdash-update-entsoe.timer` | 07:10 Praha | `update_all.py --only entsoe`: ceny všech zón, spotřeba + prognóza, prognóza OZE, toky (vlastní zámek, backfill po částech s rozpočtem) |
+| `ppdash-update-entsoe-prices.timer` | 13:20 Praha | `--manual --only entsoe_prices,dap_europe`: DA ceny na zítřek po výsledcích SDAC (~12:45) |
+| `ppdash-maintenance.timer` | ne 03:30 Praha | `update_all.py --only maintenance`: kompakce souborů, retence snapshotů, velikosti (`core/maintenance.py`) |
+| `ppdash-run@<cíl>.service` | na tlačítko | ruční „Aktualizovat teď“ z webu (`core/jobs.py`), jen zámky úloh, kratší rozpočty backfillu |
 | `ppdash-update-weather.timer` | 05:50, 11:50, 17:50, 23:50 Praha | `update_all.py --only weather`: Open-Meteo předpověď + ensemble, historie ERA5 (vlastní zámek) |
 | `ppdash-update-cot.timer` | st 14:00 a 19:00, čt + so 08:00 Praha | `update_all.py --only cot` (ICE vydává report za pátek ve středu; dohání i chybějící týdny) |
 

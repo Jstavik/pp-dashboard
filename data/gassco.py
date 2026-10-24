@@ -1,4 +1,3 @@
-import glob
 import logging
 import requests
 import pandas as pd
@@ -347,15 +346,8 @@ def list_available_umm_snapshot_dates() -> list:
     snapshot UMM zpráv — pro UI 'Porovnat s' selectbox, stejný vzor jako
     data/outages.py::list_available_snapshot_dates (jen bez country
     filtru, GASSCO UMM je jeden feed, ne per-country)."""
-    files = sorted(glob.glob(os.path.join(GASSCO_UMM_SNAPSHOTS_DIR, "*.parquet")))
-    dates = []
-    for f in files:
-        day_str = os.path.basename(f).removesuffix(".parquet")
-        try:
-            dates.append(pd.Timestamp(day_str, tz="UTC"))
-        except ValueError:
-            continue
-    return dates
+    from data.partitioned_store import snapshot_days
+    return [pd.Timestamp(d, tz="UTC") for d in snapshot_days(GASSCO_UMM_SNAPSHOTS_DIR)]
 
 
 def fetch_realtime_atom() -> pd.DataFrame:

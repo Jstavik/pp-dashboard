@@ -1,0 +1,22 @@
+[Unit]
+Description=PP Dashboard — ENTSO-E day-ahead ceny po výsledcích SDAC (ceny zón + DAP Evropa)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.config/ppdash/env
+Environment=PPDASH_DATA_DIR=@DATA@
+Environment=ARROW_DEFAULT_MEMORY_POOL=system
+Environment=MALLOC_ARENA_MAX=2
+Environment=PYTHONUNBUFFERED=1
+# --manual: bez skupinového zámku .entsoe.lock (ranní backfill může ještě běžet),
+# jen zámky úloh — ceny počkají, až je ranní běh dopíše
+ExecStart=@VENV@/bin/python scripts/update_all.py --manual --wait-lock 3600 --only entsoe_prices,dap_europe
+TimeoutStartSec=2h
+Nice=10
+CPUWeight=50
+IOWeight=50
+MemoryMax=600M
+# exit 3 = jiná aktualizace právě běží — není to chyba
+SuccessExitStatus=3
+NoNewPrivileges=yes
