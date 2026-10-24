@@ -372,23 +372,26 @@ LOOK_COOKIE = "ppdash_vzhled"
 
 @app.get("/{page_key}", response_class=HTMLResponse)
 def page_view(request: Request, page_key: str):
+    """Stránka. Nový vzhled (výchozí tam, kde je hotový — web/tabs/v2.py::V2_PAGES):
+    nahoře přehledové záložky nového vzhledu, za nimi všechny původní záložky
+    beze změny. ?vzhled=stary|novy přepne a zapamatuje se v cookie."""
     from web.tabs.v2 import V2_PAGES
     page = _page_or_404(page_key)
-    # nový/starý vzhled (prototyp): ?vzhled=novy|stary se zapamatuje v cookie
-    look = request.query_params.get("vzhled") or request.cookies.get(LOOK_COOKIE) or "stary"
-    look = look if look in ("novy", "stary") else "stary"
+    look = request.query_params.get("vzhled") or request.cookies.get(LOOK_COOKIE) or "novy"
+    look = look if look in ("novy", "stary") else "novy"
+    entries = [(page.key, t) for t in page.tabs]
     shown = page
-    if page_key in V2_PAGES and look == "novy" and \
-            request.query_params.get("tab") in (None, *registry.PAGES[V2_PAGES[page_key]].tabs):
+    if page_key in V2_PAGES and look == "novy":
         shown = registry.PAGES[V2_PAGES[page_key]]
+        entries = [(shown.key, t) for t in shown.tabs] + entries
     tab_key = request.query_params.get("tab")
-    if tab_key not in shown.tabs:
-        tab_key = shown.tabs[0]
+    if tab_key not in [t for _, t in entries]:
+        tab_key = entries[0][1]
     query = str(Params.from_request(request))
     resp = templates.TemplateResponse(request, "page.html", {
-        "page": shown, "active_tab": tab_key, "initial_query": query, "nav_active": page.key,
+        "page": shown, "entries": entries, "active_tab": tab_key, "initial_query": query, "nav_active": page.key,
         "refresh_target": PAGE_REFRESH.get(page.key), "base_key": page.key,
-        "look": ("novy" if shown is not page else "stary") if page_key in V2_PAGES else None,
+        "look": look if page_key in V2_PAGES else None,
     })
     if request.query_params.get("vzhled") in ("novy", "stary"):
         resp.set_cookie(LOOK_COOKIE, request.query_params["vzhled"], max_age=365 * 86400, samesite="lax")

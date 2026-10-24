@@ -523,8 +523,10 @@
   var pageEl = document.querySelector(".page");
   var refreshTimers = {};
 
-  function fragUrl(tab, query) {
-    return "/frag/" + pageEl.dataset.page + "/" + tab + (query ? "?" + query : "");
+  function fragUrl(tab, query, panel) {
+    // nový vzhled: přehledové záložky (v2-…) a původní záložky na jedné stránce
+    var pg = (panel && panel.dataset.page) || pageEl.dataset.page;
+    return "/frag/" + pg + "/" + tab + (query ? "?" + query : "");
   }
 
   function setUrl(tab, query) {
@@ -541,7 +543,7 @@
     }
     panel._ppReq = (panel._ppReq || 0) + 1;
     var req = panel._ppReq;
-    return fetch(fragUrl(tab, query)).then(function (r) { return r.text(); }).then(function (html) {
+    return fetch(fragUrl(tab, query, panel)).then(function (r) { return r.text(); }).then(function (html) {
       if (req !== panel._ppReq) return;
       panel.classList.remove("is-loading");
       if (opts.partsOnly && panel.querySelector(".frag")) {

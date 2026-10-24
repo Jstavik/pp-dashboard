@@ -1,0 +1,14 @@
+{% import "macros.html" as m %}
+{% if not c.has_prices %}<div class="alert alert-warn">Data se dotahují — ceny ENTSO-E zatím nejsou k dispozici.</div>
+{% else %}
+<div class="v2">
+  <div class="v2-kpis">{% for k in c.kpis %}{{ m.kpi(k.label, k.value, k.sub, unit=k.unit) }}{% endfor %}</div>
+  {{ m.chart("multi", 620) }}
+  {{ m.chart("spreads", 420) }}
+  <div class="v2-grid-2">
+    <div>{% if c.has_load %}{{ m.chart("load", 360) }}{% endif %}</div>
+    <div class="card panel"><h3 class="section-title">Čísla za grafy</h3>{{ m.table(c.table) }}
+    <p class="muted small">Base = průměr hodin dne dodávky (ENTSO-E, SDAC). Pásmo = min–max stejného dne posledních 5 let (Ø 7 dní).</p></div>
+  </div>
+</div>
+{% endif %}

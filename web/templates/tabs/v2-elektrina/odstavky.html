@@ -1,0 +1,10 @@
+{% import "macros.html" as m %}
+{% if c.empty %}<div class="alert alert-warn">Data o odstávkách (ENTSO-E) se dotahují — zatím nejsou k dispozici.</div>
+{% else %}
+<div class="v2">
+  <div class="v2-kpis">{% for k in c.kpis %}{{ m.kpi(k.label, k.value, k.sub, unit=k.unit) }}{% endfor %}</div>
+  {{ m.chart("unavail", 400) }}
+  <div class="card panel"><h3 class="section-title">Největší odstávky dnes (CZ)</h3>{{ m.table(c.table) }}
+  <p class="muted small">ENTSO-E nedostupnost výrobních jednotek (stav v poledne; u překrývajících se hlášení jednoho bloku se bere největší). Detail, porovnání snapshotů a sousední země: záložka <a href="?tab=vyroba">Výroba/Odstávky</a>.</p></div>
+</div>
+{% endif %}

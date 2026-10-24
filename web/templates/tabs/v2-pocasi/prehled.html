@@ -1,0 +1,15 @@
+{% import "macros.html" as m %}
+{% if not c.has_data %}<div class="alert alert-warn">Data se dotahují — pozorování ani předpověď počasí zatím nejsou k dispozici.</div>
+{% else %}
+<div class="v2">
+  <div class="v2-kpis">{% for k in c.kpis %}{{ m.kpi(k.label, k.value, k.sub, unit=k.unit) }}{% endfor %}</div>
+  {{ m.chart("temp", 400) }}
+  {{ m.chart("anom", 300) }}
+  <div class="v2-grid-2">
+    <div>{{ m.chart("wind", 340) }}</div>
+    <div>{{ m.chart("solar", 340) }}</div>
+  </div>
+  <div class="card panel"><h3 class="section-title">Čísla za grafy</h3>{{ m.table(c.table) }}
+  <p class="muted small">Pozorování ERA5 (Open-Meteo), normál 1991–2020 (nebo dostupné roky), předpověď ECMWF IFS (poslední běh). HDD = 18 − Tm pro Tm ≤ 15 °C.</p></div>
+</div>
+{% endif %}
