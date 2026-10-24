@@ -10,7 +10,8 @@ proměnnými). Co dělá:
    merguje revize do ročního souboru) roční soubory znají.
    Ověření před smazáním originálů: počet řádků a kontrolní součet obsahu
    (hash každého řádku nezávislý na typech, viz content_checksum) zapsaného
-   a znovu přečteného souboru = originály. Přesné duplicitní řádky (jen po
+   a znovu přečteného souboru = originály. CSV se slučuje jako text
+   (buňky beze změny zápisu, typy se mezi měsíci liší). Přesné duplicitní řádky (jen po
    přerušené kompakci) se odstraní a vypíšou.
 2. **Retence snapshotů** (odstávky ENTSO-E, GASSCO UMM) — posledních
    N dní plné denní soubory, starší v archivu „jen změny“
@@ -111,7 +112,12 @@ def _groups(base_dir: str, fmt: str, target: str, now: pd.Timestamp) -> dict:
 
 
 def _read(path: str, fmt: str) -> pd.DataFrame:
-    return pd.read_parquet(path) if fmt == "parquet" else pd.read_csv(path)
+    # CSV se slučuje jako text (každá buňka přesně jak byla v souboru): odvozené
+    # typy se mezi měsíci liší (sloupec s "-" je jednou text, jindy float, prázdné
+    # buňky NaN vs. "") a round-trip přes typy by měnil zápis čísel i obsah.
+    if fmt == "parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path, dtype=str, keep_default_na=False, na_filter=False)
 
 
 def compact_group(files: list, target_path: str, fmt: str) -> dict:
@@ -122,6 +128,8 @@ def compact_group(files: list, target_path: str, fmt: str) -> dict:
     n_in = sum(len(x) for x in frames)
     raw = pd.concat(frames, ignore_index=True)
     del frames
+    if fmt != "parquet":
+        raw = raw.fillna("")  # sloupec chybějící v některém měsíci = prázdná buňka, jak ji zapíše to_csv
     if len(raw) != n_in:
         raise RuntimeError(f"{target_path}: concat ztratil řádky ({len(raw)} ≠ {n_in})")
     h = canonical_rows(raw)

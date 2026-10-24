@@ -382,3 +382,34 @@ def test_timer_frequencies():
     install = (u.parent / "install_user.sh").read_text()
     for t in ("ppdash-maintenance.timer", "ppdash-update-entsoe-prices.timer", "ppdash-update-evening.timer"):
         assert t in install
+
+
+def test_compaction_csv_mixed_types_lng(hist):
+    """Regrese (kolo 5, plná data): lng_storage/2023 — sloupec je v jednom měsíci
+    text ("-", prázdné), v dalším float/int, sloupec chybí v jednom měsíci.
+    Round-trip přes odvozené typy měnil kontrolní součet → kompakce selhala."""
+    from core.maintenance import compact_dataset
+    d = hist / "lng_storage"
+    d.mkdir()
+    (d / "2023-01.csv").write_text(
+        "name,gasDayStart,contractedCapacity,availableCapacity,inventory\n"
+        "Belgium,2023-01-01 00:00:00+00:00,-,,22.30\n"
+        "Germany,2023-01-01 00:00:00+00:00,,-,\n", encoding="utf-8")
+    (d / "2023-02.csv").write_text(
+        "name,gasDayStart,contractedCapacity,availableCapacity,inventory,info\n"
+        "Belgium,2023-02-01 00:00:00+00:00,540.96,5,1e-05,\"a, b\"\n"
+        "Germany,2023-02-01 00:00:00+00:00,167.2802,,4108.7084,\n", encoding="utf-8")
+    texts = {f: (d / f).read_text(encoding="utf-8").splitlines()[1:] for f in ("2023-01.csv", "2023-02.csv")}
+    r = compact_dataset("lng_storage", "year", NOW)
+    assert not r["errors"] and r["groups"] == 1 and os.listdir(d) == ["2023.csv"]
+    out = pd.read_csv(d / "2023.csv", dtype=str, keep_default_na=False)
+    assert len(out) == 4 and list(out.columns[:5]) == ["name", "gasDayStart", "contractedCapacity",
+                                                       "availableCapacity", "inventory"]
+    # hodnoty beze změny zápisu (22.30 zůstane 22.30, 1e-05 a "-" taky)
+    assert out["inventory"].tolist() == ["22.30", "", "1e-05", "4108.7084"]
+    assert out["contractedCapacity"].tolist() == ["-", "", "540.96", "167.2802"]
+    assert out["info"].tolist() == ["", "", "a, b", ""]
+    assert texts["2023-02.csv"][0].startswith("Belgium,2023-02-01")
+    # čtení přes read_partitioned dál odvozuje typy
+    back = ps.read_partitioned(str(d), fmt="csv")
+    assert len(back) == 4
