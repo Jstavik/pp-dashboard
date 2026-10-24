@@ -1,14 +1,136 @@
 # REBUILD_NOTES — přechod ze Streamlitu na FastAPI (větev `rebuild/fastapi`)
 
-Stav k 2026-10-23 (kolo 4, 3 a 2 níže). Větev založená z `main` @ 7a36a68. `main` ani
+Stav k 2026-10-24 (kolo 5, starší kola níže). Větev založená z `main` @ 7a36a68. `main` ani
 `.github/workflows` se neměnily, `data/history/` v repu zůstává.
 
 **Důležité omezení ověření:** v pracovním prostředí nebyly k dispozici API
 tokeny a síť k datovým zdrojům byla zablokovaná (povolené jen PyPI).
-**Žádné živé volání žádného API nebylo ověřeno.** Všechno, co sahá na síť,
-je otestované jen proti mockovaným odpovědím ve tvaru odvozeném z kódu
-(ne ze skutečných odpovědí). Web a výpočty jsou ověřené nad skutečnými
-daty z `data/history/` v repu.
+Živá API ověřuje jiné sezení v kontejneru (LXC); co tam ověřeno nebylo, je
+označené **NEOVĚŘENO**. Web a výpočty jsou ověřené nad skutečnými daty
+z `data/history/` v repu.
+
+## Kolo 5 (2026-10-24): audit dat, údržba, aktualizace na tlačítko, nový vzhled
+
+Uživatel: vlastní kompletní databáze pro osobní nekomerční použití, doplňovat jen nové,
+nezaneřádit disk nepoužívanými daty. Kontejner: 603 MB historie, backfill ENTSO-E běží.
+
+### Audit dat → `DATA_AUDIT.md`
+Tabulka všech datasetů (zdroj, obsah, rozlišení, od kdy, velikost teď / po backfillu /
+růst za rok — odhady, kde se používá, doporučení), duplicity a jedna „pravda“ pro každou
+veličinu (DA ceny = `entsoe_prices`, výroba = `generation`, hydro NO = NVE, SE/FI =
+ENTSO-E, toky plynu = `entsog_flows` po zemích / `entsog_operational` po bodech …).
+Odhad: ~0,9–1 GB po backfillu, ~150–200 MB/rok. Největší plýtvání byl počet souborů
+a denní snapshoty → údržba níž. Doporučení na později: Elektřina číst z úložiště místo
+živého ENTSO-E, `dap_europe` počítat z `entsoe_prices`, CSV → parquet.
+
+### Údržba historie (`core/maintenance.py`, úloha `maintenance`, timer ne 03:30)
+Pravidla na jednom místě: `POLICY` (dny přes `PPDASH_SNAPSHOT_KEEP_DAYS=60`,
+`PPDASH_FC_KEEP_DAYS=90`, `PPDASH_FC_MAX_LEAD_DAYS=10`).
+- **Kompakce**: uzavřené měsíce → `{YYYY}.parquet|csv` (ENTSO-E ceny/spotřeba/OZE/toky,
+  výroba, Fingrid, Energinet, ERA5, GIE, LNG, GASSCO nominace, hydro); uzavřené dny →
+  měsíc (ČEPS, GASSCO realtime; 8 dní po konci měsíce kvůli dohánění výpadků).
+  entsog_flows/operational a Energy-Charts mají vlastní logiku měsíčních souborů → bez kompakce.
+- **Ověření bez ztráty**: originály se smažou jen když zapsaný a znovu přečtený soubor má
+  stejný počet řádků a stejný kontrolní součet obsahu (`partitioned_store.content_checksum`
+  = součet hashů řádků, nezávislý na typu sloupce a pořadí: int 5 = float 5.0, čas v ns UTC).
+  Přesné duplicity (jen po přerušené kompakci) se odstraní a vypíšou. Neshoda → originály
+  zůstanou, chyba v /stav. Na datech z repa: 1 873 → 1 008 souborů, −11 MB, 0 chyb, 60 s;
+  hash 560 tis. řádků 0,3 s / +40 MB RAM.
+- **Čtení/zápis ročních souborů**: `read_partitioned` roční soubor ořízne na měsíce okna
+  (stejné řádky jako dřív z měsíčních souborů), `upsert_partitioned` merguje revize do
+  existujícího ročního/měsíčního kontejneru (`container_path`), Průzkumník roční soubory
+  prořezává podle roku. `last_date_partitioned`/navazování fungují beze změny.
+- **Snapshoty** (odstávky ENTSO-E, GASSCO UMM): 60 dní plné, starší v
+  `<dataset>/_archive.parquet` jako intervaly výskytu řádků (`_from`, `_to`) + typy dne
+  v `_archive.json`. Každý den se zrekonstruuje a porovná s originálem, pak se smaže.
+  `read_snapshot` a „Porovnat s“ (seznam dnů) čtou archiv transparentně. Odhad:
+  ~45 MB/rok → ~3 MB/rok.
+- **Předpovědi podle dne vydání** (`weather_fc_daily`): po 90 dnech jen předstih ≤ 10 dní.
+- **Velikosti**: snímek do `history/.sizes.json` (růst MB/rok), výsledek do
+  `history/.maintenance.json`. ČEPS minutová data se nechávají v plném rozlišení (~7 MB/rok).
+- Každý dataset se upravuje pod zámkem úlohy, která ho zapisuje; když běží > 2 min,
+  přeskočí se (WARN „pokračuje příští běh“).
+
+### Zámky úloh (`core/locks.py`)
+`history/.locks/<úloha>.lock` (fcntl). `update_all.run_tasks` drží zámek každé úlohy po
+dobu jejího běhu → plánovaný běh, ruční běh z webu a údržba nikdy nepíšou do stejného
+datasetu současně. Čekání: plánovaný běh až 2 h, ruční 30 min, live 40 s
+(`--wait-lock`). Když úlohu mezitím úspěšně dokončil jiný proces, nespouští se znovu
+(SKIP, nezapisuje se do `.runs.json`). Skupinové zámky (.update/.entsoe/.weather/.live)
+zůstaly.
+
+### Frekvence ENTSO-E a „Aktualizovat teď“
+| Timer | Kdy | Co |
+|---|---|---|
+| `ppdash-update` | 06:00 | výchozí běh (vč. výroby, odstávek, hydro, DAP) |
+| `ppdash-update-evening` (nový) | 17:00 | `--skip power` (plyn, Energy-Charts, Nordic — bez ENTSO-E) |
+| `ppdash-update-entsoe` | **07:10** (dřív 3×) | ceny, spotřeba, OZE, toky |
+| `ppdash-update-entsoe-prices` (nový) | 13:20 | `--manual --only entsoe_prices,dap_europe` (DA na zítřek po SDAC) |
+| `ppdash-maintenance` (nový) | ne 03:30 | údržba |
+| `ppdash-run@<cíl>` (šablona) | na tlačítko | ruční běh, kratší rozpočty backfillu |
+
+Backfill ENTSO-E teď postupuje 1 během denně (+ ceny odpoledne); zrychlit jde tlačítkem
+nebo `systemctl --user start ppdash-update-entsoe`.
+
+**Tlačítko „⟳ Aktualizovat teď“** na stránkách (Plyn, Elektřina, Odstávky, Trh EU, Nordic,
+Počasí, Energy-Charts, CoT) a na **/stav u každého datasetu** (kromě minutových live úloh)
+a „Spustit údržbu teď“. `core/jobs.py`: `POST /api/refresh/<cíl>` spustí
+`systemctl --user start --no-block ppdash-run@<cíl>.service` (když je unita nainstalovaná),
+jinak odpojený podproces (`cache/jobs/<cíl>.log`); `PPDASH_REFRESH_MODE=auto|systemd|
+subprocess|off`. Průběh v `history/.jobs/<cíl>.json` (čeká / běží: úloha (2/6) / hotovo ✓
+s chybami úloh), stránka se ptá po 3 s; po dokončení odkaz „zobrazit nová data“ (vyčistí
+cache webu). Ochrana: běžící cíl nejde spustit znovu, cooldown 10–60 min podle cíle,
+max 2 ruční běhy současně, mrtvý proces → „nedoběhlo“ (neblokuje).
+
+### /stav
+Nové sloupce u datasetů: frekvence aktualizace, MB, počet souborů, **růst MB/rok**
+(z týdenních snímků; první číslo po týdnu), tlačítko. Blok „Úložiště a údržba“: celkem MB
+a souborů, růst, poslední údržba (soubory a MB před → po, chyby, přeskočené, akce).
+
+### Nový vzhled — prototyp (`PRESENTATION_PROPOSAL.md`)
+Plyn (zásobníky), Elektřina ČR, Nordic: jedna přehledová obrazovka — KPI s odchylkou od
+průměru 5 let, sezónní graf letos vs. pásmo min–max 5 let + průměr + loni, small
+multiples se stejným měřítkem, anotace událostí (`core/events.py`: milníky trhu + feed
+odstávek), spready jako diverging sloupce, tabulka čísel. Přepínač „✨ Vyzkoušet nový
+vzhled / přepnout na starý“ (cookie `ppdash_vzhled`), starý je výchozí a beze změny.
+Kód `web/tabs/v2.py`, `charts/v2.py`, šablony `tabs/v2-*`. Ověřeno screenshoty (světlý
+i tmavý režim) nad daty z repa; Nordic a ceny zón jen nad syntetickými daty →
+**NEOVĚŘENO s reálnými daty**.
+
+### Počasí
+Open-Meteo free je pro osobní nekomerční použití v pořádku (poznámka v rešerši opravena).
+Shrnutí ECMWF open data a doporučení (nestahovat přímo) viz „ECMWF open data“ v kole 3.
+
+### Testy (kolo 5)
+**344 testů** zelených (s `PPDASH_TEST_EMPTY=1`: 343 + 1 přeskočený): `tests/test_maintenance.py`
+(kompakce rok/měsíc/CSV bez ztráty, revize do ročního souboru, detekce neshody
+a ponechání originálů, obnova po přerušené kompakci, Průzkumník, archiv snapshotů
+s přesnou rekonstrukcí a typy, „Porovnat s“ z archivu, ořez předpovědí, velikosti a
+růst, přeskočení zamčeného datasetu, /stav, zámky úloh, SKIP, ruční běh bez
+skupinového zámku + job soubor, cooldown/spam/max souběh/stale, systemd režim, API,
+frekvence timerů), `tests/test_v2.py` (přepínač, stránky a grafy, sezónní pásmo).
+
+### Co ověřit v kontejneru (kolo 5)
+1. `git pull && deploy/install_user.sh --no-seed` → nové unity a timery
+   (`systemctl --user list-timers 'ppdash*'`: entsoe jen 07:10, entsoe-prices 13:20,
+   evening 17:00, maintenance ne 03:30).
+2. **Údržba nejdřív nanečisto na kopii**: `cp -a ~/ppdash-data /tmp/pp-copy &&
+   PPDASH_DATA_DIR=/tmp/pp-copy .venv/bin/python scripts/update_all.py --only maintenance -v`
+   → v logu „kompakce …: N skupin, −M souborů, R řádků ověřeno, 0 duplicit“, žádné
+   „kontrolní součet nesedí“; čas a RAM (`/usr/bin/time -v`, čekám < 10 min, < 600 MB).
+   Pak na ostrých datech přes `/stav → Spustit údržbu teď` (nebo
+   `systemctl --user start ppdash-maintenance`). **NEOVĚŘENO** na plných datech.
+3. Po údržbě: `/trh-eu`, `/nordic`, `/elektrina → Výroba`, Průzkumník (entsoe_prices,
+   generation za celou historii) vrací stejná čísla jako předtím; `/elektrina → Výroba/
+   Odstávky → Porovnat s` nabízí i dny starší 60 dní.
+4. Tlačítko: na `/plyn` „Aktualizovat teď“ → průběh „běží: GIE zásobníky (2/6)“ →
+   „✓ dokončeno“; `journalctl --user -u 'ppdash-run@gas' -n 30`. Druhé kliknutí →
+   „aktualizováno před chvílí — znovu za …“. **NEOVĚŘENO**: že web (služba) smí volat
+   `systemctl --user` (potřebuje `XDG_RUNTIME_DIR`/DBus — uživatelská služba je mívá;
+   jinak nastavit `PPDASH_REFRESH_MODE=subprocess` v `~/.config/ppdash/env`).
+5. Nový vzhled: `/plyn?vzhled=novy`, `/elektrina?vzhled=novy`, `/nordic?vzhled=novy` —
+   pásmo 5 let u cen CZ a NVE, mřížka spreadů, výroba; `/healthz` `rss_mb`.
+6. Za týden `/stav`: sloupec „Růst MB/rok“ má čísla.
 
 ## Kolo 4 (2026-10-23): rate limiting, Přehled dne, Reporty, vzhled, /stav
 
@@ -265,7 +387,7 @@ výsledkem dotazu (malá tabulka), kdyby byl drag&drop potřeba.
 | Zdroj | Co | Licence / podmínky | Použití tady |
 |---|---|---|---|
 | **Open-Meteo** API | forecast (ECMWF IFS 0.25°, AIFS, GFS, ICON, …), ensemble (ECMWF ENS 51 čl., GEFS, ICON-EPS), archive (ERA5/ERA5-Land od 1940) | data **CC BY 4.0** (uvést „Weather data by Open-Meteo.com“ + odkaz); **free API jen nekomerčně**, < 10 000 volání/den, 5 000/h, 600/min ([terms](https://open-meteo.com/en/terms)). Komerčně: placený klíč (`customer-*` hosty) nebo vlastní instance (open-source, AGPL) | **implementováno** — `OPENMETEO_API_KEY` přepne na komerční hosty, `OPENMETEO_BASE_URL` na vlastní instanci |
-| **ECMWF open data** (přímo GRIB2) | IFS + AIFS 0.25°, ENS, posledních ~12 běhů | **CC BY 4.0 + ECMWF Terms of Use** — i komerčně s atribucí ([open data](https://www.ecmwf.int/en/forecasts/datasets/open-data)) | neimplementováno (GRIB → potřeba eccodes/cfgrib, ~stovky MB/běh); legální alternativa k Open-Meteo pro komerční použití |
+| **ECMWF open data** (přímo GRIB2) | IFS + AIFS 0.25°, ENS, posledních ~12 běhů | **CC BY 4.0 + ECMWF Terms of Use** — i komerčně s atribucí ([open data](https://www.ecmwf.int/en/forecasts/datasets/open-data)) | neimplementováno — viz doporučení níž (Open-Meteo dodává tatáž data) |
 | **ECMWF charts** (charts.ecmwf.int) | mapy, meteogramy | podmínky pro grafiku nejsou jasně CC BY (open data ano) | **jen odkaz** |
 | **Tropical Tidbits** | obrázky map modelů | žádné zveřejněné podmínky pro vkládání/stahování; obrázky autora → bez svolení **jen odkaz**, nestahovat, neembedovat | odkaz |
 | **DWD Open Data** | ICON/ICON-EU GRIB, pozorování stanic, klima | zdarma i komerčně, atribuce („Quelle: Deutscher Wetterdienst“, GeoNutzV / CC BY 4.0) | odkaz; kandidát na DE stanice |
@@ -273,11 +395,37 @@ výsledkem dotazu (malá tabulka), kdyby byl drag&drop potřeba.
 | **Windy** | interaktivní mapa | oficiální embed widget je k vkládání určený | embed v záložce Mapy |
 | Copernicus CDS (ERA5) | reanalýza | zdarma i komerčně (Copernicus licence, atribuce) | přes Open-Meteo archive |
 
-**Pozor:** PP Dashboard je interní nástroj firmy → Open-Meteo **free API
-pravděpodobně nesplňuje „nekomerční použití“**. Doporučení: koupit Open-Meteo
-API předplatné (nejjednodušší, kód připravený — jen `OPENMETEO_API_KEY`) nebo
-provozovat vlastní Open-Meteo instanci (Docker, stahuje ECMWF/DWD open data,
-které komerční použití dovolují) a nastavit `OPENMETEO_BASE_URL`.
+**Licence (aktualizováno 2026-10-24):** dashboard používá uživatel **osobně a nekomerčně**
+→ **Open-Meteo free API je v pořádku** (nekomerční použití, < 10 000 volání/den, atribuce
+„Weather data by Open-Meteo.com“ v patičce je). Kdyby se použití změnilo na komerční,
+stačí nastavit `OPENMETEO_API_KEY` (placený tarif) nebo `OPENMETEO_BASE_URL` (vlastní
+instance) — kód je připravený.
+
+### ECMWF open data — co umí a jestli je stahovat přímo
+- **Co je k dispozici zdarma** ([open data](https://www.ecmwf.int/en/forecasts/datasets/open-data)):
+  podmnožina real-time produktů **IFS** (deterministický HRES i ensemble **ENS**, 50+1 členů)
+  a **AIFS** (strojově učený model; AIFS Single a od 7/2025 operačně i **AIFS ENS**,
+  [AIFS data](https://www.ecmwf.int/en/forecasts/datasets/aifs-machine-learning-data)).
+- **Rozlišení:** 0,25° v GRIB2 (vyšší rozlišení jen placeně / Service Agreement).
+- **Horizont:** běhy 00/12 UTC do **15 dní** (IFS HRES i ENS; kroky 3 h do 144 h, pak 6 h),
+  běhy 06/18 UTC kratší (HRES 90 h, ENS 144 h); AIFS ENS 15 dní po 6 h, 4× denně.
+  (Horizonty IFS podle dokumentace ECMWF — vyhledáváním jsem ověřil jen licenci, rozlišení
+  a AIFS ENS.)
+- **Archiv:** jen posledních ~12 běhů (2–3 dny) — historii si člověk musí ukládat sám.
+- **Licence:** **CC BY 4.0** + ECMWF Terms of Use — i komerčně, s atribucí.
+- **Formát/nároky:** GRIB2 po polích pro celý svět; čtení přes `eccodes`/`cfgrib`
+  (systémová knihovna), stažení přes balík `ecmwf-opendata`. Jeden běh ENS jen pro
+  několik veličin (2t, 10u/10v, 100u/100v, ssrd, tp) jsou stovky MB až jednotky GB
+  na stažení a desítky sekund CPU na výřez a vážení bodů.
+
+**Doporučení: přímo nestahovat, zůstat u Open-Meteo.** Open-Meteo bere **tatáž** ECMWF
+open data (IFS 0,25°, AIFS, ENS) a vrací je jako hotové bodové řady v JSON — přesně to,
+co dashboard potřebuje (vážené průměry bodů oblastí, p10/p50/p90). Přímé GRIB by na
+4 GB LXC přidalo eccodes, stovky MB přenosu na běh a vlastní zpracování bez nové
+informace. Smysl by mělo jen pro **mapy polí** (anomálie teploty/větru nad Evropou)
+nebo **ukládání všech členů ENS** pro vlastní verifikaci — obojí lze přidat později
+jako samostatnou úlohu (`ecmwf-opendata` + výřez Evropy + jen pár veličin, retence přes
+`core/maintenance.py`).
 
 ### Počasí — implementace (`data/weather.py`, stránka **Počasí**)
 - Oblasti CZ, DE, NORDIC; pro každou veličinu vlastní vážené body (teplota
@@ -381,8 +529,8 @@ záložka Průzkumník → Katalog dat ukazuje rozsah a stáří živě.
 4. Nordic: `--only nve -v` (tvar JSON NVE!), `--only energinet -v`,
    Fingrid s `FINGRID_API_KEY` (ID datasetů v `data/nordic.py`).
 5. Počasí: `--only weather -v` — názvy modelů (`ecmwf_aifs025_single`,
-   `gfs025`), že ensemble vrací členy, kvóta. **Rozhodnout licenci**
-   Open-Meteo (komerční klíč / vlastní instance), viz rešerše výš.
+   `gfs025`), že ensemble vrací členy, kvóta. (Licence vyřešena v kole 5:
+   osobní nekomerční použití → free API OK.)
 6. ICE CoT ve středu 14:00/19:00 — `journalctl --user -u ppdash-update-cot`.
 
 ## Kolo 2 (2026-10-23): vlastní databáze, živá data, Energy-Charts, export, nasazení bez roota
