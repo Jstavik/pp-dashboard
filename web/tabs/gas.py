@@ -319,7 +319,7 @@ def _cap_state(p):
     countries = options(df["countryKey"])
     country = p.str("country", "CZ" if "CZ" in countries else countries[0], choices=countries)
     direction = p.str("dir", "entry", choices=["entry", "exit"])
-    date_from = pd.Timestamp.now(tz="Europe/Prague").normalize() - pd.Timedelta(days=365)
+    date_from = pd.Timestamp.now(tz="Europe/Prague").normalize() - pd.DateOffset(days=365)
     sel = df[(df["countryKey"] == country) & (df["directionKey"] == direction) & (df["date"] >= date_from)]
     sel = decat(sel)
     s = {"countries": countries, "country": country, "dir": direction, "names": EU_COUNTRY_NAMES,
@@ -656,7 +656,7 @@ def _umm_state(p):
     cancel_since = now_ts - pd.Timedelta(days=cancel_days)
     cancelled = latest[(latest["eventStatus"] == "Dismissed") & (latest["publicationDateTime"] >= cancel_since)]
     outlook = p.int("outlook", 90, 7, 500)
-    cutoff = now_ts.normalize() + pd.Timedelta(days=outlook)
+    cutoff = now_ts.normalize() + pd.DateOffset(days=outlook)
     in_window = active[active["eventStart"] <= cutoff]
     dates = [d.strftime("%Y-%m-%d") for d in list_available_umm_snapshot_dates()]
     compare = p.str("compare", dates[0] if dates else None, choices=dates)

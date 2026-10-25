@@ -182,7 +182,7 @@ def archive_snapshots(name: str, keep_days: int, now: pd.Timestamp = None) -> di
     out = {"archived": 0, "removed": 0, "errors": []}
     if not os.path.isdir(base):
         return out
-    cutoff = (now.normalize() - pd.Timedelta(days=keep_days)).strftime("%Y-%m-%d")
+    cutoff = (now.normalize() - pd.DateOffset(days=keep_days)).strftime("%Y-%m-%d")
     last = (_archive_meta(base).get("days") or [""])[-1]
     days = sorted(f[:10] for f in os.listdir(base)
                   if f.endswith(".parquet") and len(f) == 18 and f[:10] < cutoff and f[:10] > last)
@@ -209,7 +209,7 @@ def archive_snapshots(name: str, keep_days: int, now: pd.Timestamp = None) -> di
 def trim_forecasts(name: str, keep_days: int, max_lead_days: int, now: pd.Timestamp = None) -> dict:
     from data.partitioned_store import content_checksum
     now = now or pd.Timestamp.now(tz="UTC")
-    cutoff = now.normalize() - pd.Timedelta(days=keep_days)
+    cutoff = now.normalize() - pd.DateOffset(days=keep_days)
     out = {"rows_removed": 0, "files": 0, "errors": []}
     for base in _base_dirs(name):
         for f in sorted(os.listdir(base)):

@@ -453,7 +453,7 @@ def _outage_daily(country: str = "CZ", back: int = 30, ahead: int = 90):
     if o.empty:
         return pd.DataFrame(), pd.DataFrame()
     today = pd.Timestamp.now(tz="Europe/Prague").normalize()
-    days = pd.date_range(today - pd.Timedelta(days=back), today + pd.Timedelta(days=ahead), freq="D")
+    days = pd.date_range(today - pd.DateOffset(days=back), today + pd.DateOffset(days=ahead), freq="D")
     o["start"] = pd.to_datetime(o["start"], utc=True)
     o["end"] = pd.to_datetime(o["end"], utc=True)
     rows = []

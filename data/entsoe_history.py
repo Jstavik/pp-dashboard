@@ -303,7 +303,7 @@ def _now():
 # ── úlohy ───────────────────────────────────────────────────────────────
 
 def price_items(zones=None) -> list:
-    end = _now().normalize() + pd.Timedelta(days=2)  # zítřek po aukci (~12:45)
+    end = _now().normalize() + pd.DateOffset(days=2)  # zítřek po aukci (~12:45)
 
     def f(zone):
         return lambda c, a, b: norm_prices(c.query_day_ahead_prices(zone, start=a, end=b), zone)
@@ -322,13 +322,13 @@ def load_items(areas=None) -> list:
         items.append(Item(f"prognóza spotřeby {a}", d, ["time", "kind"],
                           (lambda a: lambda c, s, e: norm_load(c.query_load_forecast(a, start=s, end=e), a,
                                                                "forecast"))(a),
-                          _start_default(), now.normalize() + pd.Timedelta(days=2), pd.Timedelta(days=2),
+                          _start_default(), now.normalize() + pd.DateOffset(days=2), pd.Timedelta(days=2),
                           pd.Timedelta(days=365), "kind", "forecast"))
     return items
 
 
 def ws_items(areas=None) -> list:
-    end = _now().normalize() + pd.Timedelta(days=2)
+    end = _now().normalize() + pd.DateOffset(days=2)
     return [Item(f"prognóza OZE {a}", os.path.join(WS_DIR, a), ["time", "psr"],
                  (lambda a: lambda c, s, e: norm_ws(c.query_wind_and_solar_forecast(a, start=s, end=e,
                                                                                     psr_type=None), a))(a),
@@ -351,7 +351,7 @@ def flow_items(borders=None) -> list:
                               (lambda s_, d_: lambda c, a, b: norm_flow(
                                   c.query_scheduled_exchanges(s_, d_, start=a, end=b, dayahead=False),
                                   s_, d_, "scheduled"))(src, dst),
-                              start, now.normalize() + pd.Timedelta(days=1), pd.Timedelta(days=3),
+                              start, now.normalize() + pd.DateOffset(days=1), pd.Timedelta(days=3),
                               pd.Timedelta(days=92), "kind", "scheduled"))
     return items
 

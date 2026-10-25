@@ -47,14 +47,14 @@ def stored_dap(day_offset: int = 0) -> pd.Series:
     """DA cena CZ pro den (dnes + offset) z entsoe_prices — tvar jako fetch_dap
     (Series dap_EUR_MWh, Praha, hodinové ceny rozepsané na 15 min)."""
     from data.entsoe_history import PRICES_DIR
-    start = pd.Timestamp.now(tz=TZ).normalize() + pd.Timedelta(days=day_offset)
-    end = start + pd.Timedelta(days=1)
+    start = pd.Timestamp.now(tz=TZ).normalize() + pd.DateOffset(days=day_offset)
+    end = start + pd.DateOffset(days=1)
     df = _read(PRICES_DIR, "CZ", start, end)
     if df.empty:
         return pd.Series(dtype=float, name="dap_EUR_MWh")
     s = df.drop_duplicates("time", keep="last").set_index("time")["price"].sort_index().rename("dap_EUR_MWh")
     if len(s) <= 25:
-        idx_15 = pd.date_range(start=start, periods=96, freq="15min", tz=TZ)
+        idx_15 = pd.date_range(start=start, end=end, freq="15min", inclusive="left")
         s = s.reindex(idx_15, method="ffill")
     return s.dropna()
 
@@ -74,7 +74,7 @@ def stored_load_forecast() -> pd.Series:
     """Prognóza zatížení CZ (D-1) dnes + zítra — tvar jako v fetch_entsoe_data (forecast_MW)."""
     from data.entsoe_history import LOAD_DIR
     start = pd.Timestamp.now(tz=TZ).normalize()
-    df = _read(LOAD_DIR, "CZ", start, start + pd.Timedelta(days=2))
+    df = _read(LOAD_DIR, "CZ", start, start + pd.DateOffset(days=2))
     if df.empty or "kind" not in df:
         return pd.Series(dtype="float64", name="forecast_MW")
     df = df[df["kind"].astype(str) == "forecast"].drop_duplicates("time", keep="last")
@@ -95,7 +95,7 @@ def _live_load_forecast() -> pd.Series:
     from data.entsoe import _get_client
     start = pd.Timestamp.now(tz=TZ).normalize()
     try:
-        s = _get_client().query_load_forecast("CZ", start=start, end=start + pd.Timedelta(days=2))
+        s = _get_client().query_load_forecast("CZ", start=start, end=start + pd.DateOffset(days=2))
         if isinstance(s, pd.DataFrame):
             s = s.iloc[:, 0]
         return s.rename("forecast_MW")
@@ -110,7 +110,7 @@ def stored_wind_solar_forecast() -> pd.DataFrame:
     (sloupce = typ zdroje, index Praha)."""
     from data.entsoe_history import WS_DIR
     start = pd.Timestamp.now(tz=TZ).normalize()
-    df = _read(WS_DIR, "CZ", start, start + pd.Timedelta(days=2))
+    df = _read(WS_DIR, "CZ", start, start + pd.DateOffset(days=2))
     if df.empty:
         return pd.DataFrame()
     w = df.pivot_table(index="time", columns="psr", values="mw", aggfunc="last").sort_index()

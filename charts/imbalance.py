@@ -400,7 +400,7 @@ def fig_ceps_imbalance_price(df: pd.DataFrame, now: pd.Timestamp, height=200):
         hovermode="x unified",
         xaxis=dict(
             type="date", tickformat="%H:%M",
-            range=[today.isoformat(), (today + pd.Timedelta(days=1)).isoformat()],
+            range=[today.isoformat(), (today + pd.DateOffset(days=1)).isoformat()],
             gridcolor=C_GRID,
         ),
         yaxis=dict(title_text="CZK/MWh", gridcolor=C_GRID),

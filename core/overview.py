@@ -205,7 +205,7 @@ def lng_series(days=60, asof=None) -> pd.Series:
 
 def ceps_imbalance(hours=30, asof=None) -> pd.Series:
     from data.ceps import load_ceps_store
-    end = _now() if asof is None else pd.Timestamp(asof).tz_localize(TZ) + pd.Timedelta(days=1)
+    end = _now() if asof is None else pd.Timestamp(asof).tz_localize(TZ) + pd.DateOffset(days=1)
     df = load_ceps_store("imbalance", date_from=end - pd.Timedelta(hours=hours), date_to=end)
     if df.empty:
         return pd.Series(dtype=float)
@@ -369,7 +369,7 @@ def _ceps_tile():
     now = _now()
     last = s.iloc[-1]
     today = s[s.index >= now.normalize()]
-    yday = s[(s.index >= now.normalize() - pd.Timedelta(days=1)) & (s.index < now.normalize())]
+    yday = s[(s.index >= now.normalize() - pd.DateOffset(days=1)) & (s.index < now.normalize())]
     dd = (today.mean() - yday.mean()) if not today.empty and not yday.empty else None
     spark = s[s.index >= now - pd.Timedelta(hours=6)].resample("5min").mean()
     state = "bad" if last < -80 else "warn" if last > 80 else "ok"

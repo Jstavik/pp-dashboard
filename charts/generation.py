@@ -83,7 +83,7 @@ def fig_generation_donut(df_gen, height=280):
 def fig_wind_solar_forecast(ws, now, gen_raw=None, height=240):
     fig = go.Figure()
     start_fc = now.normalize()
-    end_fc   = start_fc + pd.Timedelta(days=2)
+    end_fc   = start_fc + pd.DateOffset(days=2)
 
     if not ws.empty:
         ws_slice = ws[(ws.index >= start_fc) & (ws.index < end_fc)]

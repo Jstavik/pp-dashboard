@@ -66,8 +66,8 @@ def fetch_entsoe_data(with_load: bool = True):
     now        = pd.Timestamp.now(tz="Europe/Prague")
     start_day  = now.normalize()
     end_imbal  = now + pd.Timedelta(hours=1)
-    end_load   = start_day + pd.Timedelta(days=2)
-    end_out    = start_day + pd.Timedelta(days=7)
+    end_load   = start_day + pd.DateOffset(days=2)
+    end_out    = start_day + pd.DateOffset(days=7)
 
     # ── FETCH fáze — 7 nezávislých zdrojů paralelně přes ThreadPoolExecutor
     # (I/O-bound HTTP, GIL nevadí). vol nemá try/except stejně jako dřív —
@@ -183,10 +183,10 @@ def fetch_entsoe_data(with_load: bool = True):
 def fetch_dap(day_offset: int = 0):
     client = _get_client()
     now   = pd.Timestamp.now(tz="Europe/Prague")
-    start = now.normalize() + pd.Timedelta(days=day_offset)
+    start = now.normalize() + pd.DateOffset(days=day_offset)
     if start.tzinfo is None:
         start = start.tz_localize("Europe/Prague")
-    end = start + pd.Timedelta(days=1)
+    end = start + pd.DateOffset(days=1)
     try:
         raw = client.query_day_ahead_prices("CZ", start=start, end=end)
     except Exception:
@@ -196,7 +196,7 @@ def fetch_dap(day_offset: int = 0):
     raw = raw.tz_convert("Europe/Prague")
     raw.name = "dap_EUR_MWh"
     if len(raw) <= 25:
-        idx_15 = pd.date_range(start=start, periods=96, freq="15min", tz="Europe/Prague")
+        idx_15 = pd.date_range(start=start, end=end, freq="15min", inclusive="left")
         raw = raw.reindex(idx_15, method="ffill")
     return raw.dropna()
 
@@ -206,7 +206,7 @@ def fetch_installed_capacity():
     client = _get_client()
     now   = pd.Timestamp.now(tz="Europe/Prague")
     start = now.normalize()
-    end   = start + pd.Timedelta(days=1)
+    end   = start + pd.DateOffset(days=1)
     try:
         raw = client.query_installed_generation_capacity(
             country_code="CZ", start=start, end=end, psr_type=None
@@ -248,7 +248,7 @@ def fetch_wind_solar_forecast():
     client = _get_client()
     now       = pd.Timestamp.now(tz="Europe/Prague")
     start_day = now.normalize()
-    end_day   = start_day + pd.Timedelta(days=2)
+    end_day   = start_day + pd.DateOffset(days=2)
     try:
         raw = client.query_wind_and_solar_forecast(
             country_code="CZ", start=start_day, end=end_day, psr_type=None
@@ -273,7 +273,7 @@ def fetch_reserves():
     client = _get_client()
     now      = pd.Timestamp.now(tz="Europe/Prague")
     start    = now.normalize()
-    end      = now.normalize() + pd.Timedelta(days=10)
+    end      = now.normalize() + pd.DateOffset(days=10)
     start_yr = pd.Timestamp(f"{now.year}-01-01", tz="Europe/Prague")
     end_yr   = pd.Timestamp(f"{now.year}-07-01", tz="Europe/Prague")
     if now.month >= 7:

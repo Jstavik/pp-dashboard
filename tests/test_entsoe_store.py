@@ -15,10 +15,10 @@ def store(tmp_path, monkeypatch, no_cache):
         d.mkdir()
         monkeypatch.setattr(eh, name, str(d))
     today = pd.Timestamp.now(tz=TZ).normalize()
-    t = pd.date_range(today - pd.Timedelta(days=1), today + pd.Timedelta(days=1), freq="h", inclusive="left")
+    t = pd.date_range(today - pd.DateOffset(days=1), today + pd.DateOffset(days=1), freq="h", inclusive="left")
     upsert_partitioned(pd.DataFrame({"time": t.tz_convert("UTC"), "zone": "CZ", "price": range(len(t))}),
                        str(tmp_path / "PRICES_DIR" / "CZ"), "time", ["time"], fmt="parquet")
-    t2 = pd.date_range(today, today + pd.Timedelta(days=2), freq="15min", inclusive="left")
+    t2 = pd.date_range(today, today + pd.DateOffset(days=2), freq="15min", inclusive="left")
     upsert_partitioned(pd.concat([
         pd.DataFrame({"time": t2.tz_convert("UTC"), "area": "CZ", "kind": "forecast", "mw": 7000.0}),
         pd.DataFrame({"time": t2.tz_convert("UTC"), "area": "CZ", "kind": "actual", "mw": 6000.0})]),
@@ -30,13 +30,18 @@ def store(tmp_path, monkeypatch, no_cache):
     return today
 
 
+def _q(today, days):
+    """Počet 15min bodů od dnešní půlnoci — den změny času má 92/100."""
+    return int((today + pd.DateOffset(days=days) - today) / pd.Timedelta(minutes=15))
+
+
 def test_dap_from_store_and_live_fallback(store, monkeypatch):
     import data.entsoe as live
     import data.entsoe_store as es
     called = []
     monkeypatch.setattr(live, "fetch_dap", lambda off=0: called.append(off) or pd.Series([1.0], name="dap_EUR_MWh"))
     d0 = es.dap(0)
-    assert len(d0) == 96 and d0.name == "dap_EUR_MWh" and str(d0.index.tz) == TZ
+    assert len(d0) == _q(store, 1) and d0.name == "dap_EUR_MWh" and str(d0.index.tz) == TZ
     assert d0.index[0] == store and d0.iloc[0] == 24 and d0.iloc[3] == 24 and d0.iloc[4] == 25  # 15min ffill
     assert es.source("dap0") == "úložiště" and not called
     d1 = es.dap(1)  # zítřek v úložišti není → živě
@@ -46,9 +51,9 @@ def test_dap_from_store_and_live_fallback(store, monkeypatch):
 def test_load_and_ws_forecast_from_store(store, monkeypatch):
     import data.entsoe_store as es
     lf = es.load_forecast()
-    assert lf.name == "forecast_MW" and len(lf) == 192 and (lf == 7000).all() and es.source("load_fc") == "úložiště"
+    assert lf.name == "forecast_MW" and len(lf) == _q(store, 2) and (lf == 7000).all() and es.source("load_fc") == "úložiště"
     ws = es.wind_solar_forecast()
-    assert list(ws.columns) == ["Solar", "Wind Onshore"] and len(ws) == 192 and str(ws.index.tz) == TZ
+    assert list(ws.columns) == ["Solar", "Wind Onshore"] and len(ws) == _q(store, 2) and str(ws.index.tz) == TZ
     assert es.source("ws") == "úložiště"
 
 
@@ -63,7 +68,7 @@ def test_snapshot_no_live_load_query(store, monkeypatch):
         raise RuntimeError("bez tokenu")
     monkeypatch.setattr(live, "fetch_entsoe_data", fake)
     snap = sv.entsoe_snapshot()
-    assert seen["with_load"] is False and len(snap["load_fc"]) == 192 and snap["error"]
+    assert seen["with_load"] is False and len(snap["load_fc"]) == _q(store, 2) and snap["error"]
 
 
 def test_elektrina_refresh_target():

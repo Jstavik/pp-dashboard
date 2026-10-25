@@ -15,6 +15,7 @@ DAP_COUNTRIES = {
     "SI": "10YSI-ELES-----O", "CH": "10YCH-SWISSGRIDZ",
     "FI": "10YFI-1--------U", "NO": "10YNO-1--------2",
     "DK": "10YDK-1--------W", "SE": "10Y1001A1001A46L",
+    "EE": "EE", "LV": "LV", "LT": "LT", "ME": "ME", "MK": "MK", "IE": "IE_SEM",
 }
 
 ISO3 = {
@@ -23,6 +24,7 @@ ISO3 = {
     "PT": "PRT", "IT": "ITA", "RO": "ROU", "BG": "BGR", "GR": "GRC",
     "RS": "SRB", "HR": "HRV", "SI": "SVN", "CH": "CHE", "FI": "FIN",
     "NO": "NOR", "DK": "DNK", "SE": "SWE",
+    "EE": "EST", "LV": "LVA", "LT": "LTU", "ME": "MNE", "MK": "MKD", "IE": "IRL",
 }
 
 CENTERS = {
@@ -34,7 +36,14 @@ CENTERS = {
     "RS": (44.0, 21.0), "HR": (45.2, 15.5), "SI": (46.1, 14.8),
     "CH": (47.0, 8.3),  "FI": (64.0, 26.0), "NO": (62.0, 10.0),
     "DK": (56.0, 10.0), "SE": (59.0, 15.0),
+    "EE": (58.7, 25.5), "LV": (56.9, 24.6), "LT": (55.3, 23.9),
+    "ME": (42.8, 19.3), "MK": (41.6, 21.7), "IE": (53.3, -8.0),
 }
+
+# Rozlišení DA cen podle zóny (zjištěné z dat při každém běhu updateru).
+# Většina SDAC zón je od 10/2025 v 15 min (96 bodů/den), některé (CH, IE, RS…)
+# zůstávají hodinové. Změnu hlásí updater do logu a do RESOLUTION_FILE.
+RESOLUTION_FILE = history_path("dap_europe_resolution.json")
 
 
 @ttl_cache(ttl=300, maxsize=2)

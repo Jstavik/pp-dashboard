@@ -1,6 +1,6 @@
 # REBUILD_NOTES — přechod ze Streamlitu na FastAPI (větev `rebuild/fastapi`)
 
-Stav k 2026-10-24 (kolo 6, starší kola níže). Větev založená z `main` @ 7a36a68. `main` ani
+Stav k 2026-10-25 (kolo 6b, starší kola níže). Větev založená z `main` @ 7a36a68. `main` ani
 `.github/workflows` se neměnily, `data/history/` v repu zůstává.
 
 **Důležité omezení ověření:** v pracovním prostředí nebyly k dispozici API
@@ -8,6 +8,50 @@ tokeny a síť k datovým zdrojům byla zablokovaná (povolené jen PyPI).
 Živá API ověřuje jiné sezení v kontejneru (LXC); co tam ověřeno nebylo, je
 označené **NEOVĚŘENO**. Web a výpočty jsou ověřené nad skutečnými daty
 z `data/history/` v repu.
+
+## Kolo 6b (2026-10-25): změna času CEST→CET, úplnost dne v DAP mapě, retry cen
+
+Patch z produkčního kontejneru (ověřený na živých datech) + dohledání stejné
+chyby jinde.
+
+- **Příčina:** `normalize() + pd.Timedelta(days=N)` je N×24 h; v den změny
+  času (25 h / 23 h) okno končilo ve 23:00 (resp. 01:00), ne o půlnoci →
+  15min zóny měly zítřek 93/96 bodů a DAP mapa ho vyřadila (9 zemí).
+  Oprava: `pd.DateOffset(days=N)` (kalendářní dny) všude, kde jde o pražský čas.
+- **update_dap_europe:** rozlišení zóny z dat (15/60 min); úplný den =
+  délka dne v Praze / krok (92/96/100, resp. 23/24/25); neúplný den se
+  nezapíše (dotáhne další běh, varování v logu); zapisují se všechny úplné
+  dny okna; retry 3× (5 s, 10 s); při změně rozlišení WARNING „ZMĚNA
+  ROZLIŠENÍ“ a stav v `history/dap_europe_resolution.json`; +6 zemí
+  (EE, LV, LT, ME, MK, IE). Nově parametr `now` (testy).
+- **Timer cen:** opakování 14:10, 15:10, 16:40 (ENTSO-E zveřejňuje zítřek postupně).
+- **Navíc nalezeno (mimo patch):** `fetch_dap`/`stored_dap` — konec dne
+  `start + Timedelta(days=1)` a rozepsání hodin na 15 min `periods=96`
+  natvrdo (v den 25 h chyběla poslední hodina) → `DateOffset` +
+  `date_range(start, end)`; `fetch_entsoe_data`, `fetch_installed_capacity`,
+  `fetch_wind_solar_forecast`, `stored_load_forecast`,
+  `stored_wind_solar_forecast`, `_live_load_forecast` (okna D0–D+2/D+7);
+  `update_dap_europe` výchozí start `end − 3 dny`; `core/overview.ceps_imbalance`
+  (konec dne `asof`); web: výroba za den (Elektřina), týdenní předpověď
+  počasí, `v2` kalendář odstávek (posunuté `date_range` o hodinu), popisek
+  D+1; charts: osy/rozsahy D0/D+1 (rezervy, nerovnováha, OZE, odstávky).
+  Staré `views/` a `app.py` (Streamlit) nechány beze změny.
+- **Výjimky:** `normalize()` v **UTC** (`data/outages.py`, `data/gassco.py`)
+  — UTC nemá změnu času, 24 h = den; naivní (bez tz) denní indexy v
+  `core/overview.py` — také beze změny.
+
+### Testy (kolo 6b)
+`tests/test_dst.py`: konec okna cen pro „teď“ 25. 10. 2026 15:00 →
+27. 10. 00:00+01:00, jaro 28. 3. 2027 → 30. 3. 00:00+02:00 (entsoe_history
+i update_dap_europe); DAP s mockem — 15 min 100/96 bodů úplné, 93 bodů
+vynecháno + varování, hodinová 25/24 i 23/24 úplné, změna 60→15 min
+varuje, retry; statická kontrola, že v `core/`, `data/`, `web/` není
+`normalize() ± pd.Timedelta(days=` (mimo UTC). Testy v
+`test_entsoe_store.py`/`test_sources.py` počítaly 96/192 bodů natvrdo —
+dnes (den změny času) padaly, nově počítají s délkou dne.
+
+**NEOVĚŘENO** zde (bez tokenů): že ENTSO-E kódy `ME`, `MK`, `IE_SEM`, `EE`,
+`LV`, `LT` vrací DA ceny — podle zadání ověřeno v kontejneru.
 
 ## Kolo 6 (2026-10-24): oprava kompakce LNG, CEE flowchart plynu, kontrola entry/exit, kopírování grafů, nový vzhled jako výchozí, Elektřina z úložiště
 

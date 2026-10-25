@@ -106,8 +106,8 @@ class _FakeEntsoe:
     query_unavailability_of_generation_units = query_unavailability_of_production_units
 
     def query_day_ahead_prices(self, *a, **k):
-        idx = pd.date_range(k["start"], periods=24, freq="1h")
-        return pd.Series([50.0 + i for i in range(24)], index=idx)
+        idx = pd.date_range(k["start"], k["end"], freq="1h", inclusive="left")
+        return pd.Series([50.0 + i for i in range(len(idx))], index=idx)
 
     def query_installed_generation_capacity(self, *a, **k):
         return pd.DataFrame({"Nuclear": [4000.0], "Solar": [3000.0]}, index=self.idx[:1])
@@ -133,7 +133,8 @@ def test_entsoe_fetchers(monkeypatch, no_cache):
     assert list(gen.columns) == ["Nuclear", "Solar"]
     assert load_fc.name == "forecast_MW" and len(out) == 2 and set(out["unit_level"]) == {"PU", "GU"}
     dap = entsoe.fetch_dap(0)
-    assert len(dap) == 96 and dap.name == "dap_EUR_MWh"    # hodinové → 15min
+    day = (dap.index[0] + pd.DateOffset(days=1) - dap.index[0]) / pd.Timedelta(minutes=15)
+    assert len(dap) == day and dap.name == "dap_EUR_MWh"   # hodinové → 15min (92/96/100)
     assert not entsoe.fetch_installed_capacity().empty
     assert not entsoe.fetch_activation_prices().empty
     assert not entsoe.fetch_wind_solar_forecast().empty
@@ -428,6 +429,7 @@ def test_entsoe_updaters(monkeypatch, tmp_path):
     monkeypatch.setattr(updaters, "_entsoe_client", lambda timeout=False: _FakeEntsoeHist())
     monkeypatch.setattr(updaters, "HYDRO_DIR", str(tmp_path / "hydro"))
     monkeypatch.setattr(updaters, "DAP_DIR", str(tmp_path / "dap"))
+    monkeypatch.setattr("data.dap_europe.RESOLUTION_FILE", str(tmp_path / "dap_res.json"))
     monkeypatch.setattr(updaters, "OUTAGES_PATH", str(tmp_path / "outages.parquet"))
     monkeypatch.setattr(updaters, "OUTAGES_SNAPSHOTS_DIR", str(tmp_path / "snap"))
     monkeypatch.setattr(updaters, "history_path", lambda *p: str(tmp_path.joinpath(*p)))

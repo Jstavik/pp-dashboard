@@ -91,7 +91,7 @@ def reserves_or_empty(now) -> dict:
         empty = pd.DataFrame()
         return dict(afrr_d_amt=empty, afrr_d_pri=empty, afrr_y_amt=empty, afrr_y_pri=empty,
                     mfrr_d_amt=empty, mfrr_d_pri=empty, start=now.normalize(),
-                    end=now.normalize() + pd.Timedelta(days=RESERVES_FALLBACK_RANGE_DAYS), now=now)
+                    end=now.normalize() + pd.DateOffset(days=RESERVES_FALLBACK_RANGE_DAYS), now=now)
 
 
 def ceps_isp_imbalance(ceps: dict) -> pd.Series:

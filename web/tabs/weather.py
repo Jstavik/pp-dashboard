@@ -107,7 +107,7 @@ def _outlook_table(s) -> dict:
         g = _with_normal(g, nrm) if not nrm.empty else g.assign(normal=np.nan)
         loc = g["date"].dt.tz_convert("Europe/Prague")
         for days in (7, 14):
-            sel = g[(loc >= today) & (loc < today + pd.Timedelta(days=days))]
+            sel = g[(loc >= today) & (loc < today + pd.DateOffset(days=days))]
             if sel.empty:
                 continue
             r = {"model": MODEL_LABELS.get(model, model), "okno": f"{days} dní",

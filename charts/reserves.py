@@ -93,9 +93,9 @@ def calc_dap_stats(s: pd.Series) -> dict:
 
 def fig_dap(s_d0, s_d1, now, height=320):
     start_d0 = now.normalize()
-    start_d1 = start_d0 + pd.Timedelta(days=1)
+    start_d1 = start_d0 + pd.DateOffset(days=1)
     label0   = f"D0 — {now.strftime('%d.%m.%Y')}"
-    label1   = f"D+1 — {(now + pd.Timedelta(days=1)).strftime('%d.%m.%Y')}"
+    label1   = f"D+1 — {(now + pd.DateOffset(days=1)).strftime('%d.%m.%Y')}"
     fig = make_subplots(rows=1, cols=2, subplot_titles=[label0, label1],
                         column_widths=[0.5, 0.5], horizontal_spacing=0.08)
 
@@ -129,9 +129,9 @@ def fig_dap(s_d0, s_d1, now, height=320):
         legend=dict(orientation="h", y=-0.15, x=0),
         margin=dict(l=50, r=15, t=50, b=40),
         xaxis =dict(type="date", tickformat="%H:%M",
-                    range=[start_d0.isoformat(), (start_d0+pd.Timedelta(days=1)).isoformat()]),
+                    range=[start_d0.isoformat(), (start_d0+pd.DateOffset(days=1)).isoformat()]),
         xaxis2=dict(type="date", tickformat="%H:%M",
-                    range=[start_d1.isoformat(), (start_d1+pd.Timedelta(days=1)).isoformat()]),
+                    range=[start_d1.isoformat(), (start_d1+pd.DateOffset(days=1)).isoformat()]),
     )
     fig.update_yaxes(title_text="EUR/MWh")
     return fig
@@ -171,7 +171,7 @@ def simulate_battery_dap(prices, bat_capacity_kwh, bat_power_kw,
 
 def fig_battery_strategy(df_sim, low_thresh, high_thresh, avg_price, now, height=600):
     start_d0 = now.normalize()
-    end_d1   = start_d0 + pd.Timedelta(days=2)
+    end_d1   = start_d0 + pd.DateOffset(days=2)
 
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True,

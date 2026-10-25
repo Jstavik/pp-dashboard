@@ -86,7 +86,7 @@ def fig_outages_gantt(df_out, level, now, changes=None, height_per_unit=32):
     n_units = max(1, sub["unit_name"].nunique())
     height  = max(180, n_units * height_per_unit + 80)
     xstart  = now - pd.Timedelta(days=1)
-    xend    = now.normalize() + pd.Timedelta(days=7)
+    xend    = now.normalize() + pd.DateOffset(days=7)
     _weekend_shading(fig, xstart, xend)
     fig.add_vrect(x0=now, x1=now + pd.Timedelta(hours=24),
                   fillcolor=C_SURPLUS, opacity=0.04, layer="below", line_width=0)

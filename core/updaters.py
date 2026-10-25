@@ -450,8 +450,8 @@ def update_hydro() -> dict:
     return {"rows": n, "errors": len(errors)}
 
 
-def update_dap_europe() -> dict:
-    """DAP base/peak + DoD změna pro ~23 zemí (choropleth DAP Mapa)."""
+def update_dap_europe(now: pd.Timestamp = None) -> dict:
+    """DAP base/peak + DoD změna pro ~29 zemí (choropleth DAP Mapa)."""
     from concurrent.futures import ThreadPoolExecutor
     from data.dap_europe import DAP_COUNTRIES
 
@@ -459,55 +459,101 @@ def update_dap_europe() -> dict:
 
     # +2 dny: den-ahead ceny na ZÍTŘEK bývají publikované už dnes kolem
     # 13:00 CET — odpolední běh je tak může zachytit rovnou. Když zítřek
-    # ještě publikovaný není (ranní běh), cnt>=20 filtr níž ho vyřadí.
-    end = pd.Timestamp.now(tz="Europe/Prague").normalize() + pd.Timedelta(days=2)
+    # ještě publikovaný není (ranní běh), kontrola úplnosti dne níž ho vyřadí.
+    # DateOffset = kalendářní dny (den změny času má 23/25 h, ne 24).
+    now = (now or pd.Timestamp.now(tz="Europe/Prague")).tz_convert("Europe/Prague")
+    today = now.normalize().tz_localize(None)
+    end = now.normalize() + pd.DateOffset(days=2)
 
     last_existing = last_date_partitioned(DAP_DIR, "date", "parquet")
     if last_existing is not None:
-        start = pd.Timestamp(last_existing.date(), tz="Europe/Prague") - pd.Timedelta(days=1)
+        start = pd.Timestamp(last_existing.date(), tz="Europe/Prague") - pd.DateOffset(days=1)
     else:
-        start = end - pd.Timedelta(days=3)
+        start = end - pd.DateOffset(days=3)
 
     errors = []
 
+    import json
+    import time as _time
+    from data.dap_europe import RESOLUTION_FILE
+    from entsoe.exceptions import NoMatchingDataError
+
+    try:
+        with open(RESOLUTION_FILE) as fh:
+            known_res = json.load(fh)
+    except (OSError, ValueError):
+        known_res = {}
+    seen_res = {}
+    incomplete = []
+
+    def expected_points(day, step_min: int) -> int:
+        # délka dne v Praze (23/24/25 h kolem změny času) / krok
+        d0 = pd.Timestamp(day, tz="Europe/Prague")
+        d1 = pd.Timestamp(day + pd.Timedelta(days=1), tz="Europe/Prague")
+        return int((d1 - d0) / pd.Timedelta(minutes=step_min))
+
     def fetch_one(args):
         cc, code = args
-        try:
-            d = client.query_day_ahead_prices(code, start=start, end=end)
-            d = d.tz_convert("Europe/Prague").resample("1h").mean()
-
-            # Jen kompletní dny (>= 20 hodinových bodů) — poslední den v
-            # odpovědi může být jen okrajový bod (např. 00:00).
-            day_counts = pd.Series(d.index.date).value_counts()
-            full_dates = sorted(dt for dt, cnt in day_counts.items() if cnt >= 20)
-            if len(full_dates) < 2:
+        d = None
+        for attempt in range(3):
+            try:
+                d = client.query_day_ahead_prices(code, start=start, end=end)
+                break
+            except NoMatchingDataError:
                 return None
-            today_date = full_dates[-1]
-            yest_date  = full_dates[-2]
+            except Exception as e:
+                if attempt == 2:
+                    log.warning(f"DAP {cc}: CHYBA — {e}")
+                    errors.append(cc)
+                    return None
+                _time.sleep(5 * (attempt + 1))
+        d = d.tz_convert("Europe/Prague").dropna().sort_index()
+        if len(d) < 2:
+            return None
 
-            today = d[d.index.date == today_date]
-            yest  = d[d.index.date == yest_date]
-            if today.empty or yest.empty:
-                return None
-            base_t = today.mean()
-            peak_t = today[today.index.hour.isin(range(8, 20))].mean()
-            base_y = yest.mean()
-            peak_y = yest[yest.index.hour.isin(range(8, 20))].mean()
-            return {
-                "date":     today_date,
+        # Rozlišení zóny zjištěné z dat (15 min / 60 min) — nepředpokládáme ho
+        # podle státu, aby se přechod další země na 15 min projevil sám.
+        step = int(pd.Series(d.index).diff().dropna().dt.total_seconds().div(60).mode().iloc[0])
+        seen_res[cc] = f"{step}min"
+
+        # Jen KOMPLETNÍ dny: počet bodů = délka dne / rozlišení. Neúplný den
+        # (ENTSO-E zveřejňuje zítřek postupně) se nezapíše a dotáhne ho další běh.
+        rows = []
+        for day, grp in d.groupby(d.index.date):
+            exp = expected_points(pd.Timestamp(day), step)
+            if len(grp) < exp:
+                if pd.Timestamp(day) >= today:
+                    incomplete.append(f"{cc} {day} ({len(grp)}/{exp})")
+                continue
+            h = grp.resample("1h").mean()   # 15 min → hodiny; hodinové beze změny
+            rows.append((day, h.mean(), h[h.index.hour.isin(range(8, 20))].mean()))
+        out = []
+        for i in range(1, len(rows)):
+            day, base_t, peak_t = rows[i]
+            _, base_y, peak_y = rows[i - 1]
+            out.append({
+                "date":     day,
                 "cc":       cc,
                 "base":     round(float(base_t), 2),
                 "peak":     round(float(peak_t), 2),
                 "dod_base": round(float(base_t - base_y), 2),
                 "dod_peak": round(float(peak_t - peak_y), 2),
-            }
-        except Exception as e:
-            log.warning(f"DAP {cc}: CHYBA — {e}")
-            errors.append(cc)
-            return None
+            })
+        return out or None
 
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        results = [r for r in ex.map(fetch_one, DAP_COUNTRIES.items()) if r is not None]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        results = [row for r in ex.map(fetch_one, DAP_COUNTRIES.items()) if r for row in r]
+
+    changed = {cc: (known_res.get(cc), r) for cc, r in seen_res.items() if known_res.get(cc) not in (None, r)}
+    for cc, (old, new) in changed.items():
+        log.warning(f"DAP {cc}: ZMĚNA ROZLIŠENÍ {old} → {new}")
+    if seen_res:
+        known_res.update(seen_res)
+        os.makedirs(os.path.dirname(RESOLUTION_FILE), exist_ok=True)
+        with open(RESOLUTION_FILE, "w") as fh:
+            json.dump(dict(sorted(known_res.items())), fh, indent=1)
+    if incomplete:
+        log.warning("DAP: neúplné dny (dotáhne další běh): " + ", ".join(incomplete))
 
     if not results:
         if errors:

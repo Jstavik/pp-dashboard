@@ -52,7 +52,7 @@ def fig_outlook(data: dict, days_forward: int = 30) -> go.Figure:
         return _base_layout(fig, height=380)
 
     now = data["now"]
-    cutoff = now.normalize() + pd.Timedelta(days=days_forward)
+    cutoff = now.normalize() + pd.DateOffset(days=days_forward)
     daily = daily[daily["date"] <= cutoff]
     if daily.empty:
         return _base_layout(fig, height=380)

@@ -267,7 +267,7 @@ def _price_long(result, day_start: pd.Timestamp) -> pd.DataFrame:
 def _day_chunks(start: pd.Timestamp, end: pd.Timestamp):
     cur = start
     while cur < end:
-        nxt = min(cur.normalize() + pd.Timedelta(days=1), end)
+        nxt = min(cur.normalize() + pd.DateOffset(days=1), end)
         yield cur, nxt
         cur = nxt
 
@@ -309,7 +309,7 @@ def update_ceps_live(now: pd.Timestamp = None) -> dict:
         try:
             last = last_date_partitioned(base, "time", "parquet")
             if last is None:
-                start = now.normalize() - pd.Timedelta(days=1)
+                start = now.normalize() - pd.DateOffset(days=1)
             else:
                 start = last.tz_convert(TZ) - LIVE_OVERLAP
             start = max(start, now - LIVE_MAX_GAP)

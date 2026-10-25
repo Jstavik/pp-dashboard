@@ -150,7 +150,7 @@ def _reserves_fig(kind: str, days: int, height: int):
     from charts.reserves import fig_reserve_volumes, fig_reserve_prices
     now = _now()
     reserves = reserves_or_empty(now)
-    start, end = now.normalize(), now.normalize() + pd.Timedelta(days=days)
+    start, end = now.normalize(), now.normalize() + pd.DateOffset(days=days)
     fn = fig_reserve_volumes if kind == "vol" else fig_reserve_prices
     return fn(reserves, now, start, end, height=height)
 
@@ -281,8 +281,9 @@ def _ch_gen_day(p):
     from charts.electricity_generation import fig_generation_stacked
     from web.util import decat
     s = _gen_state(p)
-    day_ts = pd.Timestamp(s["day"], tz=s["tz"]).tz_convert("UTC")
-    df = load_generation(s["country"], start=day_ts, end=day_ts + pd.Timedelta(days=1))
+    day_loc = pd.Timestamp(s["day"], tz=s["tz"])
+    day_ts = day_loc.tz_convert("UTC")
+    df = load_generation(s["country"], start=day_ts, end=(day_loc + pd.DateOffset(days=1)).tz_convert("UTC"))
     return fig_generation_stacked(decat(df), day_ts)
 
 
@@ -390,7 +391,7 @@ def dap_tab(p):
         "source": f"DA ceny: D0 {_src('dap0')}, D+1 {_src('dap1')} (úložiště = entsoe_prices, aktualizace 07:10 "
                   "a 13:20 nebo tlačítkem ⟳ Aktualizovat teď; živě jen když den v úložišti chybí)",
         "d0_label": f"D0 — {now.strftime('%d.%m.%Y')}",
-        "d1_label": f"D+1 — {(now + pd.Timedelta(days=1)).strftime('%d.%m.%Y')}",
+        "d1_label": f"D+1 — {(now + pd.DateOffset(days=1)).strftime('%d.%m.%Y')}",
         "stats_d0": stats(s_d0), "stats_d1": stats(s_d1),
         "has_sim": df_sim is not None,
         "revenue": float(df_sim["revenue_eur"].sum()) if df_sim is not None else None,
