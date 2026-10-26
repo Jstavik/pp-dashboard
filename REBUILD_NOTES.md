@@ -1,6 +1,6 @@
 # REBUILD_NOTES — přechod ze Streamlitu na FastAPI (větev `rebuild/fastapi`)
 
-Stav k 2026-10-25 (kolo 6b, starší kola níže). Větev založená z `main` @ 7a36a68. `main` ani
+Stav k 2026-10-26 (kolo 7, starší kola níže). Větev založená z `main` @ 7a36a68. `main` ani
 `.github/workflows` se neměnily, `data/history/` v repu zůstává.
 
 **Důležité omezení ověření:** v pracovním prostředí nebyly k dispozici API
@@ -8,6 +8,128 @@ tokeny a síť k datovým zdrojům byla zablokovaná (povolené jen PyPI).
 Živá API ověřuje jiné sezení v kontejneru (LXC); co tam ověřeno nebylo, je
 označené **NEOVĚŘENO**. Web a výpočty jsou ověřené nad skutečnými daty
 z `data/history/` v repu.
+
+## Kolo 7 (2026-10-26): Analýza toků plynu (`/plyn/analyza`)
+
+Specializovaný „Průzkumník pro plyn“ podle Power BI `toky_po bodech.pbix`
+(stránky Body, Konkrétní bod, Země, LNG body, Norsko toky; „Testovací“ a
+„Duplicate of Body“ vynechány). V navigaci Plyn jako první položka.
+
+### Soubory
+- `core/gas_analysis.py` — dotazy DuckDB (sdílená in-memory instance
+  z `core/explore.py`, filtr země/bod/okno, čte jen měsíce v okně), agregace,
+  pivot, sezónnost, srovnání A vs B. Do pandas jdou jen denní řady jedné země
+  nebo bodu (tisíce řádků), do prohlížeče jen agregace.
+- `charts/gas_analysis.py` — grafy v novém vzhledu (`charts/v2.py`).
+- `web/tabs/gas_analysis.py` + `web/templates/tabs/plyn-analyza/analyza.html`,
+  route `/plyn/analyza` ve `web/app.py` (stránka `plyn-analyza`, jedna záložka).
+- `web/static/app.js`: tlačítko **📋 Kopírovat** u tabulek (HTML + TSV do
+  schránky → Excel/Outlook), stránky s `data-remember` si pamatují poslední
+  filtry v `localStorage` (když URL nemá parametry).
+- Testy `tests/test_gas_analysis.py` (syntetická data: znaménka, kategorie,
+  jednotky, pivot, sezónnost, A vs B, rozpis kapacit s revizemi a
+  exkluzivním periodTo, přerušení, stránka + grafy + exporty, navazování
+  backfillu). Celá sada: 397 prošlo, 1 padá — `test_entsoe_store.py::
+  test_dap_from_store_and_live_fallback` padá i na předchozím commitu
+  (závisí na dnešním datu den po změně času), mimo rozsah tohoto kola.
+
+### Stránka
+Přepínač **Země / Bod** nahoře, panel filtrů vlevo (vše v URL + paměť):
+- společné: agregace den/týden/měsíc/rok; jednotka GWh/d (průměr dní),
+  GWh (součet), mcm/d (GWh/d ÷ GCV; u bodu průměr GCV bodu v období, jinak
+  konverzní faktor 10,55 kWh/m³ s poznámkou); období = datum od–do +
+  předvolby (3 měs., **13 měs. = výchozí**, 2 roky, 5 let, Max) + dva
+  posuvníky po měsících (od/do); tlačítko Aktualizovat (úloha `gas`).
+- **Země** (zdroj ENTSO-G /aggregateddata, Physical Flow): země, směr
+  vstup/výstup/obojí (obojí = vstup kladně, výstup záporně se šrafou + čára
+  Bilance), rozpad podle sousední země / systému (LNG, zásobníky, těžba,
+  spotřeba jako samostatné kategorie; zóny sloučené přes `core/gasflow.
+  partner_of`, vnější body podle názvu — Norsko, Ukrajina…), sousedního
+  systému ENTSO-G, nebo bodu (skupiny bodů z `pointsNames`); filtr
+  kategorií. KPI průměrů, graf skládaných sloupců, pivot období × kategorie
+  (+ Celkem/Bilance, řádky Průměr/Min/Max, u GWh Součet; na stránce od
+  nejnovějšího, CSV/XLSX chronologicky celé). LNG body = rozpad „sousední
+  země“ + filtr kategorie LNG terminály; Norsko = DE/BE/FR/NL se
+  zobrazí jako kategorie „Norsko“.
+- **Bod** (zdroj ENTSO-G /operationaldata): země (prefix operatorKey) →
+  směr → sousední země/systém → bod (vyhledávací pole s nabídkou). Graf:
+  hlavní tok sloupci (Physical Flow, jinak Allocation → Renomination →
+  Nomination), ostatní toky čarami, technická / rezervovaná firm /
+  rezervovaná přerušitelná kapacita schodovitě, využití kapacity v hoveru a
+  v KPI. Přerušení (plánované/neplánované firm, skutečné přerušitelné) jako
+  denní sloupce od začátku období do +1 roku s čárou „dnes“ + tabulka
+  (poslední revize každého období).
+- Obojí: sezónnost (po měsících / po dnech se 7denním průměrem; rok konce
+  období silně, loňský šedě, pásmo min–max a průměr předchozích 5 let; u
+  bodu volba metriky), srovnání období **A vs B** (výchozí poslední celý
+  měsíc vs. týž měsíc loni; tabulka A, B, rozdíl, rozdíl %, graf; export).
+  Každý graf má PNG/SVG/CSV/XLSX + kopírování obrázku.
+
+### Metodika (pozor)
+- Kapacity a přerušení jsou **období** (periodFrom–periodTo, periodTo =
+  začátek dalšího dne plynu → exkluzivní). Rozpis na dny v DuckDB: pro
+  den × operátor × pointKey platí záznam s **nejnovějším
+  lastUpdateDateTime**, který den pokrývá (stejné pravidlo jako
+  `active_capacity_dedup`), pak součet operátorů dané země na bodu.
+- Den plynu se bere z místního data v řetězci `periodFrom` (ne z
+  `periodFrom_dt`, které je UTC datum a u bodů s dnem od 00:00 posouvá o den).
+- Bod má na obou stranách hranice dva TSO — filtruje se prefixem země
+  operátora (VIP Brandov CZ = NET4GAS, …).
+- Poslední den v datech bývá neúplný (ENTSO-G D+1) — KPI „Poslední den“ to
+  ukazuje tak, jak je.
+
+### Data — rozšíření `entsog_operational`
+- `HISTORY_INDICATORS` = Nomination, Renomination, GCV, Wobbe Index **+
+  Physical Flow, Allocation** (nové `POINT_FLOW_INDICATORS`; po bodech je
+  `entsog_operational` jediný zdroj, na úrovni zemí zůstává
+  `entsog_flows`). Plánovaný běh `update_eu_operational` je teď stahuje i
+  pro poslední 2 měsíce. Starý panel Nominace dál čte jen
+  `NOMINATION_QUALITY_INDICATORS`.
+- Unplanned interruption of firm capacity a Actual interruption of
+  interruptible capacity už ve stahování byly (OPEN_ENDED) — ale jen pro
+  aktuální měsíc, takže skončená přerušení a historické kapacity chyběly.
+  Nový `backfill_periods()` je stahuje **po měsících od 2019-01** (dotaz na
+  měsíc vrací období platná v měsíci) pro `PERIOD_INDICATORS` (Firm
+  Technical/Booked, Interruptible Booked, 3× přerušení); navazuje přes
+  `entsog_operational/.backfill_periods.json` (hotové měsíc×indikátor),
+  aktuální měsíc vždy znovu, chyba jednoho indikátoru = zkusí se příště.
+- Rate-limit: `_get()` — pauza `PPDASH_ENTSOG_SLEEP` (s, výchozí 1,0) před
+  každým požadavkem, opakování při 429/5xx/síťové chybě s rostoucí pauzou
+  (Retry-After má přednost), max 4×.
+- Starý loader kapacit (`load_eu_operational_open_ended`, záložky
+  Kapacity/Nominace) čte jen období platná posledních 800 dní — po backfillu
+  by jinak do pandas šly miliony historických segmentů.
+- Spuštění (v kontejneru, dlouhé — stovky požadavků):
+  `python scripts/backfill_entsog_operational.py analyza backfill_analyza.log`
+  (= `point_flows` od 2019-01-01 + `periods` od 2019-01-01; jde spustit i
+  zvlášť, volitelně `[start] [end]`). Do backfillu má režim Bod místo
+  fyzického toku renominace/nominace a kapacity jen od letoška.
+
+### Mapování bod ↔ sousední země
+Z `entsog_flows`: bod z `pointsNames` řádku (země, směr, adjacentSystemsKey)
+→ `partner_of` (stejné jako flowchart a kontrola entry/exit). Nad daty v repu
+se shoduje ~71 % bodů (403/585 názvů v září 2026); zbytek je „neurčeno“
+(typicky UK body, PL agregované PPG, některé zásobníky — např. CZ „VGS MND
+Gas Storage“). **NEOVĚŘENO:** doplnění z ENTSO-G metadat
+(`/api/v1/interconnections`, `/connectionpoints`: fromCountryKey/toCountryKey,
+fromSystemLabel/toSystemLabel) — v tomto prostředí není síť; navrhované
+pokračování: stáhnout interconnections 1×/týden do
+`history/entsog_interconnections.parquet` a v `point_index()` jím doplnit
+„neurčeno“.
+
+### Co ověřit v kontejneru (kolo 7)
+1. `python scripts/backfill_entsog_operational.py analyza backfill_analyza.log`
+   — doběhne? Velikost `history/entsog_operational` (odhad +80–150 MB za PF
+   a Allocation; kapacity po měsících **NEOVĚŘENO** — sledovat, některé TSO
+   publikují denní segmenty). Archiv TP (2019–2021) vrátí „archived“ = 0 řádků.
+2. ENTSO-G /operationaldata opravdu vrací „Physical Flow“ a „Allocation“ po
+   bodech s periodType=day (živý vzorek ano — **NEOVĚŘENO** pro starší měsíce).
+3. `/plyn/analyza` režim Bod pro VIP Brandov po backfillu: fyzický tok ≈
+   součet Physical Flow CZ entry z DE v režimu Země (rozdíl = Waidhaus).
+4. RSS webu po proklikání (lokálně ~390 MB s daty v repu; cíl < 1,2 GB),
+   doba dotazu bodu s kapacitami po backfillu (čte všechny měsíce s filtrem).
+5. Záložky Plyn → Kapacity / Nominace dál fungují (loader kapacit je teď
+   omezený na 800 dní).
 
 ## Kolo 6b (2026-10-25): změna času CEST→CET, úplnost dne v DAP mapě, retry cen
 
