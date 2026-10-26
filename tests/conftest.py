@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 os.environ["PPDASH_ENV_FILE"] = "/nonexistent"
+os.environ["PPDASH_ENTSOG_SLEEP"] = "0"
 for _k in ("ENTSOE_TOKEN", "GIE_API_KEY"):
     os.environ.pop(_k, None)
 if (ROOT / "data" / "history").is_dir() and not os.environ.get("PPDASH_TEST_EMPTY"):

@@ -1,0 +1,121 @@
+{% import "macros.html" as m %}
+{% set s = c.s %}
+<div class="ga" data-remember="1">
+<form class="controls flat ga-top">
+  {{ m.radio("mode", c.mode_labels.keys()|list, s.mode, "Režim", c.mode_labels) }}
+  {% if not s.empty %}<p class="ga-subject"><strong>{{ c.subject }}</strong><span class="muted"> · {{ c.period }} · {{ c.unit }}</span></p>{% endif %}
+</form>
+{% if s.empty %}
+<div class="alert">Pro režim <strong>{{ c.mode_labels[s.mode] }}</strong> zatím nejsou uložená data
+  ({{ "ENTSO-G toky, úloha entsog" if s.mode == "zeme" else "ENTSO-G operational, úloha entsog_operational" }}).</div>
+{% else %}
+<div class="ga-layout">
+  <aside class="card panel ga-side">
+    <form class="controls flat ga-filters">
+      <label class="field"><span class="field-label">Země</span>
+        <select name="cc">{% for code in s.codes %}<option value="{{ code }}"{% if code == s.cc %} selected{% endif %}>{{ c.country_labels[code] }}</option>{% endfor %}</select></label>
+      {% if s.mode == "zeme" %}
+        {{ m.radio("dir", ["both", "entry", "exit"], s.dir, "Směr", {"both": "obojí", "entry": "vstup", "exit": "výstup"}) }}
+        <input type="hidden" name="by_prev" value="{{ s.by }}">
+        {{ m.select("by", c.by_labels.keys()|list, s.by, "Rozpad podle", c.by_labels) }}
+        {{ m.multiselect("kat", s.cat_options, s.cats, "Kategorie (filtr)", placeholder="všechny") }}
+      {% else %}
+        {{ m.radio("dir", ["entry", "exit"], s.dir, "Směr", {"entry": "vstup", "exit": "výstup"}) }}
+        <input type="hidden" name="adj_prev" value="{{ s.adj }}">
+        <label class="field"><span class="field-label">Sousední země / systém</span>
+          <select name="adj"><option value="">— vše —</option>{% for a in s.adjs %}<option value="{{ a }}"{% if a == s.adj %} selected{% endif %}>{{ a }}</option>{% endfor %}</select></label>
+        <label class="field"><span class="field-label">Bod ({{ s.pts|length }}) — piš pro hledání</span>
+          <input type="search" name="pt" value="{{ s.pt }}" list="ga-pts" autocomplete="off" placeholder="název bodu…">
+          <datalist id="ga-pts">{% for x in s.pts %}<option value="{{ x }}">{% endfor %}</datalist></label>
+        {% if s.pt_adj %}<p class="muted small">Sousední systém bodu: <strong>{{ s.pt_adj }}</strong></p>{% endif %}
+      {% endif %}
+      <hr>
+      {{ m.radio("g", c.grain_labels.keys()|list, s.g, "Agregace", c.grain_labels) }}
+      <div class="field"><span class="field-label">Jednotka</span>
+        <div class="seg" role="radiogroup">{% for u in c.unit_labels %}<label class="seg-item" title="{{ c.unit_help[u] }}"><input type="radio" name="u" value="{{ u }}"{% if u == s.u %} checked{% endif %}><span>{{ c.unit_labels[u] }}</span></label>{% endfor %}</div></div>
+      {% if s.u == "mcmd" %}<p class="muted small">mcm/d = GWh/d ÷ {{ s.gcv|num(",.2f") }} kWh/m³ ({{ s.gcv_src }}).</p>{% endif %}
+      {{ m.daterange(s.d_from, s.d_to, "Období", c.presets, s.min_d, s.max_d) }}
+      <label class="field ga-slider"><span class="field-label">Od měsíce</span>
+        <input type="range" min="0" max="{{ c.slider_from|length - 1 }}" value="{{ c.slider_from_i }}" data-days='{{ c.slider_from|tojson }}' data-target="from" aria-label="Od měsíce"></label>
+      <label class="field ga-slider"><span class="field-label">Do měsíce</span>
+        <input type="range" min="0" max="{{ c.slider_to|length - 1 }}" value="{{ c.slider_to_i }}" data-days='{{ c.slider_to|tojson }}' data-target="to" aria-label="Do měsíce"></label>
+      <p class="muted small">Data {{ s.min_d|fmt }}–{{ s.max_d|fmt }}. Filtry jsou v adrese (odkaz jde sdílet) a stránka si je pamatuje.</p>
+      <button type="button" class="btn" data-copy-link>Kopírovat odkaz</button>
+    </form>
+  </aside>
+
+  <div class="ga-main">
+    {% if c.kpis %}<div class="v2-kpis">{% for k in c.kpis %}{{ m.kpi(k.label, k.value, unit=k.unit) }}{% endfor %}</div>{% endif %}
+    {{ m.chart("main", 460) }}
+
+    <div class="card panel">
+      <div class="panel-head">
+        {{ m.section("Souhrn po obdobích (" ~ c.grain_labels[s.g] ~ ", " ~ c.unit ~ ")") }}
+        <span class="dl-links">
+          <button type="button" class="link-btn" data-copy-table title="Zkopírovat tabulku (vložit do Excelu / Outlooku)">📋 Kopírovat</button>
+          <a href="/api/csv/plyn_pivot?fmt=csv&{{ c.query }}" download>CSV</a>
+          <a href="/api/csv/plyn_pivot?fmt=xlsx&{{ c.query }}" download>XLSX</a>
+        </span>
+      </div>
+      <p class="muted small">Souhrnné řádky nahoře, období od nejnovějšího{% if c.pivot_rows > 200 %} (zobrazeno 200 posledních, celá tabulka v CSV/XLSX){% endif %}.
+        {% if s.u == "gwh" %}Hodnoty = součet za období.{% else %}Hodnoty = průměr za den v období.{% endif %}
+        {% if s.mode == "zeme" and s.dir == "both" %}Vstup kladně, výstup záporně, Bilance = vstup − výstup.{% endif %}</p>
+      {{ m.table(c.pivot, "Žádná data pro zvolené filtry.", "ga-pivot") }}
+    </div>
+
+    <div class="ga-grid">
+      <div>
+        <form class="controls flat inline">{{ m.radio("sm", c.sm_labels.keys()|list, s.sm, "Sezónnost", c.sm_labels) }}
+          {% if s.mode == "bod" and c.ind_options %}{{ m.select("si", c.ind_options, s.sm_ind or c.flow, "Metrika", c.ind_labels) }}{% endif %}</form>
+        {{ m.chart("season", 400) }}
+        <p class="muted small">Silně rok {{ s.d_to.year }}, šedě loňský rok, pásmo = min–max předchozích 5 let, šedá čára = jejich průměr.</p>
+      </div>
+      <div>
+        <form class="controls flat ga-ab">
+          <div class="field"><span class="field-label">Období A</span><div class="dr-inputs">
+            <input type="date" name="a_from" value="{{ s.a[0] }}" min="{{ s.min_d }}" max="{{ s.max_d }}" aria-label="A od"><span>–</span>
+            <input type="date" name="a_to" value="{{ s.a[1] }}" min="{{ s.min_d }}" max="{{ s.max_d }}" aria-label="A do"></div></div>
+          <div class="field"><span class="field-label">Období B</span><div class="dr-inputs">
+            <input type="date" name="b_from" value="{{ s.b[0] }}" min="{{ s.min_d }}" max="{{ s.max_d }}" aria-label="B od"><span>–</span>
+            <input type="date" name="b_to" value="{{ s.b[1] }}" min="{{ s.min_d }}" max="{{ s.max_d }}" aria-label="B do"></div></div>
+        </form>
+        {{ m.chart("compare", 400) }}
+      </div>
+    </div>
+    <div class="card panel">
+      <div class="panel-head">{{ m.section("Srovnání období A (" ~ c.a_txt ~ ") vs B (" ~ c.b_txt ~ ")") }}
+        <span class="dl-links">
+          <button type="button" class="link-btn" data-copy-table>📋 Kopírovat</button>
+          <a href="/api/csv/plyn_srovnani?fmt=csv&{{ c.query }}" download>CSV</a>
+          <a href="/api/csv/plyn_srovnani?fmt=xlsx&{{ c.query }}" download>XLSX</a></span></div>
+      {{ m.table(c.compare, "Pro zvolená období nejsou data.") }}
+      <p class="muted small">{% if s.u == "gwh" %}Součet za období{% else %}Průměr za den{% endif %} v {{ c.unit }}; rozdíl % proti B
+        {% if s.mode == "zeme" and s.dir == "both" %}(výstupy jsou záporné — kladný rozdíl u výstupu = menší výstup){% endif %}.</p>
+    </div>
+
+    {% if s.mode == "bod" %}
+    {{ m.chart("int", 300) }}
+    <div class="card panel">
+      <div class="panel-head">{{ m.section("Přerušení kapacity bodu (" ~ c.n_ints ~ ")") }}
+        <span class="dl-links"><button type="button" class="link-btn" data-copy-table>📋 Kopírovat</button></span></div>
+      {{ m.table(c.ints, "Pro bod a období nejsou hlášená přerušení.") }}
+      <p class="muted small">Plánovaná / neplánovaná přerušení pevné kapacity a skutečná přerušení přerušitelné kapacity
+        (ENTSO-G), od začátku zvoleného období do roka dopředu; u každého období platí poslední revize.</p>
+    </div>
+    {% endif %}
+
+    <details class="card panel">
+      <summary>Zdroj a metodika</summary>
+      <p class="small">{% if s.mode == "zeme" %}ENTSO-G Transparency /aggregateddata, Physical Flow (GWh/d), denní, po zemi × směru ×
+        sousedním systému. „Sousední země / systém“ sjednocuje zóny (např. DE THE → Německo) a odděluje LNG, zásobníky, těžbu
+        a spotřebu; vnější body bez kódu země (např. Norsko, Ukrajina) se určují podle názvu bodu.
+        {% else %}ENTSO-G Transparency /operationaldata po bodech a operátorech (součet operátorů dané země na bodu).
+        Toky jsou denní; kapacity a přerušení jsou období platnosti (od–do), rozepsaná na dny, platí poslední revize.
+        Využití kapacity = hlavní tok ÷ technická kapacita. Sousední systém bodu je převzatý z ENTSO-G toků zemí
+        (kde se název bodu neshoduje: „neurčeno“).{% endif %}
+        Agregace týden/měsíc/rok: GWh/d a mcm/d = průměr dní, GWh = součet. mcm/d přes {{ s.gcv_src }}.</p>
+    </details>
+  </div>
+</div>
+{% endif %}
+</div>

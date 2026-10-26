@@ -1,6 +1,7 @@
+import json
 import logging
 import requests, time, os
-from datetime import date
+from datetime import date, timedelta
 import pandas as pd
 
 from data.partitioned_store import read_partitioned, upsert_partitioned
@@ -52,7 +53,14 @@ UI_CATEGORY_COLUMNS = ["indicator", "operatorKey", "operatorLabel", "pointLabel"
 # indikátorů (Nomination+Renomination) funguje spolehlivě a je už
 # takhle plně zabackfillovaná — ale VŠECHNO NOVÉ se fetchuje PO JEDNOM
 # indikátoru, nikdy kombinovaně, viz fetch_operational_month.
-HISTORY_INDICATORS = ["Nomination", "Renomination", "GCV", "Wobbe Index"]
+NOMINATION_QUALITY_INDICATORS = ["Nomination", "Renomination", "GCV", "Wobbe Index"]
+# Physical Flow a Allocation PO BODECH (kolo 7, stránka Analýza toků
+# plynu) — /operationaldata je vrací po bodech a operátorech stejně jako
+# nominace (periodFrom = konkrétní den). Na úrovni zemí zůstává zdroj
+# /aggregateddata (history/entsog_flows); po bodech je jediným zdrojem
+# tahle vrstva.
+POINT_FLOW_INDICATORS = ["Physical Flow", "Allocation"]
+HISTORY_INDICATORS = NOMINATION_QUALITY_INDICATORS + POINT_FLOW_INDICATORS
 
 # Podmnožiny HISTORY_INDICATORS pro panel Nominace (app.py, tab_nom):
 # fig_cz_operational je navržená jen pro denní Entry/Exit graf, což sedí
@@ -110,6 +118,24 @@ def country_from_operator_key(operator_key) -> str:
 
 # ENTSO-G aggregateddata/operationaldata API sahá do 2020, dříve není dostupné.
 HISTORY_START = date(2020, 1, 1)
+# Backfill pro Analýzu toků plynu (toky po bodech, kapacity, přerušení) —
+# zkouší se od 2019; měsíce, které TP archivoval, vrátí 404 "archived" = 0 řádků.
+POINT_HISTORY_START = date(2019, 1, 1)
+# Kapacity a přerušení, které stránka Analýza toků plynu rozepisuje na dny —
+# backfillují se PO MĚSÍCÍCH (dotaz na měsíc vrátí období platná v tom měsíci,
+# tj. i dávno skončená), ne jen aktuální měsíc jako backfill_open_ended.
+PERIOD_INDICATORS = [
+    "Firm Technical", "Firm Booked", "Interruptible Booked",
+    "Planned interruption of firm capacity", "Unplanned interruption of firm capacity",
+    "Actual interruption of interruptible capacity",
+]
+# Starý loader kapacit (záložky Kapacity/Nominace) čte jen období platná
+# v posledních N dnech — po měsíčním backfillu od 2019 by jinak do pandas
+# šly miliony historických segmentů (RAM webu).
+OPEN_ENDED_UI_DAYS = 800
+# Pauza mezi požadavky na ENTSO-G (s) a opakování při 429/5xx/síťové chybě.
+REQUEST_SLEEP = float(os.environ.get("PPDASH_ENTSOG_SLEEP", "1.0"))
+MAX_RETRIES = 4
 
 # Kolik posledních měsíců scheduled běh vždy přefetchuje znovu pro
 # HISTORY_INDICATORS — hodnoty se v revizích mění (lastUpdateDateTime),
@@ -160,7 +186,7 @@ def fetch_operational_month(from_date: date, to_date: date, indicator: str) -> l
             f"&periodType=day&from={from_date}&to={to_date}"
             f"&limit={limit}&offset={offset}&format=json"
         )
-        resp = requests.get(url, timeout=60)
+        resp = _get(url)
         if resp.status_code == 404 and "archived" in resp.text.lower():
             # TP archivuje data starší než ~5 let na rolling bázi — vrací
             # 404 s vysvětlující zprávou, ne prázdný výsledek. Očekávané
@@ -180,8 +206,33 @@ def fetch_operational_month(from_date: date, to_date: date, indicator: str) -> l
         offset += n
         if n < limit:
             break
-        time.sleep(0.2)
+        time.sleep(REQUEST_SLEEP)
     return all_rows
+
+
+def _get(url: str):
+    """GET s rate-limitem: pauza REQUEST_SLEEP před každým požadavkem,
+    při 429/5xx nebo síťové chybě opakování s rostoucí pauzou (Retry-After
+    má přednost). Po MAX_RETRIES vrátí poslední odpověď / vyhodí chybu."""
+    delay = max(REQUEST_SLEEP, 1.0)
+    for attempt in range(MAX_RETRIES + 1):
+        time.sleep(REQUEST_SLEEP if attempt == 0 else delay)
+        try:
+            resp = requests.get(url, timeout=90)
+        except requests.RequestException:
+            if attempt == MAX_RETRIES:
+                raise
+            delay *= 2
+            continue
+        if resp.status_code in (429, 500, 502, 503, 504) and attempt < MAX_RETRIES:
+            try:
+                delay = max(delay * 2, float(resp.headers.get("Retry-After", 0)))
+            except (TypeError, ValueError):
+                delay *= 2
+            log.warning("ENTSO-G HTTP %s, opakuji za %.0f s", resp.status_code, delay)
+            continue
+        return resp
+    return resp
 
 
 def _process(rows: list) -> pd.DataFrame:
@@ -392,6 +443,66 @@ def backfill_open_ended(indicators: list = None, log_path: str = None):
     )
 
 
+def _progress_path() -> str:
+    return os.path.join(OPERATIONAL_DIR, ".backfill_periods.json")
+
+
+def backfill_periods(indicators: list = None, log_path: str = None, start: date = None, end: date = None):
+    """Jednorázový (navazující) backfill kapacit a přerušení PO MĚSÍCÍCH
+    od start (default POINT_HISTORY_START) do end (default dnes): dotaz na
+    měsíc vrátí všechna období platná v tom měsíci, takže se zachytí i
+    historická (už skončená) přerušení a kapacity. Záznamy se ukládají do
+    měsíce podle periodFrom_dt (upsert podle id = revize se nezdvojí).
+
+    Navazování: hotové (měsíc, indikátor) se zapisují do
+    entsog_operational/.backfill_periods.json — přerušený běh pokračuje
+    tam, kde skončil (soubor podle periodFrom by to neuměl poznat, záznamy
+    padají do jiných měsíců, než se stahovaly). Aktuální měsíc se stahuje
+    vždy. Rate-limit: _get (PPDASH_ENTSOG_SLEEP, opakování při 429/5xx)."""
+    indicators = indicators or PERIOD_INDICATORS
+    start = start or POINT_HISTORY_START
+    end = end or date.today()
+    os.makedirs(OPERATIONAL_DIR, exist_ok=True)
+    try:
+        with open(_progress_path(), encoding="utf-8") as f:
+            done = set(json.load(f).get("done", []))
+    except (OSError, ValueError):
+        done = set()
+    months = pd.period_range(pd.Timestamp(start), pd.Timestamp(end), freq="M")
+    current = pd.Period(pd.Timestamp(end), freq="M")
+    _log(log_path, f"=== Backfill (periods) {start} → {end}, {len(months)} měsíců, indikátory={indicators} ===")
+    for i, per in enumerate(months, 1):
+        from_date, to_date = _month_bounds(per.year, per.month)
+        todo = [ind for ind in indicators if per == current or f"{per}|{ind}" not in done]
+        if not todo:
+            continue
+        t0 = time.time()
+        for ind in todo:
+            try:
+                rows = fetch_operational_month(from_date, to_date, ind)
+            except Exception as e:
+                _log(log_path, f"    ⚠ {per} {ind}: {e} — zkusí se při dalším běhu")
+                continue
+            df = _process(rows) if rows else pd.DataFrame()
+            if not df.empty:
+                upsert_partitioned(df, OPERATIONAL_DIR, "periodFrom_dt", ["id"], fmt="parquet")
+            if per != current:
+                done.add(f"{per}|{ind}")
+                tmp = _progress_path() + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({"done": sorted(done)}, f)
+                os.replace(tmp, _progress_path())
+            _log(log_path, f"[{i}/{len(months)}] {per} {ind}: {len(df)} řádků")
+        _log(log_path, f"[{i}/{len(months)}] {per}: hotovo ({time.time() - t0:.0f} s)")
+    _log(log_path, "=== Backfill (periods) hotovo ===")
+
+
+def backfill_point_flows(log_path: str = None, start: date = None, end: date = None):
+    """Physical Flow + Allocation po bodech od POINT_HISTORY_START (navazuje
+    po měsících a indikátorech, viz backfill_history)."""
+    backfill_history(POINT_FLOW_INDICATORS, log_path=log_path, start=start or POINT_HISTORY_START, end=end)
+
+
 def update_eu_operational():
     """Scheduled běh:
     - HISTORY_INDICATORS: přefetchuje jen posledních REVISION_WINDOW_MONTHS
@@ -518,7 +629,7 @@ def load_operational_point(point_label: str, country: str = None, date_from=None
     df = read_partitioned(
         OPERATIONAL_DIR, fmt="parquet", date_from=date_from, date_to=date_to,
         columns=UI_COLUMNS,
-        filters=[("pointLabel", "==", point_label), ("indicator", "in", HISTORY_INDICATORS)],
+        filters=[("pointLabel", "==", point_label), ("indicator", "in", NOMINATION_QUALITY_INDICATORS)],
     )
     df = _with_country(df)
     if not df.empty and country:
@@ -533,7 +644,8 @@ def _load_open_ended() -> pd.DataFrame:
     df = read_partitioned(
         OPERATIONAL_DIR, fmt="parquet",
         columns=UI_COLUMNS, categories=UI_CATEGORY_COLUMNS,
-        filters=[("indicator", "not in", HISTORY_INDICATORS)],
+        filters=[("indicator", "not in", HISTORY_INDICATORS),
+                 ("periodTo_dt", ">=", date.today() - timedelta(days=OPEN_ENDED_UI_DAYS))],
     )
     if df.empty:
         return df

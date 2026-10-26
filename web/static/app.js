@@ -207,6 +207,29 @@
     });
   }
 
+  /* ── kopírování tabulky (Excel/Outlook: HTML + TSV) ─────────────────── */
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-copy-table]");
+    if (!t) return;
+    var box = t.closest(".panel") || t.closest(".card");
+    var tbl = box && box.querySelector("table");
+    if (!tbl) return;
+    var tsv = Array.prototype.map.call(tbl.rows, function (r) {
+      return Array.prototype.map.call(r.cells, function (c) { return c.textContent.trim().replace(/\u00a0/g, " "); }).join("\t");
+    }).join("\n");
+    var html = "<table>" + tbl.innerHTML + "</table>";
+    var label = t.textContent;
+    var done = function () { t.textContent = "✓ Zkopírováno"; setTimeout(function () { t.textContent = label; }, 1500); };
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
+        navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([tsv], { type: "text/plain" }) })])
+          .then(done, function () { navigator.clipboard.writeText(tsv).then(done); });
+      } else if (navigator.clipboard) navigator.clipboard.writeText(tsv).then(done);
+      else prompt("Tabulka (Ctrl+C):", tsv);
+    } catch (err) { prompt("Tabulka (Ctrl+C):", tsv); }
+  });
+
   /* ── uložené pohledy (Průzkumník) ──────────────────────────────────── */
   document.addEventListener("click", function (e) {
     var t = e.target.closest("[data-view-save],[data-view-delete],[data-copy-link]");
@@ -558,6 +581,10 @@
       if (frag && !opts.partsOnly) {
         panel.dataset.query = frag.dataset.query || "";
         if (isActive(panel)) setUrl(tab, panel.dataset.query);
+        // stránky s data-remember si poslední filtry pamatují (localStorage)
+        if (frag.querySelector("[data-remember]")) {
+          try { localStorage.setItem("ppdash:q:" + panel.dataset.page + ":" + tab, panel.dataset.query); } catch (e) { /* bez úložiště */ }
+        }
         setupRefresh(panel, frag);
       }
     }).catch(function (err) {
@@ -811,6 +838,9 @@
 
     var active = pageEl.dataset.active;
     var initialQuery = pageEl.dataset.initialQuery || "";
+    if (!initialQuery) {
+      try { initialQuery = localStorage.getItem("ppdash:q:" + pageEl.dataset.page + ":" + active) || ""; } catch (e) { /* bez úložiště */ }
+    }
     document.querySelectorAll(".tab-panel").forEach(function (p) {
       if (p.dataset.tab === active) p.dataset.query = initialQuery;
     });

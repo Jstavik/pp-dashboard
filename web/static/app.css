@@ -415,3 +415,27 @@ table.data td.wrap { white-space: normal; min-width: 220px; }
 [data-theme="dark"] .gf .gf-lbl { fill: #1d2733; stroke: #3a4858; }
 [data-theme="dark"] .gf .gf-bar { fill: #2a3644; }
 [data-theme="dark"] .gf text[fill="#37474f"] { fill: #cfd8e3; }
+
+/* ── Analýza toků plynu (/plyn/analyza) ────────────────────────────── */
+.ga-top { align-items: center; margin-bottom: 10px; }
+.ga-subject { margin: 0; font-size: .95rem; }
+.ga-layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 12px; align-items: start; }
+.ga-side { position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow: auto; }
+.ga-side .controls { flex-direction: column; align-items: stretch; margin: 0; }
+.ga-side select, .ga-side input[type=search] { width: 100%; }
+.ga-side hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+.ga-side p { margin: 0; }
+.ga-side .ms summary { max-width: 100%; }
+.ga-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ga-main .v2-kpis { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.ga-pivot { max-height: 520px; overflow: auto; }
+.ga-pivot tbody tr:nth-child(-n+3) td { font-weight: 600; }
+.ga-ab { margin-bottom: 8px; }
+@media (max-width: 1000px) {
+  .ga-layout { grid-template-columns: 1fr; }
+  .ga-side { position: static; max-height: none; }
+}
+.ga-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.ga-grid > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ga-ab { flex-wrap: wrap; margin: 0; }
+@media (max-width: 1200px) { .ga-grid { grid-template-columns: 1fr; } }

@@ -49,7 +49,7 @@ pd.set_option("mode.copy_on_write", True)
 
 def _load_tabs() -> None:
     # Import modulů záložek = registrace (pořadí určuje pořadí v navigaci)
-    from web.tabs import electricity, gas, report, energy_charts, market, nordic, weather, explorer, ceps_outages, cot, reports, v2  # noqa: F401
+    from web.tabs import electricity, gas, gas_analysis, report, energy_charts, market, nordic, weather, explorer, ceps_outages, cot, reports, v2  # noqa: F401
 
 
 _load_tabs()
@@ -104,7 +104,7 @@ def status_page(request: Request):
 
 
 # stránka → cíl tlačítka „Aktualizovat teď“ (core/jobs.py::TARGETS)
-PAGE_REFRESH = {"plyn": "gas", "elektrina": "elektrina", "odstavky-ceps": "power", "trh-eu": "entsoe",
+PAGE_REFRESH = {"plyn": "gas", "plyn-analyza": "gas", "elektrina": "elektrina", "odstavky-ceps": "power", "trh-eu": "entsoe",
                 "nordic": "nordic", "pocasi": "weather", "energy-charts": "energy_charts", "cot": "cot",
                 "report": "gas"}
 
@@ -368,6 +368,12 @@ def csv_export(request: Request, name: str):
 
 
 LOOK_COOKIE = "ppdash_vzhled"
+
+
+@app.get("/plyn/analyza", response_class=HTMLResponse)
+def gas_analysis_page(request: Request):
+    """Analýza toků plynu (web/tabs/gas_analysis.py) — podstránka Plynu."""
+    return page_view(request, "plyn-analyza")
 
 
 @app.get("/{page_key}", response_class=HTMLResponse)
