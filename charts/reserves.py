@@ -3,9 +3,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from config import (
-    C_DEFICIT, C_SURPLUS, C_GRID, C_MUTED, C_TEXT,
+    C_DEFICIT, C_GRID, C_MUTED,
     PEAK_HOURS, BAR_W_MS,
-    _base_layout, _now_marker, _weekend_shading,
+    _now_marker, _weekend_shading,
 )
 
 _SIG_COLORS = {"CHARGE": "#2E7D32", "DISCHARGE": "#E65100",

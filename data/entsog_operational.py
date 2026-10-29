@@ -116,7 +116,7 @@ def fetch_operational_month(from_date: date, to_date: date, indicator: str) -> l
     KRITICKÉ #1: vždy JEDEN indikátor za dotaz. Kombinace 3+ indikátorů
     v "indicator=A,B,C" API tiše zredukuje na 1-2 dominantní, zbytek
     zmizí beze stopy (ověřeno naživo, viz komentář u HISTORY_INDICATORS
-    výš). Volající (backfill_history/backfill_open_ended) smyčkují přes
+    výš). Volající (backfill_open_ended) smyčkují přes
     indikátory samy a fetch_operational_month volají po jednom.
 
     KRITICKÉ #2: stránkování se NESMÍ řídit meta.total — API ho vrací
@@ -210,112 +210,6 @@ def _log(log_path: str, line: str):
             f.write(line + "\n")
 
 
-def backfill_history(indicators: list = None, log_path: str = None, start: date = None, end: date = None):
-    """Jednorázový (resumable) backfill pro HISTORY_INDICATORS (skutečná
-    denní historie) přes VŠECHNY body Evropy, po měsících od start
-    (default HISTORY_START) do end (default dnešek). Přeskočí měsíce,
-    které už mají partitioned soubor (idempotentní resume po přerušení)
-    — KROMĚ posledního (aktuálního, ještě otevřeného) měsíce, ten se
-    přefetchuje vždy. Uvnitř každého měsíce se fetchuje PO JEDNOM
-    indikátoru (viz fetch_operational_month), výsledky se spojí a
-    zapíšou jedním upsertem za měsíc."""
-    import time as _time
-    indicators = indicators or HISTORY_INDICATORS
-    start = start or HISTORY_START
-    end = end or date.today()
-    os.makedirs(OPERATIONAL_DIR, exist_ok=True)
-
-    months = []
-    y, m = start.year, start.month
-    while (y, m) <= (end.year, end.month):
-        months.append((y, m))
-        m += 1
-        if m > 12:
-            m = 1
-            y += 1
-
-    current_month = (end.year, end.month)
-    total = len(months)
-    _log(log_path, f"=== Backfill (history) start {start} → {end}, {total} měsíců, indikátory={indicators} ===")
-
-    for i, (year, month) in enumerate(months, 1):
-        month_str = f"{year:04d}-{month:02d}"
-        existing_path = os.path.join(OPERATIONAL_DIR, f"{month_str}.parquet")
-
-        # Resume je PER INDIKÁTOR, ne per soubor — víc indikátorů teď
-        # sdílí stejný měsíční soubor (konsolidovaná vrstva), takže
-        # "soubor existuje" už dávno platí pro každý měsíc (díky dřív
-        # zabackfillovaným Nomination/Renomination). Bez tyhle kontroly
-        # by backfill NOVÉHO indikátoru (GCV, Wobbe Index, ...) přeskočil
-        # úplně všechno — čte se jen sloupec "indicator" (levné, parquet
-        # column projection), ne celý soubor.
-        needed = indicators
-        if os.path.exists(existing_path) and (year, month) != current_month:
-            try:
-                existing_ind = set(pd.read_parquet(existing_path, columns=["indicator"])["indicator"].unique())
-            except Exception:
-                existing_ind = set()
-            needed = [ind for ind in indicators if ind not in existing_ind]
-            if not needed:
-                _log(log_path, f"[{i}/{total}] {month_str}: přeskočeno, všechny indikátory už v souboru")
-                continue
-
-        t0 = _time.time()
-        from_date, to_date = _month_bounds(year, month)
-        frames, ind_errors = [], []
-        for indicator in needed:
-            try:
-                rows = fetch_operational_month(from_date, to_date, indicator)
-                if rows:
-                    frames.append(rows)
-            except Exception as e:
-                ind_errors.append(f"{indicator}: {e}")
-
-        if ind_errors:
-            _log(log_path, f"    ⚠ {month_str}: chyby u indikátorů — {'; '.join(ind_errors)}")
-
-        elapsed = _time.time() - t0
-        if not frames:
-            _log(log_path, f"[{i}/{total}] {month_str}: 0 řádků ({elapsed:.1f}s)")
-            continue
-
-        df = _process([row for group in frames for row in group])
-        if df.empty:
-            _log(log_path, f"[{i}/{total}] {month_str}: 0 řádků po isNA filtru ({elapsed:.1f}s)")
-            continue
-
-        n_raw = len(df)
-        n_unique = df["id"].nunique()
-        if n_unique != n_raw:
-            # Ojediněle pozorovaná přechodná nekonzistence živého API mezi
-            # stránkami. id je deterministický klíč ze všech polí
-            # (indicator+period+operator+point+direction+unit) —
-            # duplicitní id tedy nemůže nést jinou hodnotu,
-            # drop_duplicates(keep="last") v upsert_partitioned to řeší
-            # bezpečně. Loguje se jen jako viditelné varování.
-            _log(
-                log_path,
-                f"    ⚠ {month_str}: {n_raw - n_unique} duplicitních id v raw fetchi "
-                f"({n_raw} → {n_unique} unikátních) — API pagination nekonzistence, "
-                f"dedup bezpečně vyřešeno",
-            )
-
-        touched = upsert_partitioned(df, OPERATIONAL_DIR, "periodFrom_dt", ["id"], fmt="parquet")
-        written = [(mo, n) for mo, n, w in touched if w]
-        n_total = sum(n for _, n in written) if written else len(df)
-        by_ind = df["indicator"].value_counts().to_dict()
-        n_points = df["pointLabel"].nunique()
-        file_path = os.path.join(OPERATIONAL_DIR, f"{month_str}.parquet")
-        size_kb = os.path.getsize(file_path) / 1024 if os.path.exists(file_path) else 0
-        _log(
-            log_path,
-            f"[{i}/{total}] {month_str}: {n_total} řádků (soubor po mergi), {n_points} bodů, "
-            f"{dict(by_ind)} {size_kb:.0f} KB ({elapsed:.1f}s)",
-        )
-
-    _log(log_path, "=== Backfill (history) hotovo ===")
-
-
 def backfill_open_ended(indicators: list = None, log_path: str = None):
     """Jednorázový fetch pro OPEN_ENDED_INDICATORS (kapacita/interrupce)
     — ŽÁDNÁ měsíční smyčka přes roky, tyhle záznamy nesou validity okno
@@ -383,8 +277,7 @@ def update_eu_operational():
       měsíců (hodnoty se v revizích mění, ne jen append).
     - OPEN_ENDED_INDICATORS: přefetchuje se VŽDY celé (jeden aktuální
       měsíc) — nové/zrušené kapacitní booking a interrupce se objevují
-      kdykoliv, ne jen jako revize existujícího záznamu.
-    Plný jednorázový backfill viz scripts/backfill_entsog_operational.py."""
+      kdykoliv, ne jen jako revize existujícího záznamu."""
     os.makedirs(OPERATIONAL_DIR, exist_ok=True)
     today = date.today()
     y, m = today.year, today.month

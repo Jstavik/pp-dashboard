@@ -1,6 +1,5 @@
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from config import year_color, storage_color, MONTH_TICKS
 
 

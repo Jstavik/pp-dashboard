@@ -3,7 +3,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from config import (
-    C_DEFICIT, C_SURPLUS, C_GRID, C_MUTED, C_TEXT, C_BG,
+    C_DEFICIT, C_SURPLUS, C_GRID, C_MUTED,
     THRESHOLD, BAR_W_MS,
     _base_layout, _now_marker,
 )
@@ -366,131 +366,6 @@ def fig_ceps_svr(df: pd.DataFrame, now: pd.Timestamp, height=240):
         hovermode="x unified",
         xaxis=dict(type="date", tickformat="%H:%M", gridcolor=C_GRID),
         yaxis=dict(title_text="MW", gridcolor=C_GRID),
-    )
-    return fig
-
-
-def fig_ceps_imbalance_price(df: pd.DataFrame, now: pd.Timestamp, height=200):
-    """Odhadovaná cena odchylky ČR z ČEPS [CZK/MWh]."""
-    fig = go.Figure()
-    if df.empty:
-        fig.add_annotation(text="Cena odchylky nedostupna",
-                           x=0.5, y=0.5, xref="paper", yref="paper",
-                           showarrow=False, font=dict(size=12, color=C_MUTED))
-    else:
-        fig.add_trace(go.Scatter(
-            x=df.index, y=df["cena_CZK_MWh"],
-            mode="lines+markers", name="Cena odchylky",
-            line=dict(color="#7B1FA2", width=2, shape="hv"),
-            fill="tozeroy", fillcolor="rgba(123,31,162,0.10)",
-            hovertemplate="%{x|%H:%M}  %{y:,.0f} CZK/MWh<extra></extra>",
-        ))
-        last_val = df["cena_CZK_MWh"].iloc[-1]
-        fig.add_annotation(
-            x=df.index[-1], y=last_val,
-            text=f"<b>{last_val:,.0f}</b>",
-            showarrow=False, yshift=14,
-            font=dict(size=11, color="#7B1FA2"),
-            bgcolor="rgba(255,255,255,.85)", borderpad=2,
-        )
-    _now_marker(fig, now)
-    _base_layout(fig, height=height)
-    today = now.normalize()
-    fig.update_layout(
-        hovermode="x unified",
-        xaxis=dict(
-            type="date", tickformat="%H:%M",
-            range=[today.isoformat(), (today + pd.Timedelta(days=1)).isoformat()],
-            gridcolor=C_GRID,
-        ),
-        yaxis=dict(title_text="CZK/MWh", gridcolor=C_GRID),
-    )
-    return fig
-
-
-def fig_imbalance(df, now, load_actual=None, load_fc=None, height=290):
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    if df.empty:
-        return _base_layout(fig, height=height)
-
-    surplus = df["odchylka_MWh"] >= 0
-    fig.add_trace(go.Bar(x=df.index[surplus], y=df.loc[surplus,"odchylka_MWh"],
-                         marker_color=C_SURPLUS, name="Surplus",
-                         hovertemplate="<b>%{x|%a %d.%m %H:%M}</b><br>+%{y:.1f} MWh<extra></extra>"),
-                  secondary_y=False)
-    fig.add_trace(go.Bar(x=df.index[~surplus], y=df.loc[~surplus,"odchylka_MWh"],
-                         marker_color=C_DEFICIT, name="Deficit",
-                         hovertemplate="<b>%{x|%a %d.%m %H:%M}</b><br>%{y:.1f} MWh<extra></extra>"),
-                  secondary_y=False)
-    if len(df) >= 4:
-        ma = df["odchylka_MWh"].rolling(4, min_periods=1).mean()
-        fig.add_trace(go.Scatter(x=df.index, y=ma, mode="lines", name="1h avg",
-                                 line=dict(color="#212121", width=1.5), hoverinfo="skip", opacity=.7),
-                      secondary_y=False)
-    fig.add_hline(y=0, line_color="#9E9E9E", line_width=.8)
-    fig.add_hline(y=THRESHOLD,  line_color="#9E9E9E", line_width=.4, line_dash="dot")
-    fig.add_hline(y=-THRESHOLD, line_color="#9E9E9E", line_width=.4, line_dash="dot")
-    last = df["odchylka_MWh"].iloc[-1]
-    fig.add_annotation(x=df.index[-1], y=last, text=f"<b>{last:+.1f}</b>",
-                       showarrow=False, yshift=14 if last >= 0 else -14,
-                       font=dict(size=12, color=C_SURPLUS if last >= 0 else C_DEFICIT),
-                       bgcolor="rgba(255,255,255,.85)", borderpad=2)
-
-    day_start = now.normalize()
-    if load_fc is not None and not load_fc.empty:
-        s = load_fc[(load_fc.index >= day_start) & (load_fc.index <= now)]
-        if not s.empty:
-            fig.add_trace(go.Scatter(
-                x=s.index, y=s.values, mode="lines", name="Prognóza zatížení",
-                line=dict(color="#26A69A", width=1.5, dash="dot"),
-                hovertemplate="Prognóza: %{y:,.0f} MW<extra></extra>",
-            ), secondary_y=True)
-    if load_actual is not None and not load_actual.empty:
-        s = load_actual[(load_actual.index >= day_start) & (load_actual.index <= now)]
-        if not s.empty:
-            fig.add_trace(go.Scatter(
-                x=s.index, y=s.values, mode="lines", name="Zatížení skutečnost",
-                line=dict(color="#E91E63", width=1.5),
-                hovertemplate="Zatížení: %{y:,.0f} MW<extra></extra>",
-            ), secondary_y=True)
-
-    _now_marker(fig, now)
-    _base_layout(fig, height=height)
-    fig.update_layout(barmode="relative", bargap=.15)
-    fig.update_layout(xaxis=dict(type="date", tickformat="%H:%M\n%d.%m", gridcolor=C_GRID))
-    fig.update_yaxes(title_text="MWh / 15 min", secondary_y=False)
-    fig.update_yaxes(title_text="MW", secondary_y=True, showgrid=False)
-    return fig
-
-
-def fig_signal(df_imbal, now, height=110):
-    fig = go.Figure()
-    if df_imbal.empty:
-        return _base_layout(fig, height=height)
-    start = now.normalize()
-    for sig, color, val in [
-        ("DISCHARGE", "#E65100", -1),
-        ("CHARGE",    "#2E7D32",  1),
-        ("STANDBY",   "#9E9E9E",  0),
-    ]:
-        mask = df_imbal["signal"] == sig
-        if mask.any():
-            fig.add_trace(go.Bar(
-                x=df_imbal.index[mask], y=[val] * int(mask.sum()),
-                name=sig, marker_color=color, width=800_000,
-                hovertemplate=f"%{{x|%H:%M}}  {sig}<extra></extra>",
-            ))
-    _now_marker(fig, now)
-    fig.update_layout(
-        height=height, template="plotly_white", hovermode="x unified",
-        barmode="overlay", showlegend=True,
-        legend=dict(orientation="h", y=-0.35, x=0, font=dict(size=10),
-                    bgcolor="rgba(0,0,0,0)"),
-        margin=dict(l=65, r=15, t=10, b=45),
-        xaxis=dict(type="date", tickformat="%H:%M",
-                   range=[start.isoformat(), now.isoformat()], gridcolor=C_GRID),
-        yaxis=dict(tickvals=[-1, 0, 1], ticktext=["DISCHARGE", "STANDBY", "CHARGE"],
-                   gridcolor=C_GRID),
     )
     return fig
 

@@ -3,7 +3,6 @@ sys.path.insert(0, ".")
 import requests
 import pandas as pd
 from datetime import date, timedelta
-from dateutil.relativedelta import relativedelta
 import os
 import time
 from data.entsog_operational import update_eu_operational
@@ -22,16 +21,12 @@ from config import (
 
 # ENTSO-G aggregateddata API sahá do 2020, dříve není dostupné
 HISTORY_START  = date(2020, 1, 1)
-# Měsíčně partitionované úložiště (viz data/partitioned_store.py) — staré
-# monolitické soubory (entsog_all_flows.parquet, gie_all_storage.csv,
-# hydro_reservoirs.csv) zůstávají v repu jako needitovaný fallback, appka
-# i update funkce už čtou/píšou jen do těchto adresářů.
+# Měsíčně partitionované úložiště (viz data/partitioned_store.py) — appka
+# i update funkce čtou/píšou jen do těchto adresářů.
 ENTSOG_FLOWS_DIR = "data/history/entsog_flows"
-GIE_CSV_PATH   = "data/history/gie_cz_storage.csv"
 GIE_ALL_DIR    = "data/history/gie_all_storage"
 GIE_KEY        = "628043ec28b2f2395a95f5adad7ec983"
 COUNTRIES_GIE  = ["AT", "BE", "CZ", "DE", "FR", "HR", "HU", "IT", "LV", "NL", "PL", "PT", "RO", "RS", "SK", "ES", "UA"]
-EU_CODE        = "EU"
 
 HYDRO_DIR      = "data/history/hydro_reservoirs"
 HYDRO_COUNTRIES = [
@@ -191,108 +186,6 @@ def update_entsog_allocation():
     written = [(m, n) for m, n, w in touched if w]
     print(f"ENTSO-G Allocation: {sum(n for _, n in written)} řádků v {len(written)} přepsaných měsících "
           f"({len(touched) - len(written)} beze změny) → {ENTSOG_FLOWS_DIR}/")
-
-
-def _log_alloc(log_path, line):
-    print(line)
-    if log_path:
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-
-
-def backfill_entsog_allocation(start: date = None, end: date = None, log_path: str = None):
-    """Jednorázový PLNÝ backfill Allocation přes celou historii (2020 →
-    dnes), týdenní chunking (stejný jako fetch_all_pages/update_entsog —
-    /aggregateddata pagination to vyžaduje). NENÍ totéž co
-    update_entsog_allocation() výš — ta pro scheduled běhy spoléhá na
-    last_date_partitioned(ENTSOG_FLOWS_DIR, "date", ...), což je
-    INDIKÁTOR-NEVĚDOMÉ: vidí, že Physical Flow už má data do dneška, a
-    myslela by si, že Allocation je taky hotové — přefetchovala by jen
-    posledních 7 dní, ne celou historii. Backfill proto resume řeší
-    sám, PER MĚSÍC (čte jen sloupec "indicator" existujícího souboru —
-    levné, parquet column projection), stejný vzor jako
-    data/entsog_operational.py::backfill_history."""
-    os.makedirs("data/history", exist_ok=True)
-    start = start or HISTORY_START
-    end = end or date.today()
-
-    months = []
-    y, m = start.year, start.month
-    while (y, m) <= (end.year, end.month):
-        months.append((y, m))
-        m += 1
-        if m > 12:
-            m = 1
-            y += 1
-    current_month = (end.year, end.month)
-    total = len(months)
-    _log_alloc(log_path, f"=== Backfill Allocation start {start} → {end}, {total} měsíců ===")
-
-    for i, (year, month) in enumerate(months, 1):
-        month_str = f"{year:04d}-{month:02d}"
-        month_path = os.path.join(ENTSOG_FLOWS_DIR, f"{month_str}.parquet")
-
-        if os.path.exists(month_path) and (year, month) != current_month:
-            try:
-                existing_ind = set(
-                    pd.read_parquet(month_path, columns=["indicator"])["indicator"].dropna().unique()
-                )
-            except Exception:
-                existing_ind = set()
-            if "Allocation" in existing_ind:
-                _log_alloc(log_path, f"[{i}/{total}] {month_str}: přeskočeno, Allocation už v souboru")
-                continue
-
-        month_start = date(year, month, 1)
-        month_end = (date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)) - timedelta(days=1)
-        month_end = min(month_end, end)
-
-        t0 = time.time()
-        frames = []
-        cur = month_start
-        try:
-            while cur <= month_end:
-                week_end = min(cur + timedelta(days=6), month_end)
-                df_week = fetch_all_pages(cur, week_end, indicator="Allocation")
-                if not df_week.empty:
-                    frames.append(df_week)
-                cur = week_end + timedelta(days=1)
-                time.sleep(0.3)
-        except Exception as e:
-            elapsed = time.time() - t0
-            _log_alloc(log_path, f"[{i}/{total}] {month_str}: CHYBA — {e} ({elapsed:.1f}s)")
-            continue
-
-        elapsed = time.time() - t0
-        if not frames:
-            _log_alloc(log_path, f"[{i}/{total}] {month_str}: 0 řádků ({elapsed:.1f}s)")
-            continue
-
-        new_data = pd.concat(frames, ignore_index=True)
-        n_raw = len(new_data)
-        key_cols = ["date", "indicator", "countryKey", "directionKey",
-                    "adjacentSystemsKey", "pointsNames"]
-        key_cols = [c for c in key_cols if c in new_data.columns]
-        n_unique = len(new_data.drop_duplicates(subset=key_cols))
-        if n_unique != n_raw:
-            _log_alloc(
-                log_path,
-                f"    ⚠ {month_str}: {n_raw - n_unique} duplicitních klíčů v raw fetchi "
-                f"({n_raw} → {n_unique} unikátních) — dedup bezpečně vyřešeno",
-            )
-
-        touched = upsert_partitioned(new_data, ENTSOG_FLOWS_DIR, "date", key_cols, fmt="parquet")
-        written = [(mo, n) for mo, n, w in touched if w]
-        n_total = sum(n for _, n in written) if written else len(new_data)
-        size_kb = os.path.getsize(month_path) / 1024 if os.path.exists(month_path) else 0
-        _log_alloc(
-            log_path,
-            f"[{i}/{total}] {month_str}: {n_total} řádků (soubor po mergi), "
-            f"{n_raw} nových Allocation řádků, {size_kb:.0f} KB ({elapsed:.1f}s)",
-        )
-
-    _log_alloc(log_path, "=== Backfill Allocation hotovo ===")
-
 
 
 def fetch_gie_all_countries(from_date: date = None, to_date: date = None) -> pd.DataFrame:

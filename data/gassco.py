@@ -1,10 +1,8 @@
-import re
 import glob
 import requests
 import pandas as pd
 import os
 import streamlit as st
-from datetime import timedelta
 
 from config import MSMM3_TO_GWH
 from data.partitioned_store import write_daily_snapshot, read_snapshot, read_partitioned, upsert_partitioned
@@ -70,15 +68,6 @@ def fetch_gassco_nominations() -> pd.DataFrame:
 
     df = pd.concat(frames, ignore_index=True)
     return df.sort_values(["point", "date"]).reset_index(drop=True)
-
-
-def _remit_name(el, remit_ns: str, common_ns: str) -> str:
-    """affectedAsset/affectedUnit/marketParticipant nesou název ve
-    vnořeném <ns2:name> (common schema), ne v přímém textu elementu."""
-    if el is None:
-        return ""
-    name_el = el.find(f"{{{common_ns}}}name")
-    return (name_el.text or "").strip() if name_el is not None else ""
 
 
 _XLEXPORT_COLUMNS = {
@@ -226,60 +215,6 @@ def compute_umm_delta(df_now: pd.DataFrame, df_past: pd.DataFrame) -> dict:
         changed = now_active.iloc[0:0]
 
     return {"new": novel, "cancelled": cancelled, "changed": changed}
-
-
-def compute_price_relevant_changes(df_now: pd.DataFrame, df_previous: pd.DataFrame,
-                                    capacity_change_threshold: float = 0.10) -> pd.DataFrame:
-    """Základ pro budoucí alerting (zatím jen výpočet — žádné posílání
-    zpráv, to přijde později). Staví na compute_umm_delta, ale filtruje
-    "změněné" jen na skutečně tržně relevantní revize: drobná revize
-    (posun data o den, zaokrouhlení publikačního času) není zajímavá,
-    zajímavá je jen změna OBJEMU nedostupné kapacity.
-
-    Práh: |Δ unavailableCapacity| / technicalCapacity > capacity_change_threshold
-    (default 0.10 = 10 %, konzultováno s uživatelem, laditelné parametrem
-    — ne natvrdo zabudované do logiky). Nové a zrušené odstávky se
-    vždy berou celé (žádný práh — objevení/zmizení odstávky je vždy
-    relevantní, na rozdíl od malé revize existující).
-
-    Vrací DataFrame se sloupcem change_type (new/cancelled/revised) a
-    capacity_change_pct (jen u revised, jinak NaN)."""
-    delta = compute_umm_delta(df_now, df_previous)
-
-    novel = delta["new"].copy()
-    if not novel.empty:
-        novel["change_type"] = "new"
-        novel["capacity_change_pct"] = pd.NA
-
-    cancelled = delta["cancelled"].copy()
-    if not cancelled.empty:
-        cancelled["change_type"] = "cancelled"
-        cancelled["capacity_change_pct"] = pd.NA
-
-    changed = delta["changed"]
-    revised_rows = []
-    if not changed.empty:
-        past_latest = _latest_per_base_id(df_previous)
-        past_by_id = past_latest.set_index("base_id") if not past_latest.empty else past_latest
-        for _, row in changed.iterrows():
-            bid = row["base_id"]
-            if past_by_id.empty or bid not in past_by_id.index:
-                continue
-            past_row = past_by_id.loc[bid]
-            tech = row.get("technicalCapacity") or 0
-            if not tech:
-                continue
-            delta_unavail = (row.get("unavailableCapacity") or 0) - (past_row.get("unavailableCapacity") or 0)
-            pct = abs(delta_unavail) / tech
-            if pct > capacity_change_threshold:
-                r = row.copy()
-                r["change_type"] = "revised"
-                r["capacity_change_pct"] = pct
-                revised_rows.append(r)
-    revised = pd.DataFrame(revised_rows) if revised_rows else changed.iloc[0:0].copy()
-
-    parts = [d for d in (novel, cancelled, revised) if not d.empty]
-    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
 
 def update_gassco_umm():

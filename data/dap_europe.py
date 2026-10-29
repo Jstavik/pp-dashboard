@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 import streamlit as st
 
@@ -17,13 +16,6 @@ DAP_COUNTRIES = {
     "DK": "10YDK-1--------W", "SE": "10Y1001A1001A46L",
 }
 
-ISO3 = {
-    "CZ": "CZE", "DE": "DEU", "FR": "FRA", "AT": "AUT", "SK": "SVK",
-    "PL": "POL", "HU": "HUN", "NL": "NLD", "BE": "BEL", "ES": "ESP",
-    "PT": "PRT", "IT": "ITA", "RO": "ROU", "BG": "BGR", "GR": "GRC",
-    "RS": "SRB", "HR": "HRV", "SI": "SVN", "CH": "CHE", "FI": "FIN",
-    "NO": "NOR", "DK": "DNK", "SE": "SWE",
-}
 
 CENTERS = {
     "CZ": (49.8, 15.5), "DE": (51.2, 10.4), "FR": (46.5, 2.5),

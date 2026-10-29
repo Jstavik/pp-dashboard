@@ -42,7 +42,6 @@ import io
 import json
 import os
 import re
-import time
 from datetime import date
 
 import pandas as pd
@@ -187,17 +186,6 @@ def _merge_and_write(new_tidy: pd.DataFrame) -> int:
     os.makedirs(os.path.dirname(COT_PATH), exist_ok=True)
     combined.to_parquet(COT_PATH, index=False)
     return len(combined)
-
-
-def ingest_local_csv(path: str) -> pd.DataFrame:
-    """Melt + merge one already-downloaded CSV file (no network) — used by
-    the backfill script to absorb scratch/cot_data/raw_cache/*.csv without
-    re-fetching."""
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    tidy = melt_csv_text(text)
-    _merge_and_write(tidy)
-    return tidy
 
 
 # ── live fetch (weekly use + backfill) ───────────────────────────────────

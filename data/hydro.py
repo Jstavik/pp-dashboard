@@ -1,7 +1,6 @@
-import os
 import pandas as pd
 import streamlit as st
-from config import year_color
+from config import year_color  # re-export pro charts/hydro.py
 from data.partitioned_store import read_partitioned
 
 HYDRO_DIR = "data/history/hydro_reservoirs"

@@ -101,7 +101,7 @@ def render_cot_page() -> None:
     st.markdown("---")
 
     if df.empty:
-        st.warning("Žádná ICE MiFID II CoT data v úložišti — spusť scripts/backfill_ice_cot.py.")
+        st.warning("Žádná ICE MiFID II CoT data v úložišti — spusť scripts/update_ice_cot.py.")
         return
 
     all_products = (
