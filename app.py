@@ -5,7 +5,6 @@
 
 import pandas as pd
 import streamlit as st
-from datetime import date, timedelta
 
 from config import (
     CSS_STYLES, THRESHOLD,
@@ -32,7 +31,6 @@ from views.ceps import render_ceps_tab
 from views.electricity_outages import render_outages_tab
 from views.dap import render_dap_tab
 from views.reserves import render_reserves_tab
-from views.delta_green import render_delta_green_tab
 from views.dap_map import render_dap_map_tab
 from views.gas_history import render_history_tab
 from views.gas_map import render_gas_map_tab
@@ -58,8 +56,6 @@ st.markdown(CSS_STYLES, unsafe_allow_html=True)
 # ── SESSION STATE ────────────────────────────────────────────────
 for key, default in [
     ("df_out_prev", None),
-    ("dg_api_key", ""),
-    ("iteration", 0),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -67,13 +63,6 @@ for key, default in [
 # ── SIDEBAR ──────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚙️ Nastavení")
-
-    st.session_state.dg_api_key = st.text_input(
-        "Delta Green API klíč",
-        value=st.session_state.dg_api_key,
-        type="password",
-        placeholder="Vložte klíč…",
-    )
 
     refresh_min = st.slider("Auto-refresh (min)", 5, 120, 30, step=5)
     auto_refresh = st.checkbox("Auto refresh", value=False)
@@ -119,10 +108,6 @@ with st.sidebar:
             "**ČEPS API (SOAP)**  \n"
             "Odchylka · Zatížení · SVR aktivace · "
             "Cena odchylky · Generace · Přeshraniční toky · Frekvence"
-        )
-        st.caption(
-            "**Delta Green API**  \n"
-            "Portfolio stav · Disponibilní flexibilita (volitelné)"
         )
     elif show_gas:
         st.caption(
@@ -283,14 +268,13 @@ if show_ee:
                     unsafe_allow_html=True)
 
     # ── ZÁLOŽKY ──────────────────────────────────────────────────────
-    tab_dash, tab_ceps, tab_out, tab_dap, tab_rezervy, tab_hydro, tab_dg, tab_data, tab_dap_mapa = st.tabs([
+    tab_dash, tab_ceps, tab_out, tab_dap, tab_rezervy, tab_hydro, tab_data, tab_dap_mapa = st.tabs([
         "📊 Odchylka & Generace",
         "⚡ ČEPS",
         "Výroba/Odstávky",
         "💶 DAP Ceny",
         "⚖️ Rezervy",
         "💧 Hydro",
-        "🌿 Delta Green",
         "📋 Data",
         "🗺️ DAP Mapa",
     ])
@@ -324,11 +308,6 @@ if show_ee:
     df_hydro = load_hydro()
     with tab_hydro:
         render_hydro_tab(df_hydro)
-
-    # ──────────── TAB 5: DELTA GREEN ─────────────────────────────────
-    with tab_dg:
-        render_delta_green_tab()
-
 
     # ──────────── TAB 6: SUROVÁ DATA ─────────────────────────────────
     with tab_data:
@@ -483,4 +462,3 @@ elif show_out:
 elif show_cot:
     render_cot_page()
 
-st.session_state.iteration += 1

@@ -1,9 +1,8 @@
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from config import (
-    C_SURPLUS, C_GRID, C_MUTED, C_TEXT, C_BG,
+    C_BG,
     GEN_STACK_ORDER, psr_lookup,
     _base_layout, _now_marker,
 )
@@ -193,43 +192,4 @@ def fig_load(load_fc, ceps_load, ceps_gen, now, height=280):
     fig.update_xaxes(tickformat="%H:%M\n%d.%m")
     fig.update_yaxes(title_text="Zatížení / Výroba (MW)")
     fig.update_layout(hovermode="x unified", barmode="overlay")
-    return fig
-
-
-def fig_deltagreen(df1, df2, height=560):
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
-                        subplot_titles=("Výkon portfolia [kW]", "Disponibilní flexibilita [kW]"))
-    for col, name, color in [
-        ("batteryPowerKW",      "Baterie",      "#4A90D9"),
-        ("consumptionPowerKW",  "Spotřeba",     "#E8744A"),
-        ("photovoltaicPowerKW", "Fotovoltaika", "#F5C518"),
-        ("gridPowerKW",         "Síť",          "#2ECC71"),
-    ]:
-        fig.add_trace(go.Scatter(x=df1["time"], y=df1[col], name=name,
-                                 line=dict(color=color, width=1.5),
-                                 hovertemplate=f"<b>{name}</b><br>%{{x|%H:%M:%S}}<br>%{{y:.0f}} kW<extra></extra>"),
-                      row=1, col=1)
-    for col, name, fc, lc in [
-        ("upPowerKW",                   "Max UP",         "rgba(0,191,166,.4)",  "#00BFA6"),
-        ("downBatteryPowerKW",          "Nabíjení bat.",  "rgba(74,144,217,.4)", "#4A90D9"),
-        ("downSolarCurtailmentPowerKW", "Zákaz přetoku",  "rgba(245,197,24,.4)", "#F5C518"),
-    ]:
-        fig.add_trace(go.Scatter(x=df2["time"], y=df2[col], name=name,
-                                 fill="tozeroy", fillcolor=fc, line=dict(color=lc, width=1.5),
-                                 hovertemplate=f"<b>{name}</b><br>%{{x|%H:%M:%S}}<br>%{{y:.0f}} kW<extra></extra>"),
-                      row=2, col=1)
-    last2 = df2.dropna(subset=["upPowerKW","downBatteryPowerKW","downSolarCurtailmentPowerKW"]).iloc[-1]
-    total_down = float(last2["downBatteryPowerKW"]) + float(last2["downSolarCurtailmentPowerKW"])
-    fig.update_layout(
-        height=height,
-        title_text=(f"Delta Green Portfolio  |  UP: {round(float(last2['upPowerKW']))} kW  |  "
-                    f"DOWN: {round(total_down)} kW"),
-        template="plotly_white", hovermode="x unified", showlegend=True,
-        legend=dict(orientation="h", y=-0.08, x=0),
-        margin=dict(l=60, r=15, t=50, b=40),
-    )
-    for row in [1, 2]:
-        fig.update_xaxes(tickformat="%H:%M", gridcolor=C_GRID, row=row, col=1)
-        fig.update_yaxes(title_text="kW", gridcolor=C_GRID, zeroline=True,
-                         zerolinecolor="#cccccc", row=row, col=1)
     return fig

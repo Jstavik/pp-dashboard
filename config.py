@@ -6,7 +6,6 @@ import streamlit as st
 ENTSOE_TOKEN = os.environ.get("ENTSOE_TOKEN") or st.secrets.get("ENTSOE_TOKEN")
 THRESHOLD    = 20          # MWh — práh DEFICIT / SURPLUS
 PEAK_HOURS   = set(range(8, 20))
-DG_BASE      = "https://api.deltagreen.cz/api/proteus/external/v1"
 MSMM3_TO_GWH = 10.55       # převod norských nominací MSm3 → GWh
 GEOJSON_COUNTRIES_URL = "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
 
